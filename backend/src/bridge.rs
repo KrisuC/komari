@@ -193,7 +193,7 @@ impl DefaultKeySender {
     pub fn update_input_delay(&mut self, game_tick: u64) {
         const UPDATE_MEAN_STD_PAIR_INTERVAL: u64 = 200;
 
-        if game_tick > 0 && game_tick % UPDATE_MEAN_STD_PAIR_INTERVAL == 0 {
+        if game_tick > 0 && game_tick.is_multiple_of(UPDATE_MEAN_STD_PAIR_INTERVAL) {
             let (mean, std) = self.delay_mean_std_pair;
             self.delay_mean_std_pair = self.delay_rng.random_mean_std_pair(
                 BASE_MEAN_MS_DELAY,

@@ -135,6 +135,9 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     /// the minimap's white border.
     fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
 
+    /// Detects the minimap name rectangle.
+    fn detect_minimap_name(&self, minimap: Rect) -> Result<Rect>;
+
     /// Detects the portals from the given `minimap` rectangle.
     ///
     /// Returns `Rect` relative to `minimap` coordinate.
@@ -228,6 +231,7 @@ mock! {
         fn detect_tomb_ok_button(&self) -> Result<Rect>;
         fn detect_elite_boss_bar(&self) -> bool;
         fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
+        fn detect_minimap_name(&self, minimap: Rect) -> Result<Rect>;
         fn detect_minimap_portals(&self, minimap: Rect) -> Vec<Rect>;
         fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player(&self, minimap: Rect) -> Result<Rect>;
@@ -326,6 +330,10 @@ impl Detector for CachedDetector {
 
     fn detect_minimap(&self, border_threshold: u8) -> Result<Rect> {
         detect_minimap(&*self.mat, border_threshold)
+    }
+
+    fn detect_minimap_name(&self, minimap: Rect) -> Result<Rect> {
+        detect_minimap_name(&**self.grayscale, minimap)
     }
 
     fn detect_minimap_portals(&self, minimap: Rect) -> Vec<Rect> {
@@ -782,6 +790,41 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
     debug!(target: "minimap", "bbox {bbox:?}");
 
     Ok(bbox + contour_bbox.tl())
+}
+
+fn detect_minimap_name(mat: &impl MatTraitConst, minimap: Rect) -> Result<Rect> {
+    /// Top offset backward from the `y` of `minimap`.
+    const TOP_OFFSET: i32 = 24;
+    /// Left offset from the `x` of `minimap`.
+    const LEFT_OFFSET: i32 = 36;
+    /// The height of the name region.
+    const NAME_HEIGHT: i32 = 20;
+
+    let x = minimap.x + LEFT_OFFSET;
+    let y = minimap.y - TOP_OFFSET;
+    let kernel = get_structuring_element_def(MORPH_RECT, Size::new(5, 5)).unwrap();
+    let name_bbox = Rect::new(x, y, minimap.x + minimap.width - x, NAME_HEIGHT);
+    let mut name = mat.roi(name_bbox)?.clone_pointee();
+    unsafe {
+        name.modify_inplace(|mat, mat_mut| {
+            threshold(mat, mat_mut, 200.0, 255.0, THRESH_BINARY).unwrap();
+            dilate_def(mat, mat_mut, &kernel).unwrap();
+        });
+    }
+
+    let mut contours = Vector::<Vector<Point>>::new();
+    find_contours_def(&name, &mut contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE).unwrap();
+    if contours.is_empty() {
+        bail!("cannot find the minimap name contours")
+    }
+    let contour_bbox = contours
+        .into_iter()
+        .map(|contour| bounding_rect(&contour).unwrap())
+        .reduce(|first, second| first | second)
+        .ok_or(anyhow!("minimap name contours is empty"))?;
+    let name_bbox = contour_bbox + name_bbox.tl();
+
+    Ok(name_bbox)
 }
 
 fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Vec<Rect> {
