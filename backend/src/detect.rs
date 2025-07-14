@@ -789,15 +789,15 @@ fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Vec<Re
     static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("PORTAL_TEMPLATE")), IMREAD_COLOR).unwrap()
     });
+    const PORTAL_PAD_SIZE: i32 = 5;
 
-    detect_template_multiple(&minimap, &*TEMPLATE, no_array(), Point::default(), 16, 0.75)
+    detect_template_multiple(&minimap, &*TEMPLATE, no_array(), Point::default(), 16, 0.7)
         .into_iter()
         .filter_map(|result| result.ok())
         .map(|(bbox, _)| {
-            let size = 5;
-            let x = (bbox.x - size).max(0);
+            let x = (bbox.x - PORTAL_PAD_SIZE).max(0);
             let xd = bbox.x - x;
-            let y = (bbox.y - size).max(0);
+            let y = (bbox.y - PORTAL_PAD_SIZE).max(0);
             let yd = bbox.y - y;
             let width = TEMPLATE.cols() + xd * 2 + (size - xd - 1);
             let height = TEMPLATE.rows() + yd * 2 + (size - yd - 1);
