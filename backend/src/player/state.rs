@@ -168,7 +168,7 @@ pub struct PlayerState {
     /// This action will override the normal action if it is in the middle of executing.
     pub(super) priority_action: Option<PlayerAction>,
     /// The player current health and max health.
-    pub health: Option<(u32, u32)>,
+    health: Option<(u32, u32)>,
     /// The task to update health.
     health_task: Option<Task<Result<(u32, u32)>>>,
     /// The rectangular health bar region.
@@ -181,7 +181,7 @@ pub struct PlayerState {
     /// Whether the player is stationary.
     pub(super) is_stationary: bool,
     /// Whether the player is dead.
-    pub is_dead: bool,
+    is_dead: bool,
     /// The task for detecting if player is dead.
     is_dead_task: Option<Task<Result<bool>>>,
     /// The task for detecting the tomb OK button when player is dead.
@@ -273,6 +273,16 @@ impl PlayerState {
             reset_to_idle_next_update: true,
             ..PlayerState::default()
         };
+    }
+
+    #[inline]
+    pub fn health(&self) -> Option<(u32, u32)> {
+        self.health
+    }
+
+    #[inline]
+    pub fn is_dead(&self) -> bool {
+        self.is_dead
     }
 
     #[cfg(test)]

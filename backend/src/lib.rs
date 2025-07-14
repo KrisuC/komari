@@ -27,6 +27,7 @@ mod debug;
 mod detect;
 mod mat;
 mod minimap;
+mod navigation;
 mod network;
 mod pathing;
 mod player;

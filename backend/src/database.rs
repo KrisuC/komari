@@ -28,6 +28,10 @@ static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
             id INTEGER PRIMARY KEY,
             data TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS navigation_paths (
+            id INTEGER PRIMARY KEY,
+            data TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS characters (
             id INTEGER PRIMARY KEY,
             data TEXT NOT NULL
@@ -533,6 +537,33 @@ pub struct Minimap {
     pub auto_mob_platforms_bound: bool,
     pub actions_any_reset_on_erda_condition: bool,
     pub actions: HashMap<String, Vec<Action>>,
+}
+
+#[derive(PartialEq, Clone, Debug, Default, Serialize, Deserialize)]
+pub struct NavigationPath {
+    #[serde(skip_serializing, default)]
+    pub id: Option<i64>,
+    pub minimap_id: Option<i64>, // Not FK, loose coupling to another minimap
+    pub name_frame: Vec<u8>,
+    pub name_frame_width: i32,
+    pub name_frame_height: i32,
+    pub points: Vec<NavigationPoint>,
+}
+
+#[derive(PartialEq, Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct NavigationPoint {
+    pub next_path_id: Option<i64>, // Not FK, loose coupling to another navigation path
+    pub x: i32,
+    pub y: i32,
+    pub transition: NavigationTransition,
+}
+
+#[derive(
+    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
+)]
+pub enum NavigationTransition {
+    #[default]
+    Portal,
 }
 
 impl_identifiable!(Minimap);

@@ -229,7 +229,7 @@ fn update_loop() {
     loop_with_fps(FPS, || {
         let mat = image_capture.grab().map(OwnedMat::new);
         let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
-        let was_player_alive = !player_state.is_dead;
+        let was_player_alive = !player_state.is_dead();
         let detector = mat.map(CachedDetector::new);
 
         context.tick += 1;
@@ -301,7 +301,7 @@ fn update_loop() {
         if handler.minimap.data().is_some() && !handler.context.halting {
             let minimap_changed =
                 was_minimap_idle && matches!(handler.context.minimap, Minimap::Detecting);
-            let player_died = was_player_alive && handler.player.is_dead;
+            let player_died = was_player_alive && handler.player.is_dead();
             let can_halt_or_notify = minimap_changed
                 && !matches!(
                     handler.context.player,

@@ -73,7 +73,7 @@ impl DefaultRequestHandler<'_> {
             // TODO: Separate into variables for better readability
             let game_state = GameState {
                 position: self.player.last_known_pos.map(|pos| (pos.x, pos.y)),
-                health: self.player.health,
+                health: self.player.health(),
                 state: self.context.player.to_string(),
                 normal_action: self.player.normal_action_name(),
                 priority_action: self.player.priority_action_name(),
