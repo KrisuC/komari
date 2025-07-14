@@ -15,17 +15,23 @@ pub struct OwnedMat {
 }
 
 impl OwnedMat {
-    pub fn new(frame: Frame) -> Self {
-        let data = frame.data;
+    #[inline]
+    pub fn new_from_frame(frame: Frame) -> Self {
+        Self::new_from_bytes(frame.data, frame.width, frame.height, CV_8UC4)
+    }
+
+    #[inline]
+    fn new_from_bytes(data: Vec<u8>, width: i32, height: i32, cv_type: i32) -> Self {
         let mat = BoxedRef::from(unsafe {
             Mat::new_nd_with_data_unsafe_def(
-                &[frame.height, frame.width],
-                CV_8UC4,
+                &[height, width],
+                cv_type,
                 data.as_ptr().cast_mut().cast(),
             )
             .unwrap()
         });
-        Self { mat, data }
+
+        Self { data, mat }
     }
 }
 

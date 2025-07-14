@@ -112,6 +112,8 @@ pub enum FamiliarRank {
 pub trait Detector: 'static + Send + DynClone + Debug {
     fn mat(&self) -> &OwnedMat;
 
+    fn grayscale_mat(&self) -> &Mat;
+
     /// Detects a list of mobs.
     ///
     /// Returns a list of mobs coordinate relative to minimap coordinate.
@@ -137,6 +139,16 @@ pub trait Detector: 'static + Send + DynClone + Debug {
 
     /// Detects the minimap name rectangle.
     fn detect_minimap_name(&self, minimap: Rect) -> Result<Rect>;
+
+    /// Detects whether the given `minimap_snapshot` and `minimap_name_snapshot` matches the one
+    /// cropped by `minimap_name_bbox` and `minimap_bbox` rectangles.
+    fn detect_minimap_match(
+        &self,
+        minimap_snapshot: &Mat,
+        minimap_name_snapshot: &Mat,
+        minimap_bbox: Rect,
+        minimap_name_bbox: Rect,
+    ) -> bool;
 
     /// Detects the portals from the given `minimap` rectangle.
     ///
@@ -225,6 +237,7 @@ mock! {
 
     impl Detector for Detector {
         fn mat(&self) -> &OwnedMat;
+        fn grayscale_mat(&self) -> &Mat;
         fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>>;
         fn detect_esc_settings(&self) -> bool;
         fn detect_esc_confirm_button(&self) -> Result<Rect>;
@@ -232,6 +245,13 @@ mock! {
         fn detect_elite_boss_bar(&self) -> bool;
         fn detect_minimap(&self, border_threshold: u8) -> Result<Rect>;
         fn detect_minimap_name(&self, minimap: Rect) -> Result<Rect>;
+        fn detect_minimap_match(
+            &self,
+            minimap_snapshot: &Mat,
+            minimap_name_snapshot: &Mat,
+            minimap_bbox: Rect,
+            minimap_name_bbox: Rect,
+        ) -> bool;
         fn detect_minimap_portals(&self, minimap: Rect) -> Vec<Rect>;
         fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player(&self, minimap: Rect) -> Result<Rect>;
@@ -308,6 +328,10 @@ impl Detector for CachedDetector {
         &self.mat
     }
 
+    fn grayscale_mat(&self) -> &Mat {
+        &self.grayscale
+    }
+
     fn detect_mobs(&self, minimap: Rect, bound: Rect, player: Point) -> Result<Vec<Point>> {
         detect_mobs(&*self.mat, minimap, bound, player)
     }
@@ -334,6 +358,24 @@ impl Detector for CachedDetector {
 
     fn detect_minimap_name(&self, minimap: Rect) -> Result<Rect> {
         detect_minimap_name(&**self.grayscale, minimap)
+    }
+
+    fn detect_minimap_match(
+        &self,
+        minimap_snapshot: &Mat,
+        minimap_name_snapshot: &Mat,
+        minimap_bbox: Rect,
+        minimap_name_bbox: Rect,
+    ) -> bool {
+        detect_minimap_match(
+            &*self.mat,
+            &**self.grayscale,
+            minimap_snapshot,
+            minimap_name_snapshot,
+            minimap_bbox,
+            minimap_name_bbox,
+        )
+        .is_ok()
     }
 
     fn detect_minimap_portals(&self, minimap: Rect) -> Vec<Rect> {
@@ -456,6 +498,16 @@ fn crop_to_buffs_region(mat: &impl MatTraitConst) -> BoxedRef<'_, Mat> {
     let crop_y = size.height / 4;
     let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
     mat.roi(crop_bbox).unwrap()
+}
+
+fn expand_bbox(mat: &impl MatTraitConst, bbox: Rect, size: i32) -> Rect {
+    let x = (bbox.x - size).max(0);
+    let y = (bbox.y - size).max(0);
+    let br = bbox.br();
+    let width = (br.x + size).min(mat.cols()) - x;
+    let height = (br.y + size).min(mat.rows()) - y;
+
+    Rect::new(x, y, width, height)
 }
 
 fn detect_mobs(
@@ -827,24 +879,50 @@ fn detect_minimap_name(mat: &impl MatTraitConst, minimap: Rect) -> Result<Rect> 
     Ok(name_bbox)
 }
 
+fn detect_minimap_match<T: ToInputArray + MatTraitConst>(
+    mat: &impl MatTraitConst,
+    grayscale: &impl MatTraitConst,
+    minimap_snapshot: &T,
+    minimap_name_snapshot: &T,
+    minimap_bbox: Rect,
+    minimap_name_bbox: Rect,
+) -> Result<()> {
+    const EXPAND_NAME_SIZE: i32 = 4;
+
+    let minimap_name_bbox = expand_bbox(grayscale, minimap_name_bbox, EXPAND_NAME_SIZE);
+    let minimap_name = grayscale.roi(minimap_name_bbox)?;
+
+    let minimap_bbox = expand_bbox(mat, minimap_bbox, EXPAND_NAME_SIZE);
+    let minimap = to_bgr(&mat.roi(minimap_bbox)?);
+
+    detect_template_single(
+        &minimap_name,
+        minimap_name_snapshot,
+        no_array(),
+        Point::default(),
+        0.75,
+    )?;
+    detect_template_single(
+        &minimap,
+        minimap_snapshot,
+        no_array(),
+        Point::default(),
+        0.75,
+    )?;
+    Ok(())
+}
+
 fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Vec<Rect> {
     /// TODO: Support default ratio
     static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("PORTAL_TEMPLATE")), IMREAD_COLOR).unwrap()
     });
-    const PORTAL_PAD_SIZE: i32 = 5;
+    const PORTAL_EXPAND_SIZE: i32 = 5;
 
     detect_template_multiple(&minimap, &*TEMPLATE, no_array(), Point::default(), 16, 0.7)
         .into_iter()
         .filter_map(|result| result.ok())
-        .map(|(bbox, _)| {
-            let x = (bbox.x - PORTAL_PAD_SIZE).max(0);
-            let y = (bbox.y - PORTAL_PAD_SIZE).max(0);
-            let br = bbox.br();
-            let width = (br.x + PORTAL_PAD_SIZE).min(minimap.cols()) - x;
-            let height = (br.y + PORTAL_PAD_SIZE).min(minimap.rows()) - y;
-            Rect::new(x, y, width, height)
-        })
+        .map(|(bbox, _)| expand_bbox(&minimap, bbox, PORTAL_EXPAND_SIZE))
         .collect::<Vec<_>>()
 }
 
@@ -2022,20 +2100,17 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
     threshold: f64,
 ) -> Vec<Result<(Rect, f64)>> {
     #[inline]
-    fn clear_result(result: &mut Mat, rect: Rect, offset: Point) {
-        let x = rect.x - offset.x;
-        let y = rect.y - offset.y;
+    fn clear_result(result: &mut Mat, rect: Rect, offset: Point) -> Result<()> {
+        let x = (rect.x - offset.x).max(0);
+        let y = (rect.y - offset.y).max(0);
         let roi_rect = Rect::new(
             x,
             y,
             rect.width.min(result.cols() - x),
             rect.height.min(result.rows() - y),
         );
-        result
-            .roi_mut(roi_rect)
-            .unwrap()
-            .set_scalar(Scalar::default())
-            .unwrap();
+        result.roi_mut(roi_rect)?.set_scalar(Scalar::default())?;
+        Ok(())
     }
 
     #[inline]
@@ -2083,7 +2158,9 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
                 .as_ref()
                 .is_ok_and(|(_, score)| *score == f64::INFINITY)
             {
-                clear_result(&mut result, rect, offset);
+                if clear_result(&mut result, rect, offset).is_err() {
+                    return vec![];
+                }
                 continue;
             }
             return vec![match_result];
@@ -2094,7 +2171,9 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
     for _ in 0..max_matches {
         loop {
             let (rect, match_result) = match_one(&result, offset, template_size, threshold);
-            clear_result(&mut result, rect, offset);
+            if clear_result(&mut result, rect, offset).is_err() {
+                return vec![];
+            }
             // Weird INFINITY values when match template with mask
             // https://github.com/opencv/opencv/issues/23257
             if match_result

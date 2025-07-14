@@ -4,7 +4,7 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use opencv::core::Rect;
 use platforms::windows::KeyKind;
 use rusqlite::{Connection, Params, Statement, types::Null};
@@ -13,6 +13,12 @@ use serde_json::Value;
 use strum::{Display, EnumIter, EnumString};
 
 use crate::pathing;
+
+const MAPS: &str = "maps";
+const NAVIGATION_PATHS: &str = "navigation_paths";
+const CHARACTERS: &str = "characters";
+const SETTINGS: &str = "settings";
+const SEEDS: &str = "seeds";
 
 static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
     let path = env::current_exe()
@@ -539,16 +545,20 @@ pub struct Minimap {
     pub actions: HashMap<String, Vec<Action>>,
 }
 
+impl_identifiable!(Minimap);
+
 #[derive(PartialEq, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NavigationPath {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
-    pub minimap_id: Option<i64>, // Not FK, loose coupling to another minimap
-    pub name_frame: Vec<u8>,
-    pub name_frame_width: i32,
-    pub name_frame_height: i32,
+    pub minimap_snapshot_base64: String,
+    pub name_snapshot_base64: String,
+    pub name_snapshot_width: i32,
+    pub name_snapshot_height: i32,
     pub points: Vec<NavigationPoint>,
 }
+
+impl_identifiable!(NavigationPath);
 
 #[derive(PartialEq, Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct NavigationPoint {
@@ -565,8 +575,6 @@ pub enum NavigationTransition {
     #[default]
     Portal,
 }
-
-impl_identifiable!(Minimap);
 
 fn deserialize_with_ok_or_default<'a, T, D>(deserializer: D) -> Result<T, D::Error>
 where
@@ -982,19 +990,19 @@ impl From<KeyKind> for KeyBinding {
 }
 
 pub fn query_seeds() -> Seeds {
-    let mut seeds = query_from_table::<Seeds>("seeds")
+    let mut seeds = query_from_table::<Seeds>(SEEDS)
         .unwrap()
         .into_iter()
         .next()
         .unwrap_or_default();
     if seeds.id.is_none() {
-        upsert_to_table("seeds", &mut seeds).unwrap();
+        upsert_to_table(SEEDS, &mut seeds).unwrap();
     }
     seeds
 }
 
 pub fn query_settings() -> Settings {
-    let mut settings = query_from_table::<Settings>("settings")
+    let mut settings = query_from_table::<Settings>(SETTINGS)
         .unwrap()
         .into_iter()
         .next()
@@ -1006,33 +1014,47 @@ pub fn query_settings() -> Settings {
 }
 
 pub fn upsert_settings(settings: &mut Settings) -> Result<()> {
-    upsert_to_table("settings", settings)
+    upsert_to_table(SETTINGS, settings)
 }
 
 pub fn query_characters() -> Result<Vec<Character>> {
-    query_from_table("characters")
+    query_from_table(CHARACTERS)
 }
 
 pub fn upsert_character(character: &mut Character) -> Result<()> {
-    upsert_to_table("characters", character)
+    upsert_to_table(CHARACTERS, character)
 }
 
 pub fn delete_character(character: &Character) -> Result<()> {
-    delete_from_table("characters", character)
+    delete_from_table(CHARACTERS, character)
 }
 
 pub fn query_minimaps() -> Result<Vec<Minimap>> {
-    query_from_table("maps").inspect_err(|err| {
-        println!("{err:?}");
-    })
+    query_from_table(MAPS)
 }
 
 pub fn upsert_minimap(map: &mut Minimap) -> Result<()> {
-    upsert_to_table("maps", map)
+    upsert_to_table(MAPS, map)
 }
 
 pub fn delete_minimap(map: &Minimap) -> Result<()> {
-    delete_from_table("maps", map)
+    delete_from_table(MAPS, map)
+}
+
+pub fn query_navigation_paths() -> Result<Vec<NavigationPath>> {
+    query_from_table(NAVIGATION_PATHS)
+}
+
+pub fn query_navigation_path(id: i64) -> Result<NavigationPath> {
+    query_from_table_with_id(NAVIGATION_PATHS, id)
+}
+
+pub fn upsert_navigation_path(path: &mut NavigationPath) -> Result<()> {
+    upsert_to_table(NAVIGATION_PATHS, path)
+}
+
+pub fn delete_navigation_path(path: &NavigationPath) -> Result<()> {
+    delete_from_table(NAVIGATION_PATHS, path)
 }
 
 fn map_data<T>(mut stmt: Statement<'_>, params: impl Params) -> Result<Vec<T>>
@@ -1056,9 +1078,22 @@ where
     T: DeserializeOwned + Identifiable + Default,
 {
     let conn = CONNECTION.lock().unwrap();
-    let stmt = format!("SELECT id, data FROM {table}");
+    let stmt = format!("SELECT id, data FROM {table};");
     let stmt = conn.prepare(&stmt).unwrap();
     map_data(stmt, [])
+}
+
+fn query_from_table_with_id<T>(table: &str, id: i64) -> Result<T>
+where
+    T: DeserializeOwned + Identifiable + Default,
+{
+    let conn = CONNECTION.lock().unwrap();
+    let stmt = format!("SELECT id, data FROM {table} WHERE id = ?1;");
+    let stmt = conn.prepare(&stmt).unwrap();
+    map_data(stmt, [id])?
+        .into_iter()
+        .next()
+        .ok_or(anyhow!("data not found"))
 }
 
 fn upsert_to_table<T>(table: &str, data: &mut T) -> Result<()>

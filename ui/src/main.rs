@@ -20,6 +20,7 @@ use dioxus::{
 use fern::Dispatch;
 use log::LevelFilter;
 use minimap::Minimap;
+use navigation::Navigation;
 use rand::distr::{Alphanumeric, SampleString};
 use settings::Settings;
 
@@ -31,6 +32,7 @@ mod debug;
 mod icons;
 mod inputs;
 mod minimap;
+mod navigation;
 mod select;
 mod settings;
 
@@ -38,6 +40,7 @@ const TAILWIND_CSS: Asset = asset!("public/tailwind.css");
 const AUTO_NUMERIC_JS: Asset = asset!("assets/autoNumeric.min.js");
 const TAB_ACTIONS: &str = "Actions";
 const TAB_CHARACTERS: &str = "Characters";
+const TAB_NAVIGATION: &str = "Navigation";
 const TAB_SETTINGS: &str = "Settings";
 #[cfg(debug_assertions)]
 const TAB_DEBUG: &str = "Debug";
@@ -46,6 +49,7 @@ static TABS: LazyLock<Vec<String>> = LazyLock::new(|| {
     vec![
         TAB_ACTIONS.to_string(),
         TAB_CHARACTERS.to_string(),
+        TAB_NAVIGATION.to_string(),
         TAB_SETTINGS.to_string(),
         #[cfg(debug_assertions)]
         TAB_DEBUG.to_string(),
@@ -150,6 +154,9 @@ fn App() -> Element {
                             },
                             TAB_SETTINGS => rsx! {
                                 Settings {}
+                            },
+                            TAB_NAVIGATION => rsx! {
+                                Navigation {}
                             },
                             #[cfg(debug_assertions)]
                             TAB_DEBUG => rsx! {

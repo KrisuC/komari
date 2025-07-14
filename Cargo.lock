@@ -277,6 +277,7 @@ name = "backend"
 version = "0.19.0"
 dependencies = [
  "anyhow",
+ "base64",
  "bit-vec",
  "dyn-clone",
  "include_dir",

@@ -18,6 +18,7 @@ use crate::{
     context::{Context, MS_PER_TICK},
     database::{Action, ActionCondition, ActionKey, ActionMove, EliteBossBehavior},
     minimap::Minimap,
+    navigation::Navigator,
     player::{
         GRAPPLING_THRESHOLD, PanicTo, PingPongDirection, Player, PlayerAction, PlayerActionAutoMob,
         PlayerActionFamiliarsSwapping, PlayerActionKey, PlayerActionPanic, PlayerActionPingPong,
@@ -138,6 +139,8 @@ pub struct Rotator {
     ///
     /// Populates from [`Self::priority_actions`] when its predicate for queuing is true
     priority_actions_queue: VecDeque<u32>,
+    /// A navigator for navigating through maps.
+    navigator: Navigator,
 }
 
 #[derive(Debug)]
@@ -291,6 +294,8 @@ impl Rotator {
 
     #[inline]
     pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
+        self.navigator.update(context);
+
         if context.halting || matches!(context.player, Player::CashShopThenExit(_, _)) {
             return;
         }

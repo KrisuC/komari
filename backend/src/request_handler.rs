@@ -2,15 +2,19 @@ use std::sync::LazyLock;
 #[cfg(debug_assertions)]
 use std::time::Instant;
 
+use base64::{Engine, prelude::BASE64_STANDARD};
 #[cfg(debug_assertions)]
 use include_dir::{Dir, include_dir};
 use log::debug;
-use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
 #[cfg(debug_assertions)]
 use opencv::{
     core::{Mat, ModifyInplace, Vector},
     imgcodecs::{IMREAD_COLOR, imdecode},
     imgproc::{COLOR_BGR2BGRA, cvt_color_def},
+};
+use opencv::{
+    core::{MatTraitConst, MatTraitConstManual, Vec4b},
+    imgcodecs::imencode_def,
 };
 use platforms::windows::{Handle, KeyInputKind, KeyKind, KeyReceiver, query_capture_handles};
 #[cfg(debug_assertions)]
@@ -28,8 +32,8 @@ use crate::detect::{ArrowsCalibrating, ArrowsState, CachedDetector, Detector};
 use crate::mat::OwnedMat;
 use crate::{
     Action, ActionCondition, ActionConfigurationCondition, ActionKey, BoundQuadrant, CaptureMode,
-    Character, GameState, KeyBinding, KeyBindingConfiguration, Minimap as MinimapData, PotionMode,
-    RequestHandler, RotationMode, RotatorMode, Settings,
+    Character, GameState, KeyBinding, KeyBindingConfiguration, Minimap as MinimapData,
+    NavigationPath, PotionMode, RequestHandler, RotationMode, RotatorMode, Settings,
     bridge::{ImageCapture, ImageCaptureKind, KeySenderMethod},
     buff::{BuffKind, BuffState},
     context::Context,
@@ -282,6 +286,34 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             .and_then(|preset| minimap.actions.get(&preset).cloned())
             .unwrap_or_default();
         self.update_rotator_actions();
+    }
+
+    fn on_create_navigation_path(&self) -> Option<NavigationPath> {
+        if let Minimap::Idle(idle) = self.context.minimap
+            && let Some(detector) = self.context.detector.as_ref()
+        {
+            let name_bbox = detector.detect_minimap_name(idle.bbox).ok()?;
+            let name = detector.grayscale_mat().roi(name_bbox).ok()?;
+            let mut name_bytes = Vector::new();
+            imencode_def(".png", &name, &mut name_bytes).ok()?;
+            let name_base64 = BASE64_STANDARD.encode(name_bytes);
+
+            let minimap = detector.mat().roi(idle.bbox).ok()?;
+            let mut minimap_bytes = Vector::new();
+            imencode_def(".png", &minimap, &mut minimap_bytes).ok()?;
+            let minimap_base64 = BASE64_STANDARD.encode(minimap_bytes);
+
+            Some(NavigationPath {
+                id: None,
+                minimap_snapshot_base64: minimap_base64,
+                name_snapshot_base64: name_base64,
+                name_snapshot_width: name_bbox.width,
+                name_snapshot_height: name_bbox.height,
+                points: vec![],
+            })
+        } else {
+            None
+        }
     }
 
     fn on_update_character(&mut self, character: Option<Character>) {

@@ -96,6 +96,8 @@ pub struct Context {
     ///
     /// This is increased on each update tick.
     pub tick: u64,
+    /// Whether minimap changed to detecting on the current tick.
+    pub did_minimap_changed: bool,
 }
 
 impl Context {
@@ -113,6 +115,7 @@ impl Context {
             buffs: [Buff::No; BuffKind::COUNT],
             halting: false,
             tick: 0,
+            did_minimap_changed: false,
         }
     }
 
@@ -211,6 +214,7 @@ fn update_loop() {
         buffs: [Buff::No; BuffKind::COUNT],
         halting: true,
         tick: 0,
+        did_minimap_changed: false,
     };
     let mut player_state = PlayerState::default();
     let mut minimap_state = MinimapState::default();
@@ -227,13 +231,14 @@ fn update_loop() {
     let mut infering_rune = None;
 
     loop_with_fps(FPS, || {
-        let mat = image_capture.grab().map(OwnedMat::new);
-        let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
+        let mat = image_capture.grab().map(OwnedMat::new_from_frame);
         let was_player_alive = !player_state.is_dead();
         let detector = mat.map(CachedDetector::new);
 
         context.tick += 1;
         if let Some(detector) = detector {
+            let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
+
             context.detector = Some(Box::new(detector));
             context.minimap = fold_context(&context, context.minimap, &mut minimap_state);
             context.player = fold_context(&context, context.player, &mut player_state);
@@ -247,6 +252,9 @@ fn update_loop() {
             for (i, state) in buff_states.iter_mut().enumerate().take(context.buffs.len()) {
                 context.buffs[i] = fold_context(&context, context.buffs[i], state);
             }
+            context.did_minimap_changed =
+                was_minimap_idle && matches!(context.minimap, Minimap::Detecting);
+
             // Rotating action must always be done last
             rotator.rotate_action(&context, &mut player_state);
         }
@@ -299,10 +307,8 @@ fn update_loop() {
         // Upon accidental or white roomed causing map to change,
         // abort actions and send notification
         if handler.minimap.data().is_some() && !handler.context.halting {
-            let minimap_changed =
-                was_minimap_idle && matches!(handler.context.minimap, Minimap::Detecting);
             let player_died = was_player_alive && handler.player.is_dead();
-            let can_halt_or_notify = minimap_changed
+            let can_halt_or_notify = handler.context.did_minimap_changed
                 && !matches!(
                     handler.context.player,
                     Player::Panicking(Panicking {
