@@ -796,11 +796,10 @@ fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Vec<Re
         .filter_map(|result| result.ok())
         .map(|(bbox, _)| {
             let x = (bbox.x - PORTAL_PAD_SIZE).max(0);
-            let xd = bbox.x - x;
             let y = (bbox.y - PORTAL_PAD_SIZE).max(0);
-            let yd = bbox.y - y;
-            let width = TEMPLATE.cols() + xd * 2 + (size - xd - 1);
-            let height = TEMPLATE.rows() + yd * 2 + (size - yd - 1);
+            let br = bbox.br();
+            let width = (br.x + PORTAL_PAD_SIZE).min(minimap.cols()) - x;
+            let height = (br.y + PORTAL_PAD_SIZE).min(minimap.rows()) - y;
             Rect::new(x, y, width, height)
         })
         .collect::<Vec<_>>()
