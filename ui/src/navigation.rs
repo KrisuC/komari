@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use backend::{
     NavigationPath, NavigationPoint, NavigationTransition, create_navigation_path,
@@ -18,6 +18,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 enum NavigationPopup {
     Snapshots(NavigationPath),
+    Point(NavigationPath, usize),
 }
 
 #[derive(Debug)]
@@ -89,15 +90,35 @@ pub fn PopupSnapshots(
 }
 
 #[component]
+pub fn PopupPoint(
+    x: i32,
+    y: i32,
+    on_save: EventHandler<(i32, i32)>,
+    on_close: EventHandler,
+) -> Element {
+    rsx! {
+        div { class: "px-16 py-20 w-full h-full absolute inset-0 z-1 bg-gray-950/80 flex",
+            div { class: "bg-gray-900 w-full max-w-108 h-full min-h-70 max-h-80 px-2 m-auto",
+                Section {
+                    name: "Path snapshots",
+                    class: "relative h-full !pr-0 !pb-10",
+                }
+            }
+        }
+    }
+}
+
+#[component]
 fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
     let position = use_context::<AppState>().position;
     let mut paths = use_resource(async || query_navigation_paths().await.unwrap_or_default());
     let paths_view = use_memo(move || paths().unwrap_or_default());
+    // Group paths by root for better experience
     let root_paths_view = use_memo(move || {
         let paths = paths_view();
         let all_path_ids = paths
             .iter()
-            .filter_map(|path| path.id)
+            .map(|path| path.id.expect("valid id"))
             .collect::<HashSet<_>>();
         let referenced_path_ids = paths
             .iter()
@@ -109,10 +130,56 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
             .copied()
             .collect::<HashSet<_>>();
 
-        paths
+        let path_by_id = paths
+            .iter()
+            .map(|path| (path.id.expect("valid id"), path))
+            .collect::<HashMap<_, _>>();
+        let root_paths = paths
+            .iter()
+            .filter(|path| path.id.is_some_and(|id| root_path_ids.contains(&id)))
+            .collect::<Vec<_>>();
+
+        let mut visited = HashSet::new();
+        let mut visiting = Vec::new();
+        let mut root_paths_flattened = Vec::new();
+
+        for path in root_paths {
+            visiting.push(path);
+
+            let mut path_flattened = Vec::new();
+            while let Some(path) = visiting.pop() {
+                if !visited.insert(path.id) {
+                    continue;
+                }
+
+                path_flattened.push(path);
+                for point in path.points.iter() {
+                    if let Some(path) = point.next_path_id.and_then(|id| path_by_id.get(&id)) {
+                        visiting.push(path);
+                    }
+                }
+            }
+
+            root_paths_flattened.push(path_flattened);
+        }
+
+        let root_paths_flattened_id = root_paths_flattened
+            .iter()
+            .flat_map(|paths| paths.iter().filter_map(|path| path.id))
+            .collect::<HashSet<_>>();
+        let circular_paths = paths
+            .iter()
+            .filter(|path| {
+                path.id
+                    .is_some_and(|id| !root_paths_flattened_id.contains(&id))
+            })
+            .collect::<Vec<_>>();
+
+        root_paths_flattened.push(circular_paths);
+        root_paths_flattened
             .into_iter()
-            .filter(|p| p.id.is_some_and(|id| root_path_ids.contains(&id)))
-            .collect::<Vec<_>>()
+            .map(|paths| paths.into_iter().cloned().collect())
+            .collect::<Vec<Vec<_>>>()
     });
 
     let coroutine = use_coroutine(
@@ -175,26 +242,31 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
 
     rsx! {
         Section { name: "Paths",
-            div { class: "flex flex-col gap-4",
-                for path in paths_view() {
-                    NavigationPathItem {
-                        path,
-                        paths_view,
-                        on_add_point: move |path| {
-                            on_add_point(path);
-                        },
-                        on_delete_point: move |args| {
-                            on_delete_point(args);
-                        },
-                        on_select_path: move |args| {
-                            on_select_path(args);
-                        },
-                        on_delete: move |path| {
-                            coroutine.send(NavigationUpdate::Delete(path));
-                        },
-                        on_details: move |path: NavigationPath| {
-                            popup.set(Some(NavigationPopup::Snapshots(path)));
-                        },
+            div { class: "flex flex-col gap-2",
+                for (index , paths) in root_paths_view().into_iter().enumerate() {
+                    for path in paths {
+                        NavigationPathItem {
+                            path,
+                            paths_view,
+                            on_add_point: move |path| {
+                                on_add_point(path);
+                            },
+                            on_delete_point: move |args| {
+                                on_delete_point(args);
+                            },
+                            on_select_path: move |args| {
+                                on_select_path(args);
+                            },
+                            on_delete: move |path| {
+                                coroutine.send(NavigationUpdate::Delete(path));
+                            },
+                            on_details: move |path: NavigationPath| {
+                                popup.set(Some(NavigationPopup::Snapshots(path)));
+                            },
+                        }
+                    }
+                    if index != root_paths_view.peek().len() - 1 {
+                        div { class: "border-b border-dashed border-gray-600 my-2" }
                     }
                 }
             }
@@ -209,20 +281,38 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
         }
         if let Some(kind) = popup() {
             match kind {
-                NavigationPopup::Snapshots(path) => {
-                    rsx! {
-                        PopupSnapshots {
-                            name_base64: path.name_snapshot_base64.clone(),
-                            minimap_base64: path.minimap_snapshot_base64.clone(),
+                NavigationPopup::Snapshots(path) => rsx! {
+                    PopupSnapshots {
+                        name_base64: path.name_snapshot_base64.clone(),
+                        minimap_base64: path.minimap_snapshot_base64.clone(),
+                        on_close: move |_| {
+                            popup.set(None);
+                        },
+                        on_recapture: move |_| {
+                            coroutine.send(NavigationUpdate::Recapture(path.clone()));
+                        },
+                    }
+                },
+                NavigationPopup::Point(path, index) => rsx! {
+                    if let Some(point) = path.points.get(index) {
+                        PopupPoint {
+                            x: point.x,
+                            y: point.y,
+                            on_save: move |(x, y)| {
+                                let mut path = path.clone();
+                                if let Some(point) = path.points.get_mut(index) {
+                                    point.x = x;
+                                    point.y = y;
+                                    coroutine.send(NavigationUpdate::Update(path));
+                                }
+                                popup.set(None);
+                            },
                             on_close: move |_| {
                                 popup.set(None);
                             },
-                            on_recapture: move |_| {
-                                coroutine.send(NavigationUpdate::Recapture(path.clone()));
-                            },
                         }
                     }
-                }
+                },
             }
         }
     }

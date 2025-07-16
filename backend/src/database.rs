@@ -543,6 +543,8 @@ pub struct Minimap {
     pub auto_mob_platforms_bound: bool,
     pub actions_any_reset_on_erda_condition: bool,
     pub actions: HashMap<String, Vec<Action>>,
+    #[serde(default)]
+    pub path_id: Option<i64>, // Not FK, loose coupling to another path
 }
 
 impl_identifiable!(Minimap);

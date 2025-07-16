@@ -289,6 +289,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_create_navigation_path(&self) -> Option<NavigationPath> {
+        return Some(NavigationPath::default());
         if let Some((minimap_base64, name_base64, name_bbox)) =
             extract_minimap_and_name_base64(self.context)
         {

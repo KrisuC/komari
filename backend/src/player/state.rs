@@ -157,12 +157,12 @@ pub struct PlayerConfiguration {
 #[derive(Debug, Default)]
 pub struct PlayerState {
     pub config: PlayerConfiguration,
-    /// The id of the normal action provided by [`Rotator`].
-    normal_action_id: u32,
+    /// Optional id of current normal action provided by [`Rotator`].
+    normal_action_id: Option<u32>,
     /// A normal action requested by [`Rotator`].
     pub(super) normal_action: Option<PlayerAction>,
-    /// The id of the priority action provided by [`Rotator`].
-    priority_action_id: u32,
+    /// Optional id of current priority action provided by [`Rotator`].
+    priority_action_id: Option<u32>,
     /// A priority action requested by [`Rotator`].
     ///
     /// This action will override the normal action if it is in the middle of executing.
@@ -299,7 +299,11 @@ impl PlayerState {
     /// The normal action id provided by [`Rotator`].
     #[inline]
     pub fn normal_action_id(&self) -> Option<u32> {
-        self.has_normal_action().then_some(self.normal_action_id)
+        if self.has_normal_action() {
+            self.normal_action_id
+        } else {
+            None
+        }
     }
 
     /// Whether is a normal action.
@@ -308,9 +312,9 @@ impl PlayerState {
         self.normal_action.is_some()
     }
 
-    /// Sets the normal action to `id` and `action` and resets to [`Player::Idle`] on next update.
+    /// Sets the normal action to `id`, `action` and resets to [`Player::Idle`] on next update.
     #[inline]
-    pub fn set_normal_action(&mut self, id: u32, action: PlayerAction) {
+    pub fn set_normal_action(&mut self, id: Option<u32>, action: PlayerAction) {
         self.reset_to_idle_next_update = true;
         self.normal_action_id = id;
         self.normal_action = Some(action);
@@ -332,8 +336,11 @@ impl PlayerState {
     /// The priority action id provided by [`Rotator`].
     #[inline]
     pub fn priority_action_id(&self) -> Option<u32> {
-        self.has_priority_action()
-            .then_some(self.priority_action_id)
+        if self.has_priority_action() {
+            self.priority_action_id
+        } else {
+            None
+        }
     }
 
     /// Whether there is a priority action.
@@ -342,10 +349,10 @@ impl PlayerState {
         self.priority_action.is_some()
     }
 
-    /// Sets the priority action to `id` and `action` and resets to [`Player::Idle`] on next
+    /// Sets the priority action to `id`, `action` and resets to [`Player::Idle`] on next
     /// update.
     #[inline]
-    pub fn set_priority_action(&mut self, id: u32, action: PlayerAction) {
+    pub fn set_priority_action(&mut self, id: Option<u32>, action: PlayerAction) {
         let _ = self.replace_priority_action(id, action);
     }
 
@@ -353,23 +360,30 @@ impl PlayerState {
     #[inline]
     pub fn take_priority_action(&mut self) -> Option<u32> {
         self.reset_to_idle_next_update = true;
-        self.priority_action
-            .take()
-            .is_some()
-            .then_some(self.priority_action_id)
+        if self.priority_action.take().is_some() {
+            self.priority_action_id
+        } else {
+            None
+        }
     }
 
     /// Replaces the current priority action with `id` and `action` and returns the previous
     /// action id if there is one.
     #[inline]
-    pub fn replace_priority_action(&mut self, id: u32, action: PlayerAction) -> Option<u32> {
+    pub fn replace_priority_action(
+        &mut self,
+        id: Option<u32>,
+        action: PlayerAction,
+    ) -> Option<u32> {
         let prev_id = self.priority_action_id;
         self.reset_to_idle_next_update = true;
         self.priority_action_id = id;
-        self.priority_action
-            .replace(action)
-            .is_some()
-            .then_some(prev_id)
+
+        if self.priority_action.replace(action).is_some() {
+            prev_id
+        } else {
+            None
+        }
     }
 
     /// Whether the player is validating whether the rune is solved.
@@ -380,7 +394,7 @@ impl PlayerState {
 
     /// Whether there is a priority rune action.
     #[inline]
-    pub fn has_rune_action(&self) -> bool {
+    fn has_rune_action(&self) -> bool {
         matches!(self.priority_action, Some(PlayerAction::SolveRune))
     }
 

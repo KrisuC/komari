@@ -12,7 +12,7 @@ use log::{debug, info};
 #[cfg(test)]
 use mockall::automock;
 use opencv::{
-    core::{Rect, Vector},
+    core::{Mat, Rect, Vector},
     imgcodecs::{IMREAD_COLOR, IMREAD_GRAYSCALE, imdecode},
 };
 
@@ -51,7 +51,7 @@ struct Point {
     transition: NavigationTransition,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum PointState {
     Dirty,
     Completed,
@@ -91,6 +91,7 @@ pub struct Navigator {
     current_path: Option<Path>,
     path_dirty: bool,
     path_last_update: Instant,
+    last_computed_point_state: Option<PointState>,
 }
 
 impl Default for Navigator {
@@ -107,15 +108,20 @@ impl Navigator {
             current_path: None,
             path_dirty: true,
             path_last_update: Instant::now(),
+            last_computed_point_state: None,
         }
     }
 
     #[inline]
     fn mark_path_dirty(&mut self) {
         self.path_dirty = true;
+        self.last_computed_point_state = None;
     }
 
     pub fn compute_next_point_to_reach(&self, path_id: Option<i64>) -> PointState {
+        if let Some(state) = self.last_computed_point_state {
+            return state;
+        }
         if self.path_dirty {
             return PointState::Dirty;
         }
@@ -316,8 +322,8 @@ fn build_base_path_from(source: &dyn NavigatorDataSource, path: NavigationPath) 
             if let Some(path) = path_mut.inner.take() {
                 point_inner.next_path = Some(Path {
                     id: path.id.expect("has valid id"),
-                    minimap_snapshot_base64: path.minimap_snapshot_base64,
-                    name_snapshot_base64: path.name_snapshot_base64,
+                    minimap_snapshot_base64: path.minimap_snapshot_base64.clone(),
+                    name_snapshot_base64: path.name_snapshot_base64.clone(),
                     points: path_mut.inner_children_points.drain(..).collect(),
                 });
             }
@@ -341,8 +347,8 @@ fn build_base_path_from(source: &dyn NavigatorDataSource, path: NavigationPath) 
 
     Ok(Path {
         id: root_path_inner.id.expect("has valid id"),
-        minimap_snapshot_base64: root_path_inner.minimap_snapshot_base64,
-        name_snapshot_base64: root_path_inner.name_snapshot_base64,
+        minimap_snapshot_base64: root_path_inner.minimap_snapshot_base64.clone(),
+        name_snapshot_base64: root_path_inner.name_snapshot_base64.clone(),
         points: root_path.inner_children_points,
     })
 }
@@ -354,19 +360,10 @@ fn find_current_from_base_path(
     minimap_name_bbox: Rect,
 ) -> Result<Path> {
     let mut visiting_paths = vec![base_path];
-    let mut vector = Vector::<u8>::new();
 
-    // TODO: Optimize
     while let Some(path) = visiting_paths.pop() {
-        let name_bytes = BASE64_STANDARD.decode(path.name_snapshot_base64.clone())?;
-        vector.clear();
-        vector.extend(name_bytes);
-        let name_mat = imdecode(&vector, IMREAD_GRAYSCALE)?;
-
-        let minimap_bytes = BASE64_STANDARD.decode(path.minimap_snapshot_base64.clone())?;
-        vector.clear();
-        vector.extend(minimap_bytes);
-        let minimap_mat = imdecode(&vector, IMREAD_COLOR)?;
+        let name_mat = decode_base64_to_mat(&path.name_snapshot_base64, true)?;
+        let minimap_mat = decode_base64_to_mat(&path.minimap_snapshot_base64, false)?;
 
         if detector.detect_minimap_match(&minimap_mat, &name_mat, minimap_bbox, minimap_name_bbox) {
             return Ok(path.clone());
@@ -380,6 +377,18 @@ fn find_current_from_base_path(
     }
 
     bail!("unable to determine current path")
+}
+
+fn decode_base64_to_mat(base64: &str, grayscale: bool) -> Result<Mat> {
+    let flag = if grayscale {
+        IMREAD_GRAYSCALE
+    } else {
+        IMREAD_COLOR
+    };
+    let name_bytes = BASE64_STANDARD.decode(base64)?;
+    let name_bytes = Vector::<u8>::from_iter(name_bytes);
+
+    Ok(imdecode(&name_bytes, flag)?)
 }
 
 fn find_root_paths(paths: Vec<NavigationPath>) -> Vec<NavigationPath> {
