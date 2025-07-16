@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use backend::{
     NavigationPath, NavigationPoint, NavigationTransition, create_navigation_path,
-    delete_navigation_path, query_navigation_paths, upsert_navigation_path,
+    delete_navigation_path, query_navigation_paths, recapture_navigation_path,
+    upsert_navigation_path,
 };
 use dioxus::prelude::*;
 use futures_util::StreamExt;
@@ -8,29 +11,109 @@ use futures_util::StreamExt;
 use crate::{
     AppState,
     button::{Button, ButtonKind},
-    icons::XIcon,
+    icons::{DetailsIcon, XIcon},
     select::Select,
 };
+
+#[derive(Debug, Clone, PartialEq)]
+enum NavigationPopup {
+    Snapshots(NavigationPath),
+}
 
 #[derive(Debug)]
 enum NavigationUpdate {
     Update(NavigationPath),
     Create,
     Delete(NavigationPath),
+    Recapture(NavigationPath),
 }
 
 #[component]
 pub fn Navigation() -> Element {
+    let popup = use_signal(|| None);
+
     rsx! {
-        div { class: "flex flex-col h-full overflow-y-auto scrollbar", SectionPaths {} }
+        div { class: "flex flex-col h-full overflow-y-auto scrollbar",
+            SectionPaths { popup }
+        }
     }
 }
 
 #[component]
-fn SectionPaths() -> Element {
+pub fn PopupSnapshots(
+    name_base64: String,
+    minimap_base64: String,
+    on_recapture: EventHandler,
+    on_close: EventHandler,
+) -> Element {
+    rsx! {
+        div { class: "px-16 py-20 w-full h-full absolute inset-0 z-1 bg-gray-950/80 flex",
+            div { class: "bg-gray-900 w-full max-w-108 h-full min-h-70 max-h-80 px-2 m-auto",
+                Section {
+                    name: "Path snapshots",
+                    class: "relative h-full !pr-0 !pb-10",
+                    div { class: "flex flex-col gap-2 pr-2 overflow-y-auto scrollbar",
+                        p { class: "paragraph-xs", "Name" }
+                        img {
+                            src: format!("data:image/png;base64,{}", name_base64),
+                            class: "w-full h-full p-2 border border-gray-600",
+                        }
+                        p { class: "paragraph-xs", "Map" }
+                        img {
+                            src: format!("data:image/png;base64,{}", minimap_base64),
+                            class: "w-full h-full p-2 border border-gray-600",
+                        }
+                    }
+                    div { class: "flex w-full gap-3 absolute bottom-0 py-2 bg-gray-900",
+                        Button {
+                            class: "flex-grow border border-gray-600",
+                            text: "Re-capture",
+                            kind: ButtonKind::Secondary,
+                            on_click: move |_| {
+                                on_recapture(());
+                            },
+                        }
+                        Button {
+                            class: "flex-grow border border-gray-600",
+                            text: "Close",
+                            kind: ButtonKind::Secondary,
+                            on_click: move |_| {
+                                on_close(());
+                            },
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
+    let position = use_context::<AppState>().position;
     let mut paths = use_resource(async || query_navigation_paths().await.unwrap_or_default());
     let paths_view = use_memo(move || paths().unwrap_or_default());
-    let position = use_context::<AppState>().position;
+    let root_paths_view = use_memo(move || {
+        let paths = paths_view();
+        let all_path_ids = paths
+            .iter()
+            .filter_map(|path| path.id)
+            .collect::<HashSet<_>>();
+        let referenced_path_ids = paths
+            .iter()
+            .flat_map(|point| &point.points)
+            .filter_map(|point| point.next_path_id)
+            .collect::<HashSet<_>>();
+        let root_path_ids = all_path_ids
+            .difference(&referenced_path_ids)
+            .copied()
+            .collect::<HashSet<_>>();
+
+        paths
+            .into_iter()
+            .filter(|p| p.id.is_some_and(|id| root_path_ids.contains(&id)))
+            .collect::<Vec<_>>()
+    });
 
     let coroutine = use_coroutine(
         move |mut rx: UnboundedReceiver<NavigationUpdate>| async move {
@@ -49,6 +132,17 @@ fn SectionPaths() -> Element {
                     }
                     NavigationUpdate::Delete(path) => {
                         delete_navigation_path(path).await;
+                        paths.restart();
+                    }
+                    NavigationUpdate::Recapture(path) => {
+                        let new_path = recapture_navigation_path(path).await;
+                        let new_path = upsert_navigation_path(new_path).await;
+
+                        if let Some(NavigationPopup::Snapshots(path)) = popup()
+                            && path.id == new_path.id
+                        {
+                            popup.set(Some(NavigationPopup::Snapshots(new_path)));
+                        }
                         paths.restart();
                     }
                 }
@@ -98,6 +192,9 @@ fn SectionPaths() -> Element {
                         on_delete: move |path| {
                             coroutine.send(NavigationUpdate::Delete(path));
                         },
+                        on_details: move |path: NavigationPath| {
+                            popup.set(Some(NavigationPopup::Snapshots(path)));
+                        },
                     }
                 }
             }
@@ -108,6 +205,24 @@ fn SectionPaths() -> Element {
                     coroutine.send(NavigationUpdate::Create);
                 },
                 class: "label mt-4",
+            }
+        }
+        if let Some(kind) = popup() {
+            match kind {
+                NavigationPopup::Snapshots(path) => {
+                    rsx! {
+                        PopupSnapshots {
+                            name_base64: path.name_snapshot_base64.clone(),
+                            minimap_base64: path.minimap_snapshot_base64.clone(),
+                            on_close: move |_| {
+                                popup.set(None);
+                            },
+                            on_recapture: move |_| {
+                                coroutine.send(NavigationUpdate::Recapture(path.clone()));
+                            },
+                        }
+                    }
+                }
             }
         }
     }
@@ -123,22 +238,33 @@ fn NavigationPathItem(
     on_delete_point: EventHandler<(NavigationPath, usize)>,
     on_select_path: EventHandler<(NavigationPath, usize, Option<i64>)>,
     on_delete: EventHandler<NavigationPath>,
+    on_details: EventHandler<NavigationPath>,
 ) -> Element {
     #[component]
-    fn Icons(on_delete: EventHandler) -> Element {
+    fn Icons(on_details: Option<EventHandler>, on_delete: EventHandler) -> Element {
         const ICON_CONTAINER_CLASS: &str = "w-4 h-6 flex justify-center items-center";
-        const ICON_CLASS: &str = "w-[11px] h-[11px] fill-current";
+        const ICON_CLASS: &str = "fill-current";
 
         rsx! {
-            div { class: "invisible group-hover:visible flex",
+            div { class: "invisible group-hover:visible flex gap-1",
                 div { class: "flex-grow" }
+                if let Some(on_details) = on_details {
+                    div {
+                        class: ICON_CONTAINER_CLASS,
+                        onclick: move |e| {
+                            e.stop_propagation();
+                            on_details(());
+                        },
+                        DetailsIcon { class: "{ICON_CLASS} w-[16px] h-[16px] text-gray-50" }
+                    }
+                }
                 div {
                     class: ICON_CONTAINER_CLASS,
                     onclick: move |e| {
                         e.stop_propagation();
                         on_delete(());
                     },
-                    XIcon { class: "{ICON_CLASS} text-red-500" }
+                    XIcon { class: "{ICON_CLASS} w-[11px] h-[11px] text-red-500" }
                 }
             }
         }
@@ -167,6 +293,9 @@ fn NavigationPathItem(
                         {format!("Path {}", path().id.unwrap_or_default())}
                     }
                     Icons {
+                        on_details: move |_| {
+                            on_details(path.peek().clone());
+                        },
                         on_delete: move |_| {
                             on_delete(path.peek().clone());
                         },
@@ -229,9 +358,13 @@ fn NavigationPathItem(
 }
 
 #[component]
-fn Section(name: &'static str, children: Element) -> Element {
+fn Section(
+    name: &'static str,
+    #[props(default = String::default())] class: String,
+    children: Element,
+) -> Element {
     rsx! {
-        div { class: "flex flex-col pr-4 pb-3",
+        div { class: "flex flex-col pr-4 pb-3 {class}",
             div { class: "flex items-center title-xs h-10", {name} }
             {children}
         }

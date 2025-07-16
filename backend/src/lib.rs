@@ -88,7 +88,7 @@ enum Request {
     CreateMinimap(String),
     UpdateMinimap(Option<String>, Option<Minimap>),
     CreateNavigationPath,
-    AttachNavigationPath(NavigationPath),
+    RecaptureNavigationPath(NavigationPath),
     UpdateCharacter(Option<Character>),
     UpdateSettings(Settings),
     RedetectMinimap,
@@ -118,7 +118,7 @@ enum Response {
     CreateMinimap(Option<Minimap>),
     UpdateMinimap,
     CreateNavigationPath(Option<NavigationPath>),
-    AttachNavigationPath(NavigationPath),
+    RecaptureNavigationPath(NavigationPath),
     UpdateCharacter,
     UpdateSettings,
     RedetectMinimap,
@@ -147,6 +147,8 @@ pub(crate) trait RequestHandler {
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: Option<Minimap>);
 
     fn on_create_navigation_path(&self) -> Option<NavigationPath>;
+
+    fn on_recapture_navigation_path(&self, path: NavigationPath) -> NavigationPath;
 
     fn on_update_character(&mut self, character: Option<Character>);
 
@@ -300,6 +302,13 @@ pub async fn upsert_navigation_path(mut path: NavigationPath) -> NavigationPath 
     .unwrap()
 }
 
+pub async fn recapture_navigation_path(path: NavigationPath) -> NavigationPath {
+    expect_value_variant!(
+        request(Request::RecaptureNavigationPath(path)).await,
+        Response::RecaptureNavigationPath
+    )
+}
+
 pub async fn delete_navigation_path(path: NavigationPath) {
     spawn_blocking(move || {
         database::delete_navigation_path(&path).expect("failed to delete path");
@@ -435,7 +444,9 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::CreateNavigationPath => {
                 Response::CreateNavigationPath(handler.on_create_navigation_path())
             }
-            Request::AttachNavigationPath(_) => todo!(),
+            Request::RecaptureNavigationPath(path) => {
+                Response::RecaptureNavigationPath(handler.on_recapture_navigation_path(path))
+            }
             Request::UpdateCharacter(character) => {
                 handler.on_update_character(character);
                 Response::UpdateCharacter

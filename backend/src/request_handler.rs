@@ -13,7 +13,7 @@ use opencv::{
     imgproc::{COLOR_BGR2BGRA, cvt_color_def},
 };
 use opencv::{
-    core::{MatTraitConst, MatTraitConstManual, Vec4b},
+    core::{MatTraitConst, MatTraitConstManual, Rect, Vec4b},
     imgcodecs::imencode_def,
 };
 use platforms::windows::{Handle, KeyInputKind, KeyKind, KeyReceiver, query_capture_handles};
@@ -289,20 +289,9 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_create_navigation_path(&self) -> Option<NavigationPath> {
-        if let Minimap::Idle(idle) = self.context.minimap
-            && let Some(detector) = self.context.detector.as_ref()
+        if let Some((minimap_base64, name_base64, name_bbox)) =
+            extract_minimap_and_name_base64(self.context)
         {
-            let name_bbox = detector.detect_minimap_name(idle.bbox).ok()?;
-            let name = detector.grayscale_mat().roi(name_bbox).ok()?;
-            let mut name_bytes = Vector::new();
-            imencode_def(".png", &name, &mut name_bytes).ok()?;
-            let name_base64 = BASE64_STANDARD.encode(name_bytes);
-
-            let minimap = detector.mat().roi(idle.bbox).ok()?;
-            let mut minimap_bytes = Vector::new();
-            imencode_def(".png", &minimap, &mut minimap_bytes).ok()?;
-            let minimap_base64 = BASE64_STANDARD.encode(minimap_bytes);
-
             Some(NavigationPath {
                 id: None,
                 minimap_snapshot_base64: minimap_base64,
@@ -314,6 +303,19 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         } else {
             None
         }
+    }
+
+    fn on_recapture_navigation_path(&self, mut path: NavigationPath) -> NavigationPath {
+        if let Some((minimap_base64, name_base64, name_bbox)) =
+            extract_minimap_and_name_base64(self.context)
+        {
+            path.minimap_snapshot_base64 = minimap_base64;
+            path.name_snapshot_base64 = name_base64;
+            path.name_snapshot_width = name_bbox.width;
+            path.name_snapshot_height = name_bbox.height;
+        }
+
+        path
     }
 
     fn on_update_character(&mut self, character: Option<Character>) {
@@ -545,6 +547,28 @@ fn poll_key(handler: &mut DefaultRequestHandler) {
         handler.on_rotate_actions(!handler.context.halting);
     }
     let _ = handler.key_sender.send(received_key.into());
+}
+
+// TODO: Better way?
+fn extract_minimap_and_name_base64(context: &Context) -> Option<(String, String, Rect)> {
+    if let Minimap::Idle(idle) = context.minimap
+        && let Some(detector) = context.detector.as_ref()
+    {
+        let name_bbox = detector.detect_minimap_name(idle.bbox).ok()?;
+        let name = detector.grayscale_mat().roi(name_bbox).ok()?;
+        let mut name_bytes = Vector::new();
+        imencode_def(".png", &name, &mut name_bytes).ok()?;
+        let name_base64 = BASE64_STANDARD.encode(name_bytes);
+
+        let minimap = detector.mat().roi(idle.bbox).ok()?;
+        let mut minimap_bytes = Vector::new();
+        imencode_def(".png", &minimap, &mut minimap_bytes).ok()?;
+        let minimap_base64 = BASE64_STANDARD.encode(minimap_bytes);
+
+        Some((minimap_base64, name_base64, name_bbox))
+    } else {
+        None
+    }
 }
 
 #[inline]
