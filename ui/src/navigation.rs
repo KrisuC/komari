@@ -11,15 +11,25 @@ use futures_util::StreamExt;
 use crate::{
     AppState,
     button::{Button, ButtonKind},
-    icons::{DetailsIcon, XIcon},
+    icons::{DetailsIcon, PositionIcon, XIcon},
+    inputs::NumberInputI32,
+    popup::Popup,
     select::Select,
 };
 
 #[derive(Debug, Clone, PartialEq)]
 enum NavigationPopup {
     Snapshots(NavigationPath),
-    Point(NavigationPath, usize),
+    Point(NavigationPath, PopupPointValue),
 }
+
+#[derive(Debug, Clone, PartialEq)]
+enum PopupPointValue {
+    Add(NavigationPoint),
+    Edit(NavigationPoint, usize),
+}
+
+// enum PopupNav
 
 #[derive(Debug)]
 enum NavigationUpdate {
@@ -41,48 +51,34 @@ pub fn Navigation() -> Element {
 }
 
 #[component]
-pub fn PopupSnapshots(
+fn PopupSnapshots(
     name_base64: String,
     minimap_base64: String,
     on_recapture: EventHandler,
-    on_close: EventHandler,
+    on_cancel: EventHandler,
 ) -> Element {
     rsx! {
-        div { class: "px-16 py-20 w-full h-full absolute inset-0 z-1 bg-gray-950/80 flex",
-            div { class: "bg-gray-900 w-full max-w-108 h-full min-h-70 max-h-80 px-2 m-auto",
-                Section {
-                    name: "Path snapshots",
-                    class: "relative h-full !pr-0 !pb-10",
-                    div { class: "flex flex-col gap-2 pr-2 overflow-y-auto scrollbar",
-                        p { class: "paragraph-xs", "Name" }
-                        img {
-                            src: format!("data:image/png;base64,{}", name_base64),
-                            class: "w-full h-full p-2 border border-gray-600",
-                        }
-                        p { class: "paragraph-xs", "Map" }
-                        img {
-                            src: format!("data:image/png;base64,{}", minimap_base64),
-                            class: "w-full h-full p-2 border border-gray-600",
-                        }
-                    }
-                    div { class: "flex w-full gap-3 absolute bottom-0 py-2 bg-gray-900",
-                        Button {
-                            class: "flex-grow border border-gray-600",
-                            text: "Re-capture",
-                            kind: ButtonKind::Secondary,
-                            on_click: move |_| {
-                                on_recapture(());
-                            },
-                        }
-                        Button {
-                            class: "flex-grow border border-gray-600",
-                            text: "Close",
-                            kind: ButtonKind::Secondary,
-                            on_click: move |_| {
-                                on_close(());
-                            },
-                        }
-                    }
+        Popup {
+            title: "Path snapshots",
+            class: "max-w-108 min-h-70 max-h-80",
+            confirm_button: "Re-capture",
+            on_confirm: move |_| {
+                on_recapture(());
+            },
+            cancel_button: "Cancel",
+            on_cancel: move |_| {
+                on_cancel(());
+            },
+            div { class: "flex flex-col gap-2 pr-2 overflow-y-auto scrollbar",
+                p { class: "paragraph-xs", "Name" }
+                img {
+                    src: format!("data:image/png;base64,{}", name_base64),
+                    class: "w-full h-full p-2 border border-gray-600",
+                }
+                p { class: "paragraph-xs", "Map" }
+                img {
+                    src: format!("data:image/png;base64,{}", minimap_base64),
+                    class: "w-full h-full p-2 border border-gray-600",
                 }
             }
         }
@@ -90,18 +86,75 @@ pub fn PopupSnapshots(
 }
 
 #[component]
-pub fn PopupPoint(
-    x: i32,
-    y: i32,
-    on_save: EventHandler<(i32, i32)>,
+fn PopupPoint(
+    value: PopupPointValue,
+    on_save: EventHandler<PopupPointValue>,
     on_close: EventHandler,
 ) -> Element {
+    const ICON_CONTAINER_CLASS: &str = "absolute invisible group-hover:visible top-5 right-1 w-4 h-6 flex justify-center items-center";
+    const ICON_CLASS: &str = "w-3 h-3 text-gray-50 fill-current";
+
+    let position = use_context::<AppState>().position;
+    let value = use_memo(use_reactive!(|value| value));
+    let mut xy = use_signal(|| match value() {
+        PopupPointValue::Add(point) => (point.x, point.y),
+        PopupPointValue::Edit(point, _) => (point.x, point.y),
+    });
+    let on_save_click = use_callback(move |_| {
+        let (x, y) = *xy.peek();
+        let value = match value.peek().clone() {
+            PopupPointValue::Add(point) => PopupPointValue::Add(NavigationPoint { x, y, ..point }),
+            PopupPointValue::Edit(point, index) => {
+                PopupPointValue::Edit(NavigationPoint { x, y, ..point }, index)
+            }
+        };
+        on_save(value);
+    });
+
     rsx! {
-        div { class: "px-16 py-20 w-full h-full absolute inset-0 z-1 bg-gray-950/80 flex",
-            div { class: "bg-gray-900 w-full max-w-108 h-full min-h-70 max-h-80 px-2 m-auto",
-                Section {
-                    name: "Path snapshots",
-                    class: "relative h-full !pr-0 !pb-10",
+        Popup {
+            title: "Point",
+            class: "max-w-80 min-h-35 max-h-35",
+            confirm_button: "Save",
+            on_confirm: move |_| {
+                on_save_click(());
+            },
+            cancel_button: "Cancel",
+            on_cancel: move |_| {
+                on_close(());
+            },
+            div { class: "grid grid-cols-2 gap-2",
+                div { class: "relative group",
+                    NumberInputI32 {
+                        label: "X",
+                        on_value: move |x| {
+                            xy.write().0 = x;
+                        },
+                        value: xy().0,
+                    }
+                    div {
+                        class: ICON_CONTAINER_CLASS,
+                        onclick: move |_| {
+                            xy.write().0 = position.peek().0;
+                        },
+                        PositionIcon { class: ICON_CLASS }
+                    }
+                }
+                div { class: "relative group",
+                    NumberInputI32 {
+                        label: "Y",
+                        on_value: move |y| {
+                            xy.write().1 = y;
+                        },
+                        value: xy().1,
+                    }
+                    div {
+                        class: ICON_CONTAINER_CLASS,
+                        onclick: move |_| {
+                            xy.write().1 = position.peek().1;
+                        },
+                        PositionIcon { class: ICON_CLASS }
+                    }
                 }
             }
         }
@@ -216,14 +269,16 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
             }
         },
     );
-    let on_add_point = use_callback::<NavigationPath, _>(move |mut path| {
-        path.points.push(NavigationPoint {
-            next_path_id: None,
-            x: position.peek().0,
-            y: position.peek().1,
-            transition: NavigationTransition::Portal,
-        });
-        coroutine.send(NavigationUpdate::Update(path));
+    let on_add_point = use_callback::<NavigationPath, _>(move |path| {
+        popup.set(Some(NavigationPopup::Point(
+            path,
+            PopupPointValue::Add(NavigationPoint {
+                next_path_id: None,
+                x: position.peek().0,
+                y: position.peek().1,
+                transition: NavigationTransition::Portal,
+            }),
+        )));
     });
     let on_delete_point = use_callback::<(NavigationPath, usize), _>(move |(mut path, index)| {
         if path.points.get(index).is_some() {
@@ -253,6 +308,11 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                             },
                             on_delete_point: move |args| {
                                 on_delete_point(args);
+                            },
+                            on_edit_point: move |(path, point, index)| {
+                                let edit = PopupPointValue::Edit(point, index);
+                                let point = NavigationPopup::Point(path, edit);
+                                popup.set(Some(point));
                             },
                             on_select_path: move |args| {
                                 on_select_path(args);
@@ -285,32 +345,35 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                     PopupSnapshots {
                         name_base64: path.name_snapshot_base64.clone(),
                         minimap_base64: path.minimap_snapshot_base64.clone(),
-                        on_close: move |_| {
-                            popup.set(None);
-                        },
                         on_recapture: move |_| {
                             coroutine.send(NavigationUpdate::Recapture(path.clone()));
                         },
+                        on_cancel: move |_| {
+                            popup.set(None);
+                        },
                     }
                 },
-                NavigationPopup::Point(path, index) => rsx! {
-                    if let Some(point) = path.points.get(index) {
-                        PopupPoint {
-                            x: point.x,
-                            y: point.y,
-                            on_save: move |(x, y)| {
-                                let mut path = path.clone();
-                                if let Some(point) = path.points.get_mut(index) {
-                                    point.x = x;
-                                    point.y = y;
-                                    coroutine.send(NavigationUpdate::Update(path));
+                NavigationPopup::Point(path, value) => rsx! {
+                    PopupPoint {
+                        value,
+                        on_save: move |value| {
+                            let mut path = path.clone();
+                            match value {
+                                PopupPointValue::Add(point) => {
+                                    path.points.push(point);
                                 }
-                                popup.set(None);
-                            },
-                            on_close: move |_| {
-                                popup.set(None);
-                            },
-                        }
+                                PopupPointValue::Edit(new_point, index) => {
+                                    if let Some(point) = path.points.get_mut(index) {
+                                        *point = new_point;
+                                    }
+                                }
+                            }
+                            coroutine.send(NavigationUpdate::Update(path));
+                            popup.set(None);
+                        },
+                        on_close: move |_| {
+                            popup.set(None);
+                        },
                     }
                 },
             }
@@ -325,6 +388,7 @@ fn NavigationPathItem(
     path: NavigationPath,
     paths_view: Memo<Vec<NavigationPath>>,
     on_add_point: EventHandler<NavigationPath>,
+    on_edit_point: EventHandler<(NavigationPath, NavigationPoint, usize)>,
     on_delete_point: EventHandler<(NavigationPath, usize)>,
     on_select_path: EventHandler<(NavigationPath, usize, Option<i64>)>,
     on_delete: EventHandler<NavigationPath>,
@@ -395,7 +459,11 @@ fn NavigationPathItem(
 
             for (index , point) in path().points.into_iter().enumerate() {
                 div { class: "grid grid-cols-2 gap-x-3 group mt-2",
-                    div { class: "grid grid-cols-[32px_auto] gap-x-2 group/info",
+                    div {
+                        class: "grid grid-cols-[32px_auto] gap-x-2 group/info",
+                        onclick: move |_| {
+                            on_edit_point((path.peek().clone(), point, index));
+                        },
                         div { class: "h-full border-l-2 border-gray-600" }
                         p { class: "label h-full flex items-center justify-centers group-hover/info:border-b group-hover/info:border-gray-600",
                             {format!("X / {}, Y / {} using {}", point.x, point.y, point.transition)}

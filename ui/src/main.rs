@@ -33,6 +33,7 @@ mod icons;
 mod inputs;
 mod minimap;
 mod navigation;
+mod popup;
 mod select;
 mod settings;
 
@@ -144,7 +145,7 @@ fn App() -> Element {
                         },
                         selected_tab: selected_tab(),
                     }
-                    div { class: "relative w-full overflow-x-hidden overflow-y-auto pl-2 lg:pl-0",
+                    div { class: "relative w-full h-full overflow-x-hidden overflow-y-auto pl-2 lg:pl-0",
                         match selected_tab().as_str() {
                             TAB_ACTIONS => rsx! {
                                 Actions {}
