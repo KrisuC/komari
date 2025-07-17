@@ -29,8 +29,6 @@ enum PopupPointValue {
     Edit(NavigationPoint, usize),
 }
 
-// enum PopupNav
-
 #[derive(Debug)]
 enum NavigationUpdate {
     Update(NavigationPath),
@@ -166,6 +164,7 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
     let position = use_context::<AppState>().position;
     let mut paths = use_resource(async || query_navigation_paths().await.unwrap_or_default());
     let paths_view = use_memo(move || paths().unwrap_or_default());
+    let mut circular_error_message = use_signal(|| None);
     // Group paths by root for better experience
     let root_paths_view = use_memo(move || {
         let paths = paths_view();
@@ -195,13 +194,16 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
         let mut visited = HashSet::new();
         let mut visiting = Vec::new();
         let mut root_paths_flattened = Vec::new();
+        let mut root_paths_circular_ids = HashSet::new();
 
         for path in root_paths {
             visiting.push(path);
 
             let mut path_flattened = Vec::new();
             while let Some(path) = visiting.pop() {
-                if !visited.insert(path.id) {
+                let path_id = path.id.expect("valid id");
+                if !visited.insert(path_id) {
+                    root_paths_circular_ids.insert(path_id);
                     continue;
                 }
 
@@ -216,7 +218,7 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
             root_paths_flattened.push(path_flattened);
         }
 
-        let root_paths_flattened_id = root_paths_flattened
+        let root_paths_flattened_ids = root_paths_flattened
             .iter()
             .flat_map(|paths| paths.iter().filter_map(|path| path.id))
             .collect::<HashSet<_>>();
@@ -224,11 +226,23 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
             .iter()
             .filter(|path| {
                 path.id
-                    .is_some_and(|id| !root_paths_flattened_id.contains(&id))
+                    .is_some_and(|id| !root_paths_flattened_ids.contains(&id))
             })
             .collect::<Vec<_>>();
 
-        root_paths_flattened.push(circular_paths);
+        if !circular_paths.is_empty() || !root_paths_circular_ids.is_empty() {
+            let path_ids = circular_paths
+                .iter()
+                .map(|path| path.id.expect("valid id"))
+                .chain(root_paths_circular_ids)
+                .map(|id| format!("Path {id}"))
+                .intersperse(", ".to_string())
+                .collect::<String>();
+            circular_error_message.set(Some(format!("Circular paths detected in {path_ids}")));
+            root_paths_flattened.push(circular_paths);
+        } else {
+            circular_error_message.set(None);
+        }
         root_paths_flattened
             .into_iter()
             .map(|paths| paths.into_iter().cloned().collect())
@@ -297,6 +311,9 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
 
     rsx! {
         Section { name: "Paths",
+            if let Some(message) = circular_error_message() {
+                p { class: "label", "{message}" }
+            }
             div { class: "flex flex-col gap-2",
                 for (index , paths) in root_paths_view().into_iter().enumerate() {
                     for path in paths {

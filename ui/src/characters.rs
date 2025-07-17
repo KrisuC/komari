@@ -14,6 +14,7 @@ use crate::{
     button::{Button, ButtonKind},
     icons::XIcon,
     inputs::{Checkbox, KeyBindingInput, MillisInput, NumberInputU32, PercentageInput},
+    popup::Popup,
     select::{EnumSelect, TextSelect},
 };
 
@@ -942,22 +943,18 @@ fn PopupActionConfigurationInput(
     };
 
     rsx! {
-        div { class: "p-8 w-full h-full absolute inset-0 z-1 bg-gray-950/80 flex",
-            div { class: "bg-gray-900 max-w-xl w-full h-full max-h-120 px-2 m-auto",
-                div { class: "flex flex-col gap-2 relative h-full",
-                    div { class: "flex flex-none items-center title-xs h-10", {section_text} }
-                    ActionConfigurationInput {
-                        modifying,
-                        can_create_linked_action,
-                        on_cancel: move |_| {
-                            on_cancel(());
-                        },
-                        on_value: move |action| {
-                            on_value(action);
-                        },
-                        value: action,
-                    }
-                }
+        // TODO: Use Popup's buttons
+        Popup { title: section_text, class: "min-w-120 max-w-120 max-h-100",
+            ActionConfigurationInput {
+                modifying,
+                can_create_linked_action,
+                on_cancel: move |_| {
+                    on_cancel(());
+                },
+                on_value: move |action| {
+                    on_value(action);
+                },
+                value: action,
             }
         }
     }
@@ -1119,7 +1116,7 @@ fn ActionConfigurationInput(
             Button {
                 class: "flex-grow border border-gray-600",
                 text: "Cancel",
-                kind: ButtonKind::Danger,
+                kind: ButtonKind::Secondary,
                 on_click: move |_| {
                     on_cancel(());
                 },

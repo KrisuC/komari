@@ -20,6 +20,7 @@ use crate::{
     button::{Button, ButtonKind},
     icons::{DownArrowIcon, PositionIcon, UpArrowIcon, XIcon},
     inputs::{Checkbox, KeyBindingInput, MillisInput, NumberInputI32, NumberInputU32},
+    popup::Popup,
     select::{EnumSelect, TextSelect},
 };
 
@@ -952,76 +953,64 @@ fn PopupPlatformInput(
     use_effect(use_reactive!(|value| platform.set(value)));
 
     rsx! {
-        div { class: "px-16 py-42 w-full h-full absolute inset-0 z-1 bg-gray-950/80 flex",
-            div { class: "bg-gray-900 w-full max-w-104 h-full max-h-36 px-2 m-auto",
-                Section { name: section_name, class: "relative h-full",
-                    div { class: "grid grid-cols-3 gap-3",
-                        div { class: "relative group",
-                            ActionsNumberInputI32 {
-                                label: "X start",
-                                on_value: move |x| {
-                                    platform.write().x_start = x;
-                                },
-                                value: platform().x_start,
-                            }
-                            div {
-                                class: ICON_CONTAINER_CLASS,
-                                onclick: move |_| {
-                                    platform.write().x_start = position.peek().0;
-                                },
-                                PositionIcon { class: ICON_CLASS }
-                            }
-                        }
-                        div { class: "relative group",
-                            ActionsNumberInputI32 {
-                                label: "X end",
-                                on_value: move |x| {
-                                    platform.write().x_end = x;
-                                },
-                                value: platform().x_end,
-                            }
-                            div {
-                                class: ICON_CONTAINER_CLASS,
-                                onclick: move |_| {
-                                    platform.write().x_end = position.peek().0;
-                                },
-                                PositionIcon { class: ICON_CLASS }
-                            }
-                        }
-                        div { class: "relative group",
-                            ActionsNumberInputI32 {
-                                label: "Y",
-                                on_value: move |y| {
-                                    platform.write().y = y;
-                                },
-                                value: platform().y,
-                            }
-                            div {
-                                class: ICON_CONTAINER_CLASS,
-                                onclick: move |_| {
-                                    platform.write().y = position.peek().1;
-                                },
-                                PositionIcon { class: ICON_CLASS }
-                            }
-                        }
+        Popup {
+            title: section_name,
+            class: "max-w-104 max-h-36",
+            confirm_button: button_name,
+            on_confirm: move |_| {
+                on_value((*platform.peek(), index));
+            },
+            cancel_button: "Cancel",
+            on_cancel: move |_| {
+                on_cancel(());
+            },
+            div { class: "grid grid-cols-3 gap-3",
+                div { class: "relative group",
+                    ActionsNumberInputI32 {
+                        label: "X start",
+                        on_value: move |x| {
+                            platform.write().x_start = x;
+                        },
+                        value: platform().x_start,
                     }
-                    div { class: "flex w-full gap-3 absolute bottom-2",
-                        Button {
-                            class: "flex-grow border border-gray-600",
-                            text: button_name,
-                            kind: ButtonKind::Primary,
-                            on_click: move |_| {
-                                on_value((*platform.peek(), index));
-                            },
-                        }
-                        Button {
-                            class: "flex-grow border border-gray-600",
-                            text: "Cancel",
-                            kind: ButtonKind::Danger,
-                            on_click: move |_| {
-                                on_cancel(());
-                            },
-                        }
+                    div {
+                        class: ICON_CONTAINER_CLASS,
+                        onclick: move |_| {
+                            platform.write().x_start = position.peek().0;
+                        },
+                        PositionIcon { class: ICON_CLASS }
+                    }
+                }
+                div { class: "relative group",
+                    ActionsNumberInputI32 {
+                        label: "X end",
+                        on_value: move |x| {
+                            platform.write().x_end = x;
+                        },
+                        value: platform().x_end,
+                    }
+                    div {
+                        class: ICON_CONTAINER_CLASS,
+                        onclick: move |_| {
+                            platform.write().x_end = position.peek().0;
+                        },
+                        PositionIcon { class: ICON_CLASS }
+                    }
+                }
+                div { class: "relative group",
+                    ActionsNumberInputI32 {
+                        label: "Y",
+                        on_value: move |y| {
+                            platform.write().y = y;
+                        },
+                        value: platform().y,
+                    }
+                    div {
+                        class: ICON_CONTAINER_CLASS,
+                        onclick: move |_| {
+                            platform.write().y = position.peek().1;
+                        },
+                        PositionIcon { class: ICON_CLASS }
                     }
                 }
             }
@@ -1040,57 +1029,45 @@ fn PopupBoundInput(
     use_effect(use_reactive!(|value| bound.set(value)));
 
     rsx! {
-        div { class: "px-16 py-35 w-full h-full absolute inset-0 z-1 bg-gray-950/80 flex",
-            div { class: "bg-gray-900 w-full max-w-108 h-full max-h-50 px-2 m-auto",
-                Section { name: "Modify mobbing bound", class: "relative h-full",
-                    div { class: "grid grid-cols-2 gap-3",
-                        ActionsNumberInputI32 {
-                            label: "X offset",
-                            on_value: move |x| {
-                                bound.write().x = x;
-                            },
-                            value: bound().x,
-                        }
-                        ActionsNumberInputI32 {
-                            label: "Y offset",
-                            on_value: move |y| {
-                                bound.write().y = y;
-                            },
-                            value: bound().y,
-                        }
-                        ActionsNumberInputI32 {
-                            label: "Width",
-                            on_value: move |width| {
-                                bound.write().width = width;
-                            },
-                            value: bound().width,
-                        }
-                        ActionsNumberInputI32 {
-                            label: "Height",
-                            on_value: move |height| {
-                                bound.write().height = height;
-                            },
-                            value: bound().height,
-                        }
-                    }
-                    div { class: "flex w-full gap-3 absolute bottom-2",
-                        Button {
-                            class: "flex-grow border border-gray-600",
-                            text: "Save",
-                            kind: ButtonKind::Primary,
-                            on_click: move |_| {
-                                on_value(*bound.peek());
-                            },
-                        }
-                        Button {
-                            class: "flex-grow border border-gray-600",
-                            text: "Cancel",
-                            kind: ButtonKind::Danger,
-                            on_click: move |_| {
-                                on_cancel(());
-                            },
-                        }
-                    }
+        Popup {
+            title: "Modify mobbing bound",
+            class: "max-w-108 max-h-50",
+            confirm_button: "Save",
+            on_confirm: move |_| {
+                on_value(*bound.peek());
+            },
+            cancel_button: "Cancel",
+            on_cancel: move |_| {
+                on_cancel(());
+            },
+            div { class: "grid grid-cols-2 gap-3",
+                ActionsNumberInputI32 {
+                    label: "X offset",
+                    on_value: move |x| {
+                        bound.write().x = x;
+                    },
+                    value: bound().x,
+                }
+                ActionsNumberInputI32 {
+                    label: "Y offset",
+                    on_value: move |y| {
+                        bound.write().y = y;
+                    },
+                    value: bound().y,
+                }
+                ActionsNumberInputI32 {
+                    label: "Width",
+                    on_value: move |width| {
+                        bound.write().width = width;
+                    },
+                    value: bound().width,
+                }
+                ActionsNumberInputI32 {
+                    label: "Height",
+                    on_value: move |height| {
+                        bound.write().height = height;
+                    },
+                    value: bound().height,
                 }
             }
         }
@@ -1416,7 +1393,7 @@ fn ActionMoveInput(
             Button {
                 class: "flex-grow border border-gray-600",
                 text: "Cancel",
-                kind: ButtonKind::Danger,
+                kind: ButtonKind::Secondary,
                 on_click: move |_| {
                     on_cancel(());
                 },
@@ -1687,7 +1664,7 @@ fn ActionKeyInput(
             Button {
                 class: "flex-grow border border-gray-600",
                 text: "Cancel",
-                kind: ButtonKind::Danger,
+                kind: ButtonKind::Secondary,
                 on_click: move |_| {
                     on_cancel(());
                 },
