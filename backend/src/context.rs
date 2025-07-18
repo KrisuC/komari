@@ -356,7 +356,7 @@ fn update_loop() {
                 }
                 _ => (),
             }
-            if can_halt_or_notify {
+            if can_halt_or_notify && pending_halt.is_none() {
                 drop(settings_borrow_mut); // For notification to borrow immutably
                 let _ = context
                     .notification

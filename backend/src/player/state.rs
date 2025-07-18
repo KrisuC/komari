@@ -233,6 +233,8 @@ pub struct PlayerState {
     auto_mob_last_quadrant: Option<Quadrant>,
     /// The last auto-mobbing bound's quadrant relative to bottom-left player coordinate.
     auto_mob_last_quadrant_bound: Option<Rect>,
+    /// The next auto-mobbing bound's quadrant relative to bottom-left player coordinate.
+    auto_mob_next_quadrant_bound: Option<Rect>,
     /// Tracks whether movement-related actions do not change the player position after a while.
     ///
     /// Resets when a limit is reached (for unstucking) or position did change.
@@ -585,21 +587,45 @@ impl PlayerState {
     /// The returned [`Point`] is in player coordinate relative to bottom-left.
     #[inline]
     pub fn auto_mob_pathing_point(&mut self, context: &Context, bound: Rect) -> Point {
-        let bound_width_half = bound.width / 2;
-        let bound_height_half = bound.height / 2;
-        let bound_x_mid = bound.x + bound_width_half;
-        let bound_y_mid = bound.y + bound_height_half;
+        #[inline]
+        fn quadrant_bound(quadrant: Quadrant, bound: Rect) -> Rect {
+            let bound_width_half = bound.width / 2;
+            let bound_height_half = bound.height / 2;
+            let bound_x_mid = bound.x + bound_width_half;
+            let bound_y_mid = bound.y + bound_height_half;
+
+            match quadrant {
+                Quadrant::TopLeft => {
+                    Rect::new(bound.x, bound.y, bound_width_half, bound_height_half)
+                }
+                Quadrant::TopRight => {
+                    Rect::new(bound_x_mid, bound.y, bound_width_half, bound_height_half)
+                }
+                Quadrant::BottomRight => Rect::new(
+                    bound_x_mid,
+                    bound_y_mid,
+                    bound_width_half,
+                    bound_height_half,
+                ),
+                Quadrant::BottomLeft => {
+                    Rect::new(bound.x, bound_y_mid, bound_width_half, bound_height_half)
+                }
+            }
+        }
 
         let (bbox, platforms) = match context.minimap {
             Minimap::Idle(idle) => (idle.bbox, idle.platforms),
             _ => unreachable!(),
         };
-
         let current_quadrant = if let Some(quadrant) = self.auto_mob_last_quadrant {
             quadrant
         } else {
             // Determine the player current quadrant inside the auto-mobbing bound
             // Convert current position to top-left coordinate first
+            let bound_width_half = bound.width / 2;
+            let bound_height_half = bound.height / 2;
+            let bound_x_mid = bound.x + bound_width_half;
+            let bound_y_mid = bound.y + bound_height_half;
             let pos = self.last_known_pos.expect("inside positional context");
             let pos = Point::new(pos.x, bbox.height - pos.y);
             match (pos.x < bound_x_mid, pos.y < bound_y_mid) {
@@ -612,21 +638,8 @@ impl PlayerState {
 
         // Retrieve the next quadrant in clockwise order relative to current
         let next_quadrant = current_quadrant.next_clockwise();
-        let next_quadrant_bound = match next_quadrant {
-            Quadrant::TopLeft => Rect::new(bound.x, bound.y, bound_width_half, bound_height_half),
-            Quadrant::TopRight => {
-                Rect::new(bound_x_mid, bound.y, bound_width_half, bound_height_half)
-            }
-            Quadrant::BottomRight => Rect::new(
-                bound_x_mid,
-                bound_y_mid,
-                bound_width_half,
-                bound_height_half,
-            ),
-            Quadrant::BottomLeft => {
-                Rect::new(bound.x, bound_y_mid, bound_width_half, bound_height_half)
-            }
-        };
+        let next_quadrant_bound = quadrant_bound(next_quadrant, bound);
+        let next_next_quadrant_bound = quadrant_bound(next_quadrant.next_clockwise(), bound);
 
         self.auto_mob_last_quadrant = Some(next_quadrant);
         self.auto_mob_last_quadrant_bound = Some(Rect::new(
@@ -634,6 +647,12 @@ impl PlayerState {
             bbox.height - next_quadrant_bound.br().y,
             next_quadrant_bound.width,
             next_quadrant_bound.height,
+        ));
+        self.auto_mob_next_quadrant_bound = Some(Rect::new(
+            next_next_quadrant_bound.x,
+            bbox.height - next_next_quadrant_bound.br().y,
+            next_next_quadrant_bound.width,
+            next_next_quadrant_bound.height,
         ));
 
         let bound_xs = next_quadrant_bound.x..(next_quadrant_bound.x + next_quadrant_bound.width);
@@ -728,7 +747,10 @@ impl PlayerState {
         let mob_pos = Point::new(mob_pos.x, y.unwrap_or(mob_pos.y));
         if self
             .auto_mob_last_quadrant_bound
-            .is_some_and(|bound| !bound.contains(mob_pos))
+            .zip(self.auto_mob_next_quadrant_bound)
+            .is_some_and(|(current_bound, next_bound)| {
+                !current_bound.contains(mob_pos) && !next_bound.contains(mob_pos)
+            })
         {
             None
         } else {

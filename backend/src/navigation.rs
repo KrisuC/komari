@@ -68,7 +68,7 @@ pub trait NavigatorDataSource: Debug + 'static {
 }
 
 #[derive(Debug)]
-pub struct DefaultNavigatorDataSource;
+struct DefaultNavigatorDataSource;
 
 impl NavigatorDataSource for DefaultNavigatorDataSource {
     fn query_paths(&self) -> Result<Vec<NavigationPath>> {
