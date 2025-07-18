@@ -26,6 +26,7 @@ use crate::{
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
+    navigation::Navigator,
     network::{DiscordNotification, NotificationKind},
     player::{PanicTo, Panicking, Player, PlayerState},
     request_handler::DefaultRequestHandler,
@@ -37,6 +38,7 @@ use crate::{
 use crate::{Settings, bridge::MockKeySender, detect::MockDetector};
 
 const FPS: u32 = 30;
+const PENDING_HALT_SECS: u64 = 12;
 pub const MS_PER_TICK: u64 = MS_PER_TICK_F32 as u64;
 pub const MS_PER_TICK_F32: f32 = 1000.0 / FPS as f32;
 
@@ -96,6 +98,8 @@ pub struct Context {
     ///
     /// This is increased on each update tick.
     pub tick: u64,
+    /// Whether minimap changed to detecting on the current tick.
+    pub did_minimap_changed: bool,
 }
 
 impl Context {
@@ -113,6 +117,7 @@ impl Context {
             buffs: [Buff::No; BuffKind::COUNT],
             halting: false,
             tick: 0,
+            did_minimap_changed: false,
         }
     }
 
@@ -165,6 +170,7 @@ fn update_loop() {
     // MapleStoryClassTW <- TMS
     let handle = Handle::new("MapleStoryClass");
     let mut rotator = Rotator::default();
+    let mut navigator = Navigator::default();
     let mut actions = Vec::<Action>::new();
     let mut character = None; // Override by UI
     let mut buffs = vec![];
@@ -211,6 +217,7 @@ fn update_loop() {
         buffs: [Buff::No; BuffKind::COUNT],
         halting: true,
         tick: 0,
+        did_minimap_changed: false,
     };
     let mut player_state = PlayerState::default();
     let mut minimap_state = MinimapState::default();
@@ -220,6 +227,11 @@ fn update_loop() {
     let mut buff_states = BuffKind::iter()
         .map(BuffState::new)
         .collect::<Vec<BuffState>>();
+    // When minimap changes, a pending halt will be queued. This helps ensure that if any
+    // accidental or intended (e.g. navigating) minimap change occurs, it will try to wait for a
+    // specified threshold to pass before determining panicking is needed. This can be beneficial
+    // when navigator falsely navigates to a wrong unknown location.
+    let mut pending_halt = None;
 
     #[cfg(debug_assertions)]
     let mut recording_images_id = None;
@@ -227,15 +239,19 @@ fn update_loop() {
     let mut infering_rune = None;
 
     loop_with_fps(FPS, || {
-        let mat = image_capture.grab().map(OwnedMat::new);
-        let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
-        let was_player_alive = !player_state.is_dead;
+        let mat = image_capture.grab().map(OwnedMat::new_from_frame);
+        let was_player_alive = !player_state.is_dead();
+        let was_player_navigating = navigator.was_last_point_available();
         let detector = mat.map(CachedDetector::new);
 
         context.tick += 1;
         if let Some(detector) = detector {
+            let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
+
             context.detector = Some(Box::new(detector));
             context.minimap = fold_context(&context, context.minimap, &mut minimap_state);
+            context.did_minimap_changed =
+                was_minimap_idle && matches!(context.minimap, Minimap::Detecting);
             context.player = fold_context(&context, context.player, &mut player_state);
             for (i, state) in skill_states
                 .iter_mut()
@@ -247,8 +263,12 @@ fn update_loop() {
             for (i, state) in buff_states.iter_mut().enumerate().take(context.buffs.len()) {
                 context.buffs[i] = fold_context(&context, context.buffs[i], state);
             }
-            // Rotating action must always be done last
-            rotator.rotate_action(&context, &mut player_state);
+
+            // This must always be done last
+            navigator.update(&context);
+            if navigator.navigate_player(&context, &mut player_state) {
+                rotator.rotate_action(&context, &mut player_state);
+            }
         }
         // TODO: Maybe should not downcast but really don't want to public update_input_delay
         // method
@@ -270,6 +290,7 @@ fn update_loop() {
             buff_states: &mut buff_states,
             actions: &mut actions,
             rotator: &mut rotator,
+            navigator: &mut navigator,
             player: &mut player_state,
             minimap: &mut minimap_state,
             key_sender: &key_sender,
@@ -299,17 +320,23 @@ fn update_loop() {
         // Upon accidental or white roomed causing map to change,
         // abort actions and send notification
         if handler.minimap.data().is_some() && !handler.context.halting {
-            let minimap_changed =
-                was_minimap_idle && matches!(handler.context.minimap, Minimap::Detecting);
-            let player_died = was_player_alive && handler.player.is_dead;
-            let can_halt_or_notify = minimap_changed
-                && !matches!(
-                    handler.context.player,
-                    Player::Panicking(Panicking {
-                        to: PanicTo::Channel,
-                        ..
-                    })
-                );
+            if was_player_navigating {
+                pending_halt = None;
+            }
+
+            let player_died = was_player_alive && handler.player.is_dead();
+            let player_panicking = matches!(
+                handler.context.player,
+                Player::Panicking(Panicking {
+                    to: PanicTo::Channel,
+                    ..
+                })
+            );
+            let pending_halt_reached = pending_halt.is_some_and(|instant| {
+                Instant::now().duration_since(instant).as_secs() >= PENDING_HALT_SECS
+            });
+            let can_halt_or_notify =
+                pending_halt_reached || (handler.context.did_minimap_changed && !player_panicking);
             match (
                 player_died,
                 can_halt_or_notify,
@@ -319,8 +346,13 @@ fn update_loop() {
                     handler.update_context_halting(true, true);
                 }
                 (_, true, true) => {
-                    handler.update_context_halting(true, false);
-                    handler.context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+                    if pending_halt.is_none() {
+                        pending_halt = Some(Instant::now());
+                    } else {
+                        pending_halt = None;
+                        handler.update_context_halting(true, false);
+                        handler.context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+                    }
                 }
                 _ => (),
             }

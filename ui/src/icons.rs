@@ -1,10 +1,16 @@
 use dioxus::prelude::*;
 
 #[component]
-pub fn CheckmarkIcon(class: String) -> Element {
+pub fn DetailsIcon(class: String) -> Element {
+    // <svg viewBox="0 0 24 24"><path d=""/><path d=""/></svg>
     rsx! {
-        svg { class, view_box: "0 0 78.369 78.369",
-            path { d: "M78.049 19.015 29.458 67.606a1.094 1.094 0 0 1-1.548 0L.32 40.015a1.094 1.094 0 0 1 0-1.547l6.704-6.704a1.095 1.095 0 0 1 1.548 0l20.113 20.112 41.113-41.113a1.095 1.095 0 0 1 1.548 0l6.703 6.704a1.094 1.094 0 0 1 0 1.548z" }
+        svg {
+            class,
+            width: "24px",
+            height: "24px",
+            view_box: "0 0 24 24",
+            path { d: "M20 3H4c-1.103 0-2 .897-2 2v14c0 1.103.897 2 2 2h16c1.103 0 2-.897 2-2V5c0-1.103-.897-2-2-2zM4 19V5h16l.002 14H4z" }
+            path { d: "M6 7h12v2H6zm0 4h12v2H6zm0 4h6v2H6z" }
         }
     }
 }

@@ -354,7 +354,10 @@ impl Rotator {
             }
             rotator.priority_actions_queue.iter().any(|id| {
                 matches!(
-                    rotator.priority_actions.get(id).unwrap().condition_kind,
+                    rotator
+                        .priority_actions
+                        .get(id)
+                        .and_then(|action| action.condition_kind),
                     Some(ActionCondition::ErdaShowerOffCooldown)
                 )
             })
@@ -370,7 +373,7 @@ impl Rotator {
             // or executing
             let has_linked_action =
                 is_priority_linked_action_queuing_or_executing(self, player, id);
-            let action = self.priority_actions.get_mut(&id).unwrap();
+            let action = self.priority_actions.get_mut(&id).expect("action id exist");
 
             action.ignoring = match action.condition_kind {
                 Some(ActionCondition::ErdaShowerOffCooldown) => {
@@ -501,11 +504,11 @@ impl Rotator {
         match action.inner.clone() {
             RotatorAction::Single(inner) => {
                 if action.queue_to_front {
-                    if let Some(id) = player.replace_priority_action(id, inner) {
+                    if let Some(id) = player.replace_priority_action(Some(id), inner) {
                         self.priority_actions_queue.push_front(id);
                     }
                 } else {
-                    player.set_priority_action(id, inner);
+                    player.set_priority_action(Some(id), inner);
                 }
             }
             RotatorAction::Linked(linked) => {
@@ -606,7 +609,7 @@ impl Rotator {
         };
 
         player.set_normal_action(
-            u32::MAX,
+            None,
             PlayerAction::AutoMob(PlayerActionAutoMob {
                 key: key.key,
                 link_key: key.link_key,
@@ -652,7 +655,7 @@ impl Rotator {
         );
 
         player.set_normal_action(
-            u32::MAX - 1,
+            None,
             PlayerAction::PingPong(PlayerActionPingPong {
                 key: key.key,
                 link_key: key.link_key,
@@ -683,7 +686,7 @@ impl Rotator {
         self.normal_index = (self.normal_index + 1) % self.normal_actions.len();
         match action {
             RotatorAction::Single(action) => {
-                player.set_normal_action(id, action);
+                player.set_normal_action(Some(id), action);
             }
             RotatorAction::Linked(action) => {
                 self.normal_queuing_linked_action = Some((id, Box::new(action)));
@@ -719,7 +722,7 @@ impl Rotator {
         self.normal_index = (self.normal_index + 1) % len;
         match action {
             RotatorAction::Single(action) => {
-                player.set_normal_action(id, action);
+                player.set_normal_action(Some(id), action);
             }
             RotatorAction::Linked(action) => {
                 self.normal_queuing_linked_action = Some((id, Box::new(action)));
@@ -745,9 +748,9 @@ impl Rotator {
         let (id, action) = linked_action.take().unwrap();
         *linked_action = action.next.map(|action| (id, action));
         if is_priority {
-            player.set_priority_action(id, action.inner);
+            player.set_priority_action(Some(id), action.inner);
         } else {
-            player.set_normal_action(id, action.inner);
+            player.set_normal_action(Some(id), action.inner);
         }
         true
     }
@@ -1487,7 +1490,7 @@ mod tests {
             },
         );
         // Simulate the action is currently being executed by the player
-        player.set_priority_action(action_id, NORMAL_ACTION.into());
+        player.set_priority_action(Some(action_id), NORMAL_ACTION.into());
 
         // Call rotate_priority_actions
         rotator.rotate_priority_actions(&context, &mut player);
@@ -1525,7 +1528,7 @@ mod tests {
         );
 
         // Simulate action is being executed
-        player.set_priority_action(action_id, NORMAL_ACTION.into());
+        player.set_priority_action(Some(action_id), NORMAL_ACTION.into());
 
         rotator.rotate_priority_actions(&context, &mut player);
 

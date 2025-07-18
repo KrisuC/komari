@@ -302,8 +302,8 @@ enum MinimapUpdate {
 pub fn Minimap() -> Element {
     let mut minimap = use_context::<AppState>().minimap;
     let mut minimap_preset = use_context::<AppState>().minimap_preset;
-    let position = use_context::<AppState>().position;
     let mut minimaps = use_resource(async || query_minimaps().await.unwrap_or_default());
+    let position = use_context::<AppState>().position;
     // Maps queried `minimaps` to names
     let minimap_names = use_memo(move || {
         minimaps()

@@ -2,15 +2,20 @@ use std::sync::LazyLock;
 #[cfg(debug_assertions)]
 use std::time::Instant;
 
+use base64::{Engine, prelude::BASE64_STANDARD};
 #[cfg(debug_assertions)]
 use include_dir::{Dir, include_dir};
 use log::debug;
-use opencv::core::{MatTraitConst, MatTraitConstManual, Vec4b};
+use opencv::core::Vector;
 #[cfg(debug_assertions)]
 use opencv::{
-    core::{Mat, ModifyInplace, Vector},
+    core::{Mat, ModifyInplace},
     imgcodecs::{IMREAD_COLOR, imdecode},
     imgproc::{COLOR_BGR2BGRA, cvt_color_def},
+};
+use opencv::{
+    core::{MatTraitConst, MatTraitConstManual, Rect, Vec4b},
+    imgcodecs::imencode_def,
 };
 use platforms::windows::{Handle, KeyInputKind, KeyKind, KeyReceiver, query_capture_handles};
 #[cfg(debug_assertions)]
@@ -28,13 +33,14 @@ use crate::detect::{ArrowsCalibrating, ArrowsState, CachedDetector, Detector};
 use crate::mat::OwnedMat;
 use crate::{
     Action, ActionCondition, ActionConfigurationCondition, ActionKey, BoundQuadrant, CaptureMode,
-    Character, GameState, KeyBinding, KeyBindingConfiguration, Minimap as MinimapData, PotionMode,
-    RequestHandler, RotationMode, RotatorMode, Settings,
+    Character, GameState, KeyBinding, KeyBindingConfiguration, Minimap as MinimapData,
+    NavigationPath, PotionMode, RequestHandler, RotationMode, RotatorMode, Settings,
     bridge::{ImageCapture, ImageCaptureKind, KeySenderMethod},
     buff::{BuffKind, BuffState},
     context::Context,
     database::InputMethod,
     minimap::{Minimap, MinimapState},
+    navigation::Navigator,
     player::{PlayerState, Quadrant},
     poll_request,
     rotator::{Rotator, RotatorBuildArgs},
@@ -52,6 +58,7 @@ pub struct DefaultRequestHandler<'a> {
     pub buff_states: &'a mut Vec<BuffState>,
     pub actions: &'a mut Vec<Action>,
     pub rotator: &'a mut Rotator,
+    pub navigator: &'a mut Navigator,
     pub player: &'a mut PlayerState,
     pub minimap: &'a mut MinimapState,
     pub key_sender: &'a broadcast::Sender<KeyBinding>,
@@ -73,7 +80,7 @@ impl DefaultRequestHandler<'_> {
             // TODO: Separate into variables for better readability
             let game_state = GameState {
                 position: self.player.last_known_pos.map(|pos| (pos.x, pos.y)),
-                health: self.player.health,
+                health: self.player.health(),
                 state: self.context.player.to_string(),
                 normal_action: self.player.normal_action_name(),
                 priority_action: self.player.priority_action_name(),
@@ -281,7 +288,42 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         *self.actions = preset
             .and_then(|preset| minimap.actions.get(&preset).cloned())
             .unwrap_or_default();
+        self.navigator.update_destination_path(minimap.path_id);
         self.update_rotator_actions();
+    }
+
+    fn on_create_navigation_path(&self) -> Option<NavigationPath> {
+        if let Some((minimap_base64, name_base64, name_bbox)) =
+            extract_minimap_and_name_base64(self.context)
+        {
+            Some(NavigationPath {
+                id: None,
+                minimap_snapshot_base64: minimap_base64,
+                name_snapshot_base64: name_base64,
+                name_snapshot_width: name_bbox.width,
+                name_snapshot_height: name_bbox.height,
+                points: vec![],
+            })
+        } else {
+            None
+        }
+    }
+
+    fn on_recapture_navigation_path(&self, mut path: NavigationPath) -> NavigationPath {
+        if let Some((minimap_base64, name_base64, name_bbox)) =
+            extract_minimap_and_name_base64(self.context)
+        {
+            path.minimap_snapshot_base64 = minimap_base64;
+            path.name_snapshot_base64 = name_base64;
+            path.name_snapshot_width = name_bbox.width;
+            path.name_snapshot_height = name_bbox.height;
+        }
+
+        path
+    }
+
+    fn on_update_navigation_path(&mut self) {
+        self.navigator.reset();
     }
 
     fn on_update_character(&mut self, character: Option<Character>) {
@@ -513,6 +555,28 @@ fn poll_key(handler: &mut DefaultRequestHandler) {
         handler.on_rotate_actions(!handler.context.halting);
     }
     let _ = handler.key_sender.send(received_key.into());
+}
+
+// TODO: Better way?
+fn extract_minimap_and_name_base64(context: &Context) -> Option<(String, String, Rect)> {
+    if let Minimap::Idle(idle) = context.minimap
+        && let Some(detector) = context.detector.as_ref()
+    {
+        let name_bbox = detector.detect_minimap_name(idle.bbox).ok()?;
+        let name = detector.grayscale_mat().roi(name_bbox).ok()?;
+        let mut name_bytes = Vector::new();
+        imencode_def(".png", &name, &mut name_bytes).ok()?;
+        let name_base64 = BASE64_STANDARD.encode(name_bytes);
+
+        let minimap = detector.mat().roi(idle.bbox).ok()?;
+        let mut minimap_bytes = Vector::new();
+        imencode_def(".png", &minimap, &mut minimap_bytes).ok()?;
+        let minimap_base64 = BASE64_STANDARD.encode(minimap_bytes);
+
+        Some((minimap_base64, name_base64, name_bbox))
+    } else {
+        None
+    }
 }
 
 #[inline]

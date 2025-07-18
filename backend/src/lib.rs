@@ -27,6 +27,7 @@ mod debug;
 mod detect;
 mod mat;
 mod minimap;
+mod navigation;
 mod network;
 mod pathing;
 mod player;
@@ -43,8 +44,9 @@ pub use {
         Action, ActionCondition, ActionConfiguration, ActionConfigurationCondition, ActionKey,
         ActionKeyDirection, ActionKeyWith, ActionMove, Bound, CaptureMode, Character, Class,
         EliteBossBehavior, FamiliarRarity, Familiars, InputMethod, KeyBinding,
-        KeyBindingConfiguration, LinkKeyBinding, Minimap, MobbingKey, Notifications, Platform,
-        Position, PotionMode, RotationMode, Settings, SwappableFamiliars,
+        KeyBindingConfiguration, LinkKeyBinding, Minimap, MobbingKey, NavigationPath,
+        NavigationPoint, NavigationTransition, Notifications, Platform, Position, PotionMode,
+        RotationMode, Settings, SwappableFamiliars,
     },
     pathing::MAX_PLATFORMS_COUNT,
     rotator::RotatorMode,
@@ -85,6 +87,9 @@ enum Request {
     RotateActions(bool),
     CreateMinimap(String),
     UpdateMinimap(Option<String>, Option<Minimap>),
+    CreateNavigationPath,
+    RecaptureNavigationPath(NavigationPath),
+    UpdateNavigationPath,
     UpdateCharacter(Option<Character>),
     UpdateSettings(Settings),
     RedetectMinimap,
@@ -113,6 +118,9 @@ enum Response {
     RotateActions,
     CreateMinimap(Option<Minimap>),
     UpdateMinimap,
+    CreateNavigationPath(Option<NavigationPath>),
+    RecaptureNavigationPath(NavigationPath),
+    UpdateNavigationPath,
     UpdateCharacter,
     UpdateSettings,
     RedetectMinimap,
@@ -139,6 +147,12 @@ pub(crate) trait RequestHandler {
     fn on_create_minimap(&self, name: String) -> Option<Minimap>;
 
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: Option<Minimap>);
+
+    fn on_create_navigation_path(&self) -> Option<NavigationPath>;
+
+    fn on_recapture_navigation_path(&self, path: NavigationPath) -> NavigationPath;
+
+    fn on_update_navigation_path(&mut self);
 
     fn on_update_character(&mut self, character: Option<Character>);
 
@@ -260,6 +274,55 @@ pub async fn update_minimap(preset: Option<String>, minimap: Option<Minimap>) {
 pub async fn delete_minimap(minimap: Minimap) {
     spawn_blocking(move || {
         database::delete_minimap(&minimap).expect("failed to delete minimap");
+    })
+    .await
+    .unwrap();
+}
+
+/// Queries navigation paths from the database.
+pub async fn query_navigation_paths() -> Option<Vec<NavigationPath>> {
+    spawn_blocking(database::query_navigation_paths)
+        .await
+        .unwrap()
+        .ok()
+}
+
+/// Creates a navigation path from currently detected minimap.
+///
+/// This function does not insert the created path into the database.
+pub async fn create_navigation_path() -> Option<NavigationPath> {
+    expect_value_variant!(
+        request(Request::CreateNavigationPath).await,
+        Response::CreateNavigationPath
+    )
+}
+
+pub async fn upsert_navigation_path(mut path: NavigationPath) -> NavigationPath {
+    spawn_blocking(move || {
+        database::upsert_navigation_path(&mut path).expect("failed to upsert path");
+        path
+    })
+    .await
+    .unwrap()
+}
+
+pub async fn recapture_navigation_path(path: NavigationPath) -> NavigationPath {
+    expect_value_variant!(
+        request(Request::RecaptureNavigationPath(path)).await,
+        Response::RecaptureNavigationPath
+    )
+}
+
+pub async fn update_navigation_path() {
+    expect_unit_variant!(
+        request(Request::UpdateNavigationPath).await,
+        Response::UpdateNavigationPath
+    )
+}
+
+pub async fn delete_navigation_path(path: NavigationPath) {
+    spawn_blocking(move || {
+        database::delete_navigation_path(&path).expect("failed to delete path");
     })
     .await
     .unwrap();
@@ -388,6 +451,16 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::UpdateMinimap(preset, minimap) => {
                 handler.on_update_minimap(preset, minimap);
                 Response::UpdateMinimap
+            }
+            Request::CreateNavigationPath => {
+                Response::CreateNavigationPath(handler.on_create_navigation_path())
+            }
+            Request::RecaptureNavigationPath(path) => {
+                Response::RecaptureNavigationPath(handler.on_recapture_navigation_path(path))
+            }
+            Request::UpdateNavigationPath => {
+                handler.on_update_navigation_path();
+                Response::UpdateNavigationPath
             }
             Request::UpdateCharacter(character) => {
                 handler.on_update_character(character);
