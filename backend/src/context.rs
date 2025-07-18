@@ -26,7 +26,7 @@ use crate::{
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
-    navigation::{Navigator, PointState},
+    navigation::Navigator,
     network::{DiscordNotification, NotificationKind},
     player::{PanicTo, Panicking, Player, PlayerState},
     request_handler::DefaultRequestHandler,
@@ -235,10 +235,7 @@ fn update_loop() {
     loop_with_fps(FPS, || {
         let mat = image_capture.grab().map(OwnedMat::new_from_frame);
         let was_player_alive = !player_state.is_dead();
-        let was_navigator_next = matches!(
-            navigator.last_computed_point(),
-            Some(PointState::Next(_, _, _))
-        );
+        let was_player_navigating = navigator.was_last_point_available();
         let detector = mat.map(CachedDetector::new);
 
         context.tick += 1;
@@ -326,7 +323,7 @@ fn update_loop() {
                 })
             );
             let can_halt_or_notify =
-                handler.context.did_minimap_changed && !player_panicking && !was_navigator_next;
+                handler.context.did_minimap_changed && !player_panicking && !was_player_navigating;
             match (
                 player_died,
                 can_halt_or_notify,

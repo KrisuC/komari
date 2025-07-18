@@ -53,12 +53,12 @@ struct Point {
     transition: NavigationTransition,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum PointState {
+#[derive(Debug, Clone)]
+enum PointState {
     Dirty,
     Completed,
     Unreachable,
-    Next(i32, i32, NavigationTransition),
+    Next(i32, i32, NavigationTransition, Option<Path>),
 }
 
 /// A data source to query [`NavigationPath`].
@@ -125,7 +125,7 @@ impl Navigator {
         }
 
         self.last_point_state = Some(self.compute_next_point());
-        match self.last_point_state.expect("has value") {
+        match self.last_point_state.as_ref().expect("has value") {
             PointState::Dirty => {
                 if context.did_minimap_changed {
                     player.take_priority_action();
@@ -133,13 +133,13 @@ impl Navigator {
                 false
             }
             PointState::Completed | PointState::Unreachable => true,
-            PointState::Next(x, y, transition) => {
+            PointState::Next(x, y, transition, _) => {
                 match transition {
                     NavigationTransition::Portal => {
                         if !player.has_priority_action() {
                             let position = Position {
-                                x,
-                                y,
+                                x: *x,
+                                y: *y,
                                 x_random_range: 0,
                                 allow_adjusting: true,
                             };
@@ -166,23 +166,53 @@ impl Navigator {
     }
 
     #[inline]
-    pub fn last_computed_point(&self) -> Option<PointState> {
-        self.last_point_state
+    pub fn was_last_point_available(&self) -> bool {
+        matches!(self.last_point_state, Some(PointState::Next(_, _, _, _)))
     }
 
     fn compute_next_point(&self) -> PointState {
-        if matches!(
-            self.last_point_state,
-            Some(PointState::Next(_, _, _) | PointState::Completed)
-        ) {
-            return self.last_point_state.expect("has value");
+        fn search_point(from: &Path, to_id: i64) -> Option<&Point> {
+            let mut visiting_paths = vec![(from, None, None)];
+            let mut came_from = HashMap::<i64, (Option<&Path>, Option<&Point>)>::new();
+
+            while let Some((path, from_path, from_point)) = visiting_paths.pop() {
+                came_from.insert(path.id, (from_path, from_point));
+
+                // Trace back to start_path to find the first point to move
+                if path.id == to_id {
+                    let mut current = path.id;
+                    while let Some((Some(from_path), Some(from_point))) = came_from.get(&current) {
+                        if from_path.id == from.id {
+                            return Some(from_point);
+                        }
+                        current = from_path.id;
+                    }
+                }
+
+                for point in &path.points {
+                    if let Some(next_path) = point.next_path.as_ref() {
+                        visiting_paths.push((next_path, Some(path), Some(point)));
+                    }
+                }
+            }
+
+            None
         }
+
         if self.path_dirty {
             return PointState::Dirty;
+        }
+        // Re-use cached point
+        if matches!(
+            self.last_point_state,
+            Some(PointState::Next(_, _, _, _) | PointState::Completed)
+        ) {
+            return self.last_point_state.clone().expect("has value");
         }
         if self.destination_path_id.is_none() {
             return PointState::Completed;
         }
+
         let path_id = self.destination_path_id.expect("has value");
         if self
             .current_path
@@ -192,30 +222,13 @@ impl Navigator {
             return PointState::Completed;
         }
 
-        // TODO: Reuse visit pattern
-        let start_path = self.current_path.as_ref().expect("not dirty");
-        let mut visiting_paths = vec![(start_path, None, None)];
-        let mut came_from = HashMap::<i64, (Option<&Path>, Option<&Point>)>::new();
-
-        while let Some((path, from_path, from_point)) = visiting_paths.pop() {
-            came_from.insert(path.id, (from_path, from_point));
-
-            // Trace back to start_path to find the first point to move
-            if path.id == path_id {
-                let mut current = path.id;
-                while let Some((Some(from_path), Some(from_point))) = came_from.get(&current) {
-                    if from_path.id == start_path.id {
-                        return PointState::Next(from_point.x, from_point.y, from_point.transition);
-                    }
-                    current = from_path.id;
-                }
-            }
-
-            for point in &path.points {
-                if let Some(next_path) = point.next_path.as_ref() {
-                    visiting_paths.push((next_path, Some(path), Some(point)));
-                }
-            }
+        // Search from current forward
+        if let Some(point) = search_point(self.current_path.as_ref().expect("not dirty"), path_id) {
+            return PointState::Next(point.x, point.y, point.transition, point.next_path.clone());
+        }
+        // Search from base out
+        if let Some(point) = search_point(self.base_path.as_ref().expect("not dirty"), path_id) {
+            return PointState::Next(point.x, point.y, point.transition, point.next_path.clone());
         }
 
         PointState::Unreachable
@@ -231,7 +244,6 @@ impl Navigator {
     #[inline]
     fn mark_path_dirty(&mut self) {
         self.path_dirty = true;
-        self.last_point_state = None;
     }
 
     #[inline]
@@ -254,8 +266,12 @@ impl Navigator {
 
     // TODO: Do this on background thread?
     fn update_current_path_from_current_location(&mut self, context: &Context) -> Result<()> {
-        const UPDATE_INTERVAL_SECS: u64 = 5;
+        const UPDATE_INTERVAL_SECS: u64 = 2;
 
+        let minimap_bbox = match context.minimap {
+            Minimap::Idle(idle) => idle.bbox,
+            Minimap::Detecting => bail!("minimap not idle"),
+        };
         let instant = Instant::now();
         if instant.duration_since(self.path_last_update).as_secs() < UPDATE_INTERVAL_SECS {
             bail!("update debounce");
@@ -268,11 +284,19 @@ impl Navigator {
             .as_ref()
             .ok_or(anyhow!("detector not available"))?
             .as_ref();
-        let minimap_bbox = match context.minimap {
-            Minimap::Idle(idle) => idle.bbox,
-            Minimap::Detecting => bail!("minimap not idle"),
-        };
         let minimap_name_bbox = detector.detect_minimap_name(minimap_bbox)?;
+        // Try from next_path if previously exists due to player navigating
+        if let Some(PointState::Next(_, _, _, Some(next_path))) = self.last_point_state.as_ref() {
+            if let Ok(current_path) =
+                find_current_from_base_path(next_path, detector, minimap_bbox, minimap_name_bbox)
+            {
+                info!(target: "navigator", "current path updated from previous point's next path {current_path:?}");
+                self.current_path = Some(current_path);
+                return Ok(());
+            } else {
+                self.last_point_state = None;
+            }
+        }
         // Try from base_path if previously exists
         if let Some(base_path) = self.base_path.as_ref() {
             if let Ok(current_path) =
@@ -732,5 +756,146 @@ mod tests {
     fn find_root_paths_empty_input() {
         let roots = find_root_paths(vec![]);
         assert!(roots.is_empty());
+    }
+
+    #[test]
+    fn compute_next_point_when_path_dirty() {
+        let navigator = Navigator::default();
+
+        let result = navigator.compute_next_point();
+
+        assert!(matches!(result, PointState::Dirty));
+    }
+
+    #[test]
+    fn compute_next_point_when_no_destination_path() {
+        let navigator = Navigator {
+            path_dirty: false,
+            ..Default::default()
+        };
+
+        let result = navigator.compute_next_point();
+
+        assert!(matches!(result, PointState::Completed));
+    }
+
+    #[test]
+    fn compute_next_point_when_current_path_matches_destination() {
+        let mut navigator = Navigator::default();
+        let path = Path {
+            id: 42,
+            minimap_snapshot_base64: "".into(),
+            name_snapshot_base64: "".into(),
+            points: vec![],
+        };
+        navigator.current_path = Some(path.clone());
+        navigator.destination_path_id = Some(42);
+        navigator.path_dirty = false;
+
+        let result = navigator.compute_next_point();
+
+        assert!(matches!(result, PointState::Completed));
+    }
+
+    #[test]
+    fn compute_next_point_returns_next_point_from_current_path() {
+        let mut navigator = Navigator::default();
+        let target_path = Path {
+            id: 2,
+            minimap_snapshot_base64: "".into(),
+            name_snapshot_base64: "".into(),
+            points: vec![],
+        };
+        let point = Point {
+            x: 100,
+            y: 200,
+            transition: NavigationTransition::Portal,
+            next_path: Some(target_path.clone()),
+        };
+        let path = Path {
+            id: 1,
+            minimap_snapshot_base64: "".into(),
+            name_snapshot_base64: "".into(),
+            points: vec![point.clone()],
+        };
+        navigator.current_path = Some(path);
+        navigator.destination_path_id = Some(2);
+        navigator.path_dirty = false;
+
+        let result = navigator.compute_next_point();
+
+        match result {
+            PointState::Next(x, y, transition, Some(next_path)) => {
+                assert_eq!(x, 100);
+                assert_eq!(y, 200);
+                assert_eq!(transition, NavigationTransition::Portal);
+                assert_eq!(next_path.id, 2);
+            }
+            _ => panic!("Unexpected PointState: {result:?}"),
+        }
+    }
+
+    #[test]
+    fn compute_next_point_returns_next_point_from_base_path_if_not_found_in_current_path() {
+        let mut navigator = Navigator::default();
+        let target_path = Path {
+            id: 3,
+            minimap_snapshot_base64: "".into(),
+            name_snapshot_base64: "".into(),
+            points: vec![],
+        };
+        let point = Point {
+            x: 111,
+            y: 222,
+            transition: NavigationTransition::Portal,
+            next_path: Some(target_path.clone()),
+        };
+        let base_path = Path {
+            id: 1,
+            minimap_snapshot_base64: "".into(),
+            name_snapshot_base64: "".into(),
+            points: vec![point.clone()],
+        };
+        let unrelated_current_path = Path {
+            id: 99,
+            minimap_snapshot_base64: "".into(),
+            name_snapshot_base64: "".into(),
+            points: vec![],
+        };
+        navigator.current_path = Some(unrelated_current_path);
+        navigator.base_path = Some(base_path);
+        navigator.destination_path_id = Some(3);
+        navigator.path_dirty = false;
+
+        let result = navigator.compute_next_point();
+
+        match result {
+            PointState::Next(x, y, transition, Some(next_path)) => {
+                assert_eq!(x, 111);
+                assert_eq!(y, 222);
+                assert_eq!(transition, NavigationTransition::Portal);
+                assert_eq!(next_path.id, 3);
+            }
+            _ => panic!("Expected PointState::Next, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn compute_next_point_unreachable_when_not_in_any_path() {
+        let mut navigator = Navigator::default();
+        let unrelated_path = Path {
+            id: 1,
+            minimap_snapshot_base64: "".into(),
+            name_snapshot_base64: "".into(),
+            points: vec![],
+        };
+        navigator.current_path = Some(unrelated_path.clone());
+        navigator.base_path = Some(unrelated_path);
+        navigator.destination_path_id = Some(42); // Not present
+        navigator.path_dirty = false;
+
+        let result = navigator.compute_next_point();
+
+        assert!(matches!(result, PointState::Unreachable));
     }
 }

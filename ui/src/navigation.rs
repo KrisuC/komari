@@ -179,7 +179,7 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
         minimap.and_then(|minimap| minimap.path_id).and_then(|id| {
             paths.into_iter().enumerate().find_map(|(index, path)| {
                 if path.id == Some(id) {
-                    Some(index)
+                    Some(index + 1) // + 1 for "None"
                 } else {
                     None
                 }
@@ -362,7 +362,7 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                         };
                         coroutine.send(NavigationUpdate::Attach(path_id));
                     },
-                    selected: minimap_attached_path_index().map(|index| index + 1).unwrap_or_default(),
+                    selected: minimap_attached_path_index().unwrap_or_default()
                 }
             }
         }
