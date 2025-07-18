@@ -148,7 +148,7 @@ pub trait Detector: 'static + Send + DynClone + Debug {
         minimap_name_snapshot: &Mat,
         minimap_bbox: Rect,
         minimap_name_bbox: Rect,
-    ) -> bool;
+    ) -> Result<f64>;
 
     /// Detects the portals from the given `minimap` rectangle.
     ///
@@ -251,7 +251,7 @@ mock! {
             minimap_name_snapshot: &Mat,
             minimap_bbox: Rect,
             minimap_name_bbox: Rect,
-        ) -> bool;
+        ) -> Result<f64>;
         fn detect_minimap_portals(&self, minimap: Rect) -> Vec<Rect>;
         fn detect_minimap_rune(&self, minimap: Rect) -> Result<Rect>;
         fn detect_player(&self, minimap: Rect) -> Result<Rect>;
@@ -366,7 +366,7 @@ impl Detector for CachedDetector {
         minimap_name_snapshot: &Mat,
         minimap_bbox: Rect,
         minimap_name_bbox: Rect,
-    ) -> bool {
+    ) -> Result<f64> {
         detect_minimap_match(
             &*self.mat,
             &**self.grayscale,
@@ -375,7 +375,6 @@ impl Detector for CachedDetector {
             minimap_bbox,
             minimap_name_bbox,
         )
-        .is_ok()
     }
 
     fn detect_minimap_portals(&self, minimap: Rect) -> Vec<Rect> {
@@ -886,7 +885,7 @@ fn detect_minimap_match<T: ToInputArray + MatTraitConst>(
     minimap_name_snapshot: &T,
     minimap_bbox: Rect,
     minimap_name_bbox: Rect,
-) -> Result<()> {
+) -> Result<f64> {
     const EXPAND_NAME_SIZE: i32 = 4;
 
     let minimap_name_bbox = expand_bbox(grayscale, minimap_name_bbox, EXPAND_NAME_SIZE);
@@ -895,21 +894,24 @@ fn detect_minimap_match<T: ToInputArray + MatTraitConst>(
     let minimap_bbox = expand_bbox(mat, minimap_bbox, EXPAND_NAME_SIZE);
     let minimap = to_bgr(&mat.roi(minimap_bbox)?);
 
-    detect_template_single(
+    let name_score = detect_template_single(
         &minimap_name,
         minimap_name_snapshot,
         no_array(),
         Point::default(),
         0.8,
-    )?;
-    detect_template_single(
+    )
+    .map(|(_, score)| score)?;
+    let minimap_score = detect_template_single(
         &minimap,
         minimap_snapshot,
         no_array(),
         Point::default(),
         0.6,
-    )?;
-    Ok(())
+    )
+    .map(|(_, score)| score)?;
+
+    Ok((name_score + minimap_score) / 2.0)
 }
 
 fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Vec<Rect> {

@@ -284,14 +284,13 @@ impl Navigator {
             .as_ref();
         let minimap_name_bbox = detector.detect_minimap_name(minimap_bbox)?;
         // Try from next_path if previously exists due to player navigating
-        if let Some(PointState::Next(_, _, _, Some(next_path))) = self.last_point_state.take() {
-            if let Ok(current_path) =
+        if let Some(PointState::Next(_, _, _, Some(next_path))) = self.last_point_state.take()
+            && let Ok(current_path) =
                 find_current_from_base_path(next_path, detector, minimap_bbox, minimap_name_bbox)
-            {
-                info!(target: "navigator", "current path updated from previous point's next path");
-                self.current_path = Some(current_path);
-                return Ok(());
-            }
+        {
+            info!(target: "navigator", "current path updated from previous point's next path");
+            self.current_path = Some(current_path);
+            return Ok(());
         }
         // Try from base_path if previously exists
         if let Some(base_path) = self.base_path.clone() {
@@ -415,28 +414,34 @@ fn find_current_from_base_path(
 ) -> Result<Rc<RefCell<Path>>> {
     let mut visited_ids = HashSet::new();
     let mut visiting_paths = vec![base_path];
+    let mut matches = vec![];
 
     while let Some(path) = visiting_paths.pop() {
         let path_borrow = path.borrow();
         if !visited_ids.insert(path_borrow.id) {
             continue;
         }
-
-        let name_mat = decode_base64_to_mat(&path_borrow.name_snapshot_base64, true)?;
-        let minimap_mat = decode_base64_to_mat(&path_borrow.minimap_snapshot_base64, false)?;
-
-        if detector.detect_minimap_match(&minimap_mat, &name_mat, minimap_bbox, minimap_name_bbox) {
-            return Ok(path.clone());
-        }
-
         for point in &path_borrow.points {
             if let Some(path) = point.next_path.clone() {
                 visiting_paths.push(path);
             }
         }
+
+        let name_mat = decode_base64_to_mat(&path_borrow.name_snapshot_base64, true)?;
+        let minimap_mat = decode_base64_to_mat(&path_borrow.minimap_snapshot_base64, false)?;
+        if let Ok(score) =
+            detector.detect_minimap_match(&minimap_mat, &name_mat, minimap_bbox, minimap_name_bbox)
+        {
+            debug!(target: "navigator", "candidate path found with score {score}");
+            matches.push((score, path.clone()));
+        }
     }
 
-    bail!("unable to determine current path")
+    matches
+        .into_iter()
+        .max_by(|(first_score, _), (second_score, _)| first_score.total_cmp(second_score))
+        .map(|(_, path)| path)
+        .ok_or(anyhow!("unable to determine current path"))
 }
 
 fn decode_base64_to_mat(base64: &str, grayscale: bool) -> Result<Mat> {
@@ -696,7 +701,7 @@ mod tests {
             .returning(move |_| Ok(minimap_name_bbox));
         mock_detector
             .expect_detect_minimap_match()
-            .returning(|_, _, _, _| true); // Simulate successful match
+            .returning(|_, _, _, _| Ok(0.75)); // Simulate successful match
 
         let mut minimap = MinimapIdle::default();
         minimap.bbox = minimap_bbox;
