@@ -124,10 +124,14 @@ impl Navigator {
             return false;
         }
 
-        let state = self.compute_next_point();
-        self.last_point_state = Some(state);
-        match state {
-            PointState::Dirty => false,
+        self.last_point_state = Some(self.compute_next_point());
+        match self.last_point_state.expect("has value") {
+            PointState::Dirty => {
+                if context.did_minimap_changed {
+                    player.take_priority_action();
+                }
+                false
+            }
             PointState::Completed | PointState::Unreachable => true,
             PointState::Next(x, y, transition) => {
                 match transition {
@@ -146,9 +150,9 @@ impl Navigator {
                                 position: Some(position),
                                 direction: ActionKeyDirection::Any,
                                 with: ActionKeyWith::Stationary,
-                                wait_before_use_ticks: 10,
+                                wait_before_use_ticks: 0,
                                 wait_before_use_ticks_random_range: 0,
-                                wait_after_use_ticks: 10,
+                                wait_after_use_ticks: 0,
                                 wait_after_use_ticks_random_range: 0,
                             };
                             player.set_priority_action(None, PlayerAction::Key(key));
@@ -167,8 +171,11 @@ impl Navigator {
     }
 
     fn compute_next_point(&self) -> PointState {
-        if let Some(state) = self.last_point_state {
-            return state;
+        if matches!(
+            self.last_point_state,
+            Some(PointState::Next(_, _, _) | PointState::Completed)
+        ) {
+            return self.last_point_state.expect("has value");
         }
         if self.path_dirty {
             return PointState::Dirty;
@@ -230,6 +237,7 @@ impl Navigator {
     #[inline]
     pub fn update_destination_path(&mut self, path_id: Option<i64>) {
         self.destination_path_id = path_id;
+        self.last_point_state = None;
     }
 
     #[inline]

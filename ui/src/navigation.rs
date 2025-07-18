@@ -347,21 +347,23 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
 
     rsx! {
         Section { name: "Selected map",
-            Select {
-                label: "Attached path",
-                disabled: minimap().is_none(),
-                options: [vec!["None".to_string()], path_ids_view()].concat(),
-                on_select: move |(path_index, _)| {
-                    let path_id = if path_index == 0 {
-                        None
-                    } else {
-                        let index = path_index - 1;
-                        let paths = paths_view.peek();
-                        paths.get(index).and_then(|path: &NavigationPath| path.id)
-                    };
-                    coroutine.send(NavigationUpdate::Attach(path_id));
-                },
-                selected: minimap_attached_path_index().unwrap_or_default(),
+            div { class: "grid grid-cols-2",
+                Select {
+                    label: "Attached path",
+                    disabled: minimap().is_none(),
+                    options: [vec!["None".to_string()], path_ids_view()].concat(),
+                    on_select: move |(path_index, _)| {
+                        let path_id = if path_index == 0 {
+                            None
+                        } else {
+                            let index = path_index - 1;
+                            let paths = paths_view.peek();
+                            paths.get(index).and_then(|path: &NavigationPath| path.id)
+                        };
+                        coroutine.send(NavigationUpdate::Attach(path_id));
+                    },
+                    selected: minimap_attached_path_index().map(|index| index + 1).unwrap_or_default(),
+                }
             }
         }
         Section { name: "Paths",
@@ -374,7 +376,6 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                         NavigationPathItem {
                             path,
                             paths_view,
-                            path_ids_view,
                             on_add_point: move |path| {
                                 on_add_point(path);
                             },
@@ -459,7 +460,6 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
 fn NavigationPathItem(
     path: NavigationPath,
     paths_view: Memo<Vec<NavigationPath>>,
-    path_ids_view: Memo<Vec<String>>,
     on_add_point: EventHandler<NavigationPath>,
     on_edit_point: EventHandler<(NavigationPath, NavigationPoint, usize)>,
     on_delete_point: EventHandler<(NavigationPath, usize)>,
@@ -503,6 +503,12 @@ fn NavigationPathItem(
         paths_view()
             .into_iter()
             .filter(|path| path.id != path_id)
+            .collect::<Vec<_>>()
+    });
+    let path_ids_view = use_memo(move || {
+        paths_view()
+            .into_iter()
+            .filter_map(|path| path.id.map(|id| format!("Path {id}")))
             .collect::<Vec<_>>()
     });
 

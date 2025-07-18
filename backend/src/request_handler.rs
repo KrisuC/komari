@@ -6,9 +6,10 @@ use base64::{Engine, prelude::BASE64_STANDARD};
 #[cfg(debug_assertions)]
 use include_dir::{Dir, include_dir};
 use log::debug;
+use opencv::core::Vector;
 #[cfg(debug_assertions)]
 use opencv::{
-    core::{Mat, ModifyInplace, Vector},
+    core::{Mat, ModifyInplace},
     imgcodecs::{IMREAD_COLOR, imdecode},
     imgproc::{COLOR_BGR2BGRA, cvt_color_def},
 };
