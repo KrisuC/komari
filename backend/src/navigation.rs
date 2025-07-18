@@ -142,7 +142,7 @@ impl Navigator {
                                 position: Some(position),
                                 direction: ActionKeyDirection::Any,
                                 with: ActionKeyWith::Stationary,
-                                wait_before_use_ticks: 0,
+                                wait_before_use_ticks: 5,
                                 wait_before_use_ticks_random_range: 0,
                                 wait_after_use_ticks: 0,
                                 wait_after_use_ticks_random_range: 0,
@@ -159,7 +159,10 @@ impl Navigator {
 
     #[inline]
     pub fn was_last_point_available(&self) -> bool {
-        matches!(self.last_point_state, Some(PointState::Next(_, _, _, _)))
+        matches!(
+            self.last_point_state,
+            Some(PointState::Next(_, _, _, _) | PointState::Completed)
+        )
     }
 
     fn compute_next_point(&self) -> PointState {
@@ -281,15 +284,13 @@ impl Navigator {
             .as_ref();
         let minimap_name_bbox = detector.detect_minimap_name(minimap_bbox)?;
         // Try from next_path if previously exists due to player navigating
-        if let Some(PointState::Next(_, _, _, Some(next_path))) = self.last_point_state.clone() {
+        if let Some(PointState::Next(_, _, _, Some(next_path))) = self.last_point_state.take() {
             if let Ok(current_path) =
                 find_current_from_base_path(next_path, detector, minimap_bbox, minimap_name_bbox)
             {
                 info!(target: "navigator", "current path updated from previous point's next path");
                 self.current_path = Some(current_path);
                 return Ok(());
-            } else {
-                self.last_point_state = None;
             }
         }
         // Try from base_path if previously exists

@@ -38,6 +38,7 @@ use crate::{
 use crate::{Settings, bridge::MockKeySender, detect::MockDetector};
 
 const FPS: u32 = 30;
+const PENDING_HALT_SECS: u64 = 12;
 pub const MS_PER_TICK: u64 = MS_PER_TICK_F32 as u64;
 pub const MS_PER_TICK_F32: f32 = 1000.0 / FPS as f32;
 
@@ -226,6 +227,11 @@ fn update_loop() {
     let mut buff_states = BuffKind::iter()
         .map(BuffState::new)
         .collect::<Vec<BuffState>>();
+    // When minimap changes, a pending halt will be queued. This helps ensure that if any
+    // accidental or intended (e.g. navigating) minimap change occurs, it will try to wait for a
+    // specified threshold to pass before determining panicking is needed. This can be beneficial
+    // when navigator falsely navigates to a wrong unknown location.
+    let mut pending_halt = None;
 
     #[cfg(debug_assertions)]
     let mut recording_images_id = None;
@@ -314,6 +320,10 @@ fn update_loop() {
         // Upon accidental or white roomed causing map to change,
         // abort actions and send notification
         if handler.minimap.data().is_some() && !handler.context.halting {
+            if was_player_navigating {
+                pending_halt = None;
+            }
+
             let player_died = was_player_alive && handler.player.is_dead();
             let player_panicking = matches!(
                 handler.context.player,
@@ -322,8 +332,11 @@ fn update_loop() {
                     ..
                 })
             );
+            let pending_halt_reached = pending_halt.is_some_and(|instant| {
+                Instant::now().duration_since(instant).as_secs() >= PENDING_HALT_SECS
+            });
             let can_halt_or_notify =
-                handler.context.did_minimap_changed && !player_panicking && !was_player_navigating;
+                pending_halt_reached || (handler.context.did_minimap_changed && !player_panicking);
             match (
                 player_died,
                 can_halt_or_notify,
@@ -333,8 +346,13 @@ fn update_loop() {
                     handler.update_context_halting(true, true);
                 }
                 (_, true, true) => {
-                    handler.update_context_halting(true, false);
-                    handler.context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+                    if pending_halt.is_none() {
+                        pending_halt = Some(Instant::now());
+                    } else {
+                        pending_halt = None;
+                        handler.update_context_halting(true, false);
+                        handler.context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+                    }
                 }
                 _ => (),
             }
