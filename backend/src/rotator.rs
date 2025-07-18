@@ -11,14 +11,13 @@ use opencv::core::{Point, Rect};
 use ordered_hash_map::OrderedHashMap;
 
 use crate::{
-    ActionKeyDirection, ActionKeyWith, Bound, FamiliarRarity, KeyBinding, MobbingKey,
-    NavigationTransition, Position, SwappableFamiliars,
+    ActionKeyDirection, ActionKeyWith, Bound, FamiliarRarity, KeyBinding, MobbingKey, Position,
+    SwappableFamiliars,
     array::Array,
     buff::{Buff, BuffKind},
     context::{Context, MS_PER_TICK},
     database::{Action, ActionCondition, ActionKey, ActionMove, EliteBossBehavior},
     minimap::Minimap,
-    navigation::{Navigator, PointState},
     player::{
         GRAPPLING_THRESHOLD, PanicTo, PingPongDirection, Player, PlayerAction, PlayerActionAutoMob,
         PlayerActionFamiliarsSwapping, PlayerActionKey, PlayerActionPanic, PlayerActionPingPong,
@@ -139,8 +138,6 @@ pub struct Rotator {
     ///
     /// Populates from [`Self::priority_actions`] when its predicate for queuing is true
     priority_actions_queue: VecDeque<u32>,
-    /// A navigator for navigating through maps.
-    navigator: Navigator,
 }
 
 #[derive(Debug)]
@@ -294,42 +291,9 @@ impl Rotator {
 
     #[inline]
     pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
-        self.navigator.update(context);
         if context.halting || matches!(context.player, Player::CashShopThenExit(_, _)) {
             return;
         }
-        if !player.has_priority_action() {
-            match self.navigator.compute_next_point_to_reach(Some(3)) {
-                PointState::Dirty => (),
-                PointState::Completed => (),
-                PointState::Unreachable => (),
-                PointState::Next((x, y, transition)) => match transition {
-                    NavigationTransition::Portal => {
-                        player.set_priority_action(
-                            None,
-                            PlayerAction::Key(PlayerActionKey {
-                                key: KeyBinding::Up,
-                                link_key: None,
-                                count: 1,
-                                position: Some(Position {
-                                    x,
-                                    x_random_range: 0,
-                                    y,
-                                    allow_adjusting: true,
-                                }),
-                                direction: ActionKeyDirection::Any,
-                                with: ActionKeyWith::Stationary,
-                                wait_before_use_ticks: 15,
-                                wait_before_use_ticks_random_range: 0,
-                                wait_after_use_ticks: 15,
-                                wait_after_use_ticks_random_range: 0,
-                            }),
-                        );
-                    }
-                },
-            }
-        }
-
         self.rotate_priority_actions(context, player);
         self.rotate_priority_actions_queue(context, player);
         if !player.has_priority_action() && !player.has_normal_action() {

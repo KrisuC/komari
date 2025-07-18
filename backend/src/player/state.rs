@@ -159,11 +159,11 @@ pub struct PlayerState {
     pub config: PlayerConfiguration,
     /// Optional id of current normal action provided by [`Rotator`].
     normal_action_id: Option<u32>,
-    /// A normal action requested by [`Rotator`].
+    /// Requested normal action.
     pub(super) normal_action: Option<PlayerAction>,
     /// Optional id of current priority action provided by [`Rotator`].
     priority_action_id: Option<u32>,
-    /// A priority action requested by [`Rotator`].
+    /// Requested priority action.
     ///
     /// This action will override the normal action if it is in the middle of executing.
     pub(super) priority_action: Option<PlayerAction>,

@@ -39,6 +39,7 @@ use crate::{
     context::Context,
     database::InputMethod,
     minimap::{Minimap, MinimapState},
+    navigation::Navigator,
     player::{PlayerState, Quadrant},
     poll_request,
     rotator::{Rotator, RotatorBuildArgs},
@@ -56,6 +57,7 @@ pub struct DefaultRequestHandler<'a> {
     pub buff_states: &'a mut Vec<BuffState>,
     pub actions: &'a mut Vec<Action>,
     pub rotator: &'a mut Rotator,
+    pub navigator: &'a mut Navigator,
     pub player: &'a mut PlayerState,
     pub minimap: &'a mut MinimapState,
     pub key_sender: &'a broadcast::Sender<KeyBinding>,
@@ -285,11 +287,11 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         *self.actions = preset
             .and_then(|preset| minimap.actions.get(&preset).cloned())
             .unwrap_or_default();
+        self.navigator.update_destination_path(minimap.path_id);
         self.update_rotator_actions();
     }
 
     fn on_create_navigation_path(&self) -> Option<NavigationPath> {
-        return Some(NavigationPath::default());
         if let Some((minimap_base64, name_base64, name_bbox)) =
             extract_minimap_and_name_base64(self.context)
         {
@@ -317,6 +319,10 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
 
         path
+    }
+
+    fn on_update_navigation_path(&mut self) {
+        self.navigator.reset();
     }
 
     fn on_update_character(&mut self, character: Option<Character>) {

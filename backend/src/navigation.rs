@@ -17,12 +17,14 @@ use opencv::{
 };
 
 use crate::{
+    ActionKeyDirection, ActionKeyWith, KeyBinding, Position,
     context::Context,
     database::{
         NavigationPath, NavigationTransition, query_navigation_path, query_navigation_paths,
     },
     detect::Detector,
     minimap::Minimap,
+    player::{PlayerAction, PlayerActionKey, PlayerState},
 };
 
 #[derive(Clone)]
@@ -56,7 +58,7 @@ pub enum PointState {
     Dirty,
     Completed,
     Unreachable,
-    Next((i32, i32, NavigationTransition)),
+    Next(i32, i32, NavigationTransition),
 }
 
 /// A data source to query [`NavigationPath`].
@@ -91,7 +93,8 @@ pub struct Navigator {
     current_path: Option<Path>,
     path_dirty: bool,
     path_last_update: Instant,
-    last_computed_point_state: Option<PointState>,
+    last_point_state: Option<PointState>,
+    destination_path_id: Option<i64>,
 }
 
 impl Default for Navigator {
@@ -108,34 +111,81 @@ impl Navigator {
             current_path: None,
             path_dirty: true,
             path_last_update: Instant::now(),
-            last_computed_point_state: None,
+            last_point_state: None,
+            destination_path_id: None,
+        }
+    }
+
+    /// Navigates the player to the currently set [`Self::destination_path_id`].
+    ///
+    /// Returns `true` if the player has reached the destination.
+    pub fn navigate_player(&mut self, context: &Context, player: &mut PlayerState) -> bool {
+        if context.halting {
+            return false;
+        }
+
+        let state = self.compute_next_point();
+        self.last_point_state = Some(state);
+        match state {
+            PointState::Dirty => false,
+            PointState::Completed | PointState::Unreachable => true,
+            PointState::Next(x, y, transition) => {
+                match transition {
+                    NavigationTransition::Portal => {
+                        if !player.has_priority_action() {
+                            let position = Position {
+                                x,
+                                y,
+                                x_random_range: 0,
+                                allow_adjusting: true,
+                            };
+                            let key = PlayerActionKey {
+                                key: KeyBinding::Up,
+                                link_key: None,
+                                count: 1,
+                                position: Some(position),
+                                direction: ActionKeyDirection::Any,
+                                with: ActionKeyWith::Stationary,
+                                wait_before_use_ticks: 10,
+                                wait_before_use_ticks_random_range: 0,
+                                wait_after_use_ticks: 10,
+                                wait_after_use_ticks_random_range: 0,
+                            };
+                            player.set_priority_action(None, PlayerAction::Key(key));
+                        }
+                    }
+                }
+
+                false
+            }
         }
     }
 
     #[inline]
-    fn mark_path_dirty(&mut self) {
-        self.path_dirty = true;
-        self.last_computed_point_state = None;
+    pub fn last_computed_point(&self) -> Option<PointState> {
+        self.last_point_state
     }
 
-    pub fn compute_next_point_to_reach(&self, path_id: Option<i64>) -> PointState {
-        if let Some(state) = self.last_computed_point_state {
+    fn compute_next_point(&self) -> PointState {
+        if let Some(state) = self.last_point_state {
             return state;
         }
         if self.path_dirty {
             return PointState::Dirty;
         }
-        if path_id.is_none()
-            || self
-                .current_path
-                .as_ref()
-                .is_some_and(|path| path.id == path_id.expect("has value"))
+        if self.destination_path_id.is_none() {
+            return PointState::Completed;
+        }
+        let path_id = self.destination_path_id.expect("has value");
+        if self
+            .current_path
+            .as_ref()
+            .is_some_and(|path| path.id == path_id)
         {
             return PointState::Completed;
         }
 
         // TODO: Reuse visit pattern
-        let path_id = path_id.expect("has value");
         let start_path = self.current_path.as_ref().expect("not dirty");
         let mut visiting_paths = vec![(start_path, None, None)];
         let mut came_from = HashMap::<i64, (Option<&Path>, Option<&Point>)>::new();
@@ -148,11 +198,7 @@ impl Navigator {
                 let mut current = path.id;
                 while let Some((Some(from_path), Some(from_point))) = came_from.get(&current) {
                     if from_path.id == start_path.id {
-                        return PointState::Next((
-                            from_point.x,
-                            from_point.y,
-                            from_point.transition,
-                        ));
+                        return PointState::Next(from_point.x, from_point.y, from_point.transition);
                     }
                     current = from_path.id;
                 }
@@ -168,6 +214,25 @@ impl Navigator {
         PointState::Unreachable
     }
 
+    #[inline]
+    pub fn reset(&mut self) {
+        self.base_path = None;
+        self.current_path = None;
+        self.mark_path_dirty();
+    }
+
+    #[inline]
+    fn mark_path_dirty(&mut self) {
+        self.path_dirty = true;
+        self.last_point_state = None;
+    }
+
+    #[inline]
+    pub fn update_destination_path(&mut self, path_id: Option<i64>) {
+        self.destination_path_id = path_id;
+    }
+
+    #[inline]
     pub fn update(&mut self, context: &Context) {
         if context.did_minimap_changed {
             self.mark_path_dirty();
@@ -179,6 +244,7 @@ impl Navigator {
         }
     }
 
+    // TODO: Do this on background thread?
     fn update_current_path_from_current_location(&mut self, context: &Context) -> Result<()> {
         const UPDATE_INTERVAL_SECS: u64 = 5;
 

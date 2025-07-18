@@ -26,6 +26,7 @@ use crate::{
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
+    navigation::{Navigator, PointState},
     network::{DiscordNotification, NotificationKind},
     player::{PanicTo, Panicking, Player, PlayerState},
     request_handler::DefaultRequestHandler,
@@ -168,6 +169,7 @@ fn update_loop() {
     // MapleStoryClassTW <- TMS
     let handle = Handle::new("MapleStoryClass");
     let mut rotator = Rotator::default();
+    let mut navigator = Navigator::default();
     let mut actions = Vec::<Action>::new();
     let mut character = None; // Override by UI
     let mut buffs = vec![];
@@ -233,6 +235,10 @@ fn update_loop() {
     loop_with_fps(FPS, || {
         let mat = image_capture.grab().map(OwnedMat::new_from_frame);
         let was_player_alive = !player_state.is_dead();
+        let was_navigator_next = matches!(
+            navigator.last_computed_point(),
+            Some(PointState::Next(_, _, _))
+        );
         let detector = mat.map(CachedDetector::new);
 
         context.tick += 1;
@@ -241,6 +247,8 @@ fn update_loop() {
 
             context.detector = Some(Box::new(detector));
             context.minimap = fold_context(&context, context.minimap, &mut minimap_state);
+            context.did_minimap_changed =
+                was_minimap_idle && matches!(context.minimap, Minimap::Detecting);
             context.player = fold_context(&context, context.player, &mut player_state);
             for (i, state) in skill_states
                 .iter_mut()
@@ -252,11 +260,12 @@ fn update_loop() {
             for (i, state) in buff_states.iter_mut().enumerate().take(context.buffs.len()) {
                 context.buffs[i] = fold_context(&context, context.buffs[i], state);
             }
-            context.did_minimap_changed =
-                was_minimap_idle && matches!(context.minimap, Minimap::Detecting);
 
-            // Rotating action must always be done last
-            rotator.rotate_action(&context, &mut player_state);
+            // This must always be done last
+            navigator.update(&context);
+            if navigator.navigate_player(&context, &mut player_state) {
+                rotator.rotate_action(&context, &mut player_state);
+            }
         }
         // TODO: Maybe should not downcast but really don't want to public update_input_delay
         // method
@@ -278,6 +287,7 @@ fn update_loop() {
             buff_states: &mut buff_states,
             actions: &mut actions,
             rotator: &mut rotator,
+            navigator: &mut navigator,
             player: &mut player_state,
             minimap: &mut minimap_state,
             key_sender: &key_sender,
@@ -308,14 +318,15 @@ fn update_loop() {
         // abort actions and send notification
         if handler.minimap.data().is_some() && !handler.context.halting {
             let player_died = was_player_alive && handler.player.is_dead();
-            let can_halt_or_notify = handler.context.did_minimap_changed
-                && !matches!(
-                    handler.context.player,
-                    Player::Panicking(Panicking {
-                        to: PanicTo::Channel,
-                        ..
-                    })
-                );
+            let player_panicking = matches!(
+                handler.context.player,
+                Player::Panicking(Panicking {
+                    to: PanicTo::Channel,
+                    ..
+                })
+            );
+            let can_halt_or_notify =
+                handler.context.did_minimap_changed && !player_panicking && !was_navigator_next;
             match (
                 player_died,
                 can_halt_or_notify,

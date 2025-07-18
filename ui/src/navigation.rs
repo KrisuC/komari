@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use backend::{
     NavigationPath, NavigationPoint, NavigationTransition, create_navigation_path,
-    delete_navigation_path, query_navigation_paths, recapture_navigation_path,
-    upsert_navigation_path,
+    delete_navigation_path, query_navigation_paths, recapture_navigation_path, update_minimap,
+    update_navigation_path, upsert_minimap, upsert_navigation_path,
 };
 use dioxus::prelude::*;
 use futures_util::StreamExt;
@@ -35,6 +35,7 @@ enum NavigationUpdate {
     Create,
     Delete(NavigationPath),
     Recapture(NavigationPath),
+    Attach(Option<i64>),
 }
 
 #[component]
@@ -162,8 +163,29 @@ fn PopupPoint(
 #[component]
 fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
     let position = use_context::<AppState>().position;
+    let mut minimap = use_context::<AppState>().minimap;
+    let minimap_preset = use_context::<AppState>().minimap_preset;
     let mut paths = use_resource(async || query_navigation_paths().await.unwrap_or_default());
     let paths_view = use_memo(move || paths().unwrap_or_default());
+    let path_ids_view = use_memo(move || {
+        paths_view()
+            .into_iter()
+            .filter_map(|path| path.id.map(|id| format!("Path {id}")))
+            .collect::<Vec<_>>()
+    });
+    let minimap_attached_path_index = use_memo(move || {
+        let minimap = minimap();
+        let paths = paths_view();
+        minimap.and_then(|minimap| minimap.path_id).and_then(|id| {
+            paths.into_iter().enumerate().find_map(|(index, path)| {
+                if path.id == Some(id) {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+        })
+    });
     let mut circular_error_message = use_signal(|| None);
     // Group paths by root for better experience
     let root_paths_view = use_memo(move || {
@@ -251,22 +273,26 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
 
     let coroutine = use_coroutine(
         move |mut rx: UnboundedReceiver<NavigationUpdate>| async move {
+            let update_and_restart = move || async move {
+                update_navigation_path().await;
+                paths.restart();
+            };
             while let Some(message) = rx.next().await {
                 match message {
                     NavigationUpdate::Update(path) => {
                         let _ = upsert_navigation_path(path).await;
-                        paths.restart();
+                        update_and_restart().await;
                     }
                     NavigationUpdate::Create => {
                         let Some(path) = create_navigation_path().await else {
                             continue;
                         };
                         let _ = upsert_navigation_path(path).await;
-                        paths.restart();
+                        update_and_restart().await;
                     }
                     NavigationUpdate::Delete(path) => {
                         delete_navigation_path(path).await;
-                        paths.restart();
+                        update_and_restart().await;
                     }
                     NavigationUpdate::Recapture(path) => {
                         let new_path = recapture_navigation_path(path).await;
@@ -277,7 +303,17 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                         {
                             popup.set(Some(NavigationPopup::Snapshots(new_path)));
                         }
-                        paths.restart();
+                        update_and_restart().await;
+                    }
+                    NavigationUpdate::Attach(path_id) => {
+                        let Some(mut current_minimap) = minimap() else {
+                            continue;
+                        };
+                        current_minimap.path_id = path_id;
+                        current_minimap = upsert_minimap(current_minimap).await;
+
+                        minimap.set(Some(current_minimap));
+                        update_minimap(minimap_preset(), minimap()).await;
                     }
                 }
             }
@@ -310,16 +346,35 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
     );
 
     rsx! {
+        Section { name: "Selected map",
+            Select {
+                label: "Attached path",
+                disabled: minimap().is_none(),
+                options: [vec!["None".to_string()], path_ids_view()].concat(),
+                on_select: move |(path_index, _)| {
+                    let path_id = if path_index == 0 {
+                        None
+                    } else {
+                        let index = path_index - 1;
+                        let paths = paths_view.peek();
+                        paths.get(index).and_then(|path: &NavigationPath| path.id)
+                    };
+                    coroutine.send(NavigationUpdate::Attach(path_id));
+                },
+                selected: minimap_attached_path_index().unwrap_or_default(),
+            }
+        }
         Section { name: "Paths",
             if let Some(message) = circular_error_message() {
-                p { class: "label", "{message}" }
+                p { class: "label mb-2", "{message}" }
             }
-            div { class: "flex flex-col gap-2",
+            div { class: "flex flex-col gap-3",
                 for (index , paths) in root_paths_view().into_iter().enumerate() {
                     for path in paths {
                         NavigationPathItem {
                             path,
                             paths_view,
+                            path_ids_view,
                             on_add_point: move |path| {
                                 on_add_point(path);
                             },
@@ -404,6 +459,7 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
 fn NavigationPathItem(
     path: NavigationPath,
     paths_view: Memo<Vec<NavigationPath>>,
+    path_ids_view: Memo<Vec<String>>,
     on_add_point: EventHandler<NavigationPath>,
     on_edit_point: EventHandler<(NavigationPath, NavigationPoint, usize)>,
     on_delete_point: EventHandler<(NavigationPath, usize)>,
@@ -442,10 +498,11 @@ fn NavigationPathItem(
     }
 
     let path = use_memo(use_reactive!(|path| path));
-    let path_ids = use_memo(move || {
+    let paths_view = use_memo(move || {
+        let path_id = path().id;
         paths_view()
             .into_iter()
-            .filter_map(|path| path.id.map(|id| format!("Path {id}")))
+            .filter(|path| path.id != path_id)
             .collect::<Vec<_>>()
     });
 
@@ -490,7 +547,7 @@ fn NavigationPathItem(
                     div { class: "grid grid-cols-2 gap-x-2",
                         Select::<String> {
                             div_class: "!gap-0",
-                            options: [vec!["None".to_string()], path_ids()].concat(),
+                            options: [vec!["None".to_string()], path_ids_view()].concat(),
                             on_select: move |(path_index, _)| {
                                 let next_path_id = if path_index == 0 {
                                     None
