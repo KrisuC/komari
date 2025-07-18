@@ -900,14 +900,14 @@ fn detect_minimap_match<T: ToInputArray + MatTraitConst>(
         minimap_name_snapshot,
         no_array(),
         Point::default(),
-        0.75,
+        0.8,
     )?;
     detect_template_single(
         &minimap,
         minimap_snapshot,
         no_array(),
         Point::default(),
-        0.75,
+        0.6,
     )?;
     Ok(())
 }

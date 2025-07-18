@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use backend::{
     NavigationPath, NavigationPoint, NavigationTransition, create_navigation_path,
     delete_navigation_path, query_navigation_paths, recapture_navigation_path, update_minimap,
@@ -166,6 +164,7 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
     let mut minimap = use_context::<AppState>().minimap;
     let minimap_preset = use_context::<AppState>().minimap_preset;
     let mut paths = use_resource(async || query_navigation_paths().await.unwrap_or_default());
+    // TODO: How to better display paths_view that shows some form of grouping? Tarjan what?
     let paths_view = use_memo(move || paths().unwrap_or_default());
     let path_ids_view = use_memo(move || {
         paths_view()
@@ -185,90 +184,6 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                 }
             })
         })
-    });
-    let mut circular_error_message = use_signal(|| None);
-    // Group paths by root for better experience
-    let root_paths_view = use_memo(move || {
-        let paths = paths_view();
-        let all_path_ids = paths
-            .iter()
-            .map(|path| path.id.expect("valid id"))
-            .collect::<HashSet<_>>();
-        let referenced_path_ids = paths
-            .iter()
-            .flat_map(|point| &point.points)
-            .filter_map(|point| point.next_path_id)
-            .collect::<HashSet<_>>();
-        let root_path_ids = all_path_ids
-            .difference(&referenced_path_ids)
-            .copied()
-            .collect::<HashSet<_>>();
-
-        let path_by_id = paths
-            .iter()
-            .map(|path| (path.id.expect("valid id"), path))
-            .collect::<HashMap<_, _>>();
-        let root_paths = paths
-            .iter()
-            .filter(|path| path.id.is_some_and(|id| root_path_ids.contains(&id)))
-            .collect::<Vec<_>>();
-
-        let mut visited = HashSet::new();
-        let mut visiting = Vec::new();
-        let mut root_paths_flattened = Vec::new();
-        let mut root_paths_circular_ids = HashSet::new();
-
-        for path in root_paths {
-            visiting.push(path);
-
-            let mut path_flattened = Vec::new();
-            while let Some(path) = visiting.pop() {
-                let path_id = path.id.expect("valid id");
-                if !visited.insert(path_id) {
-                    root_paths_circular_ids.insert(path_id);
-                    continue;
-                }
-
-                path_flattened.push(path);
-                for point in path.points.iter() {
-                    if let Some(path) = point.next_path_id.and_then(|id| path_by_id.get(&id)) {
-                        visiting.push(path);
-                    }
-                }
-            }
-
-            root_paths_flattened.push(path_flattened);
-        }
-
-        let root_paths_flattened_ids = root_paths_flattened
-            .iter()
-            .flat_map(|paths| paths.iter().filter_map(|path| path.id))
-            .collect::<HashSet<_>>();
-        let circular_paths = paths
-            .iter()
-            .filter(|path| {
-                path.id
-                    .is_some_and(|id| !root_paths_flattened_ids.contains(&id))
-            })
-            .collect::<Vec<_>>();
-
-        if !circular_paths.is_empty() || !root_paths_circular_ids.is_empty() {
-            let path_ids = circular_paths
-                .iter()
-                .map(|path| path.id.expect("valid id"))
-                .chain(root_paths_circular_ids)
-                .map(|id| format!("Path {id}"))
-                .intersperse(", ".to_string())
-                .collect::<String>();
-            circular_error_message.set(Some(format!("Circular paths detected in {path_ids}")));
-            root_paths_flattened.push(circular_paths);
-        } else {
-            circular_error_message.set(None);
-        }
-        root_paths_flattened
-            .into_iter()
-            .map(|paths| paths.into_iter().cloned().collect())
-            .collect::<Vec<Vec<_>>>()
     });
 
     let coroutine = use_coroutine(
@@ -362,44 +277,36 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                         };
                         coroutine.send(NavigationUpdate::Attach(path_id));
                     },
-                    selected: minimap_attached_path_index().unwrap_or_default()
+                    selected: minimap_attached_path_index().unwrap_or_default(),
                 }
             }
         }
         Section { name: "Paths",
-            if let Some(message) = circular_error_message() {
-                p { class: "label mb-2", "{message}" }
-            }
             div { class: "flex flex-col gap-3",
-                for (index , paths) in root_paths_view().into_iter().enumerate() {
-                    for path in paths {
-                        NavigationPathItem {
-                            path,
-                            paths_view,
-                            on_add_point: move |path| {
-                                on_add_point(path);
-                            },
-                            on_delete_point: move |args| {
-                                on_delete_point(args);
-                            },
-                            on_edit_point: move |(path, point, index)| {
-                                let edit = PopupPointValue::Edit(point, index);
-                                let point = NavigationPopup::Point(path, edit);
-                                popup.set(Some(point));
-                            },
-                            on_select_path: move |args| {
-                                on_select_path(args);
-                            },
-                            on_delete: move |path| {
-                                coroutine.send(NavigationUpdate::Delete(path));
-                            },
-                            on_details: move |path: NavigationPath| {
-                                popup.set(Some(NavigationPopup::Snapshots(path)));
-                            },
-                        }
-                    }
-                    if index != root_paths_view.peek().len() - 1 {
-                        div { class: "border-b border-dashed border-gray-600 my-2" }
+                for path in paths_view() {
+                    NavigationPathItem {
+                        path,
+                        paths_view,
+                        on_add_point: move |path| {
+                            on_add_point(path);
+                        },
+                        on_delete_point: move |args| {
+                            on_delete_point(args);
+                        },
+                        on_edit_point: move |(path, point, index)| {
+                            let edit = PopupPointValue::Edit(point, index);
+                            let point = NavigationPopup::Point(path, edit);
+                            popup.set(Some(point));
+                        },
+                        on_select_path: move |args| {
+                            on_select_path(args);
+                        },
+                        on_delete: move |path| {
+                            coroutine.send(NavigationUpdate::Delete(path));
+                        },
+                        on_details: move |path: NavigationPath| {
+                            popup.set(Some(NavigationPopup::Snapshots(path)));
+                        },
                     }
                 }
             }
