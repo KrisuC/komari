@@ -4,7 +4,7 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use opencv::core::Rect;
 use platforms::windows::KeyKind;
 use rusqlite::{Connection, Params, Statement, types::Null};
@@ -1047,10 +1047,6 @@ pub fn query_navigation_paths() -> Result<Vec<NavigationPath>> {
     query_from_table(NAVIGATION_PATHS)
 }
 
-pub fn query_navigation_path(id: i64) -> Result<NavigationPath> {
-    query_from_table_with_id(NAVIGATION_PATHS, id)
-}
-
 pub fn upsert_navigation_path(path: &mut NavigationPath) -> Result<()> {
     upsert_to_table(NAVIGATION_PATHS, path)
 }
@@ -1083,19 +1079,6 @@ where
     let stmt = format!("SELECT id, data FROM {table};");
     let stmt = conn.prepare(&stmt).unwrap();
     map_data(stmt, [])
-}
-
-fn query_from_table_with_id<T>(table: &str, id: i64) -> Result<T>
-where
-    T: DeserializeOwned + Identifiable + Default,
-{
-    let conn = CONNECTION.lock().unwrap();
-    let stmt = format!("SELECT id, data FROM {table} WHERE id = ?1;");
-    let stmt = conn.prepare(&stmt).unwrap();
-    map_data(stmt, [id])?
-        .into_iter()
-        .next()
-        .ok_or(anyhow!("data not found"))
 }
 
 fn upsert_to_table<T>(table: &str, data: &mut T) -> Result<()>

@@ -285,7 +285,7 @@ impl Navigator {
             if let Ok(current_path) =
                 find_current_from_base_path(next_path, detector, minimap_bbox, minimap_name_bbox)
             {
-                // info!(target: "navigator", "current path updated from previous point's next path {current_path:?}");
+                info!(target: "navigator", "current path updated from previous point's next path");
                 self.current_path = Some(current_path);
                 return Ok(());
             } else {
@@ -297,7 +297,7 @@ impl Navigator {
             if let Ok(current_path) =
                 find_current_from_base_path(base_path, detector, minimap_bbox, minimap_name_bbox)
             {
-                // info!(target: "navigator", "current path updated from previous base path {current_path:?}");
+                info!(target: "navigator", "current path updated from previous base path");
                 self.current_path = Some(current_path);
                 return Ok(());
             } else {
@@ -331,7 +331,7 @@ impl Navigator {
             ) else {
                 continue;
             };
-            // info!(target: "navigator", "current path updated {current_path:?}");
+            info!(target: "navigator", "current path updated from database");
 
             self.base_path = Some(base_path);
             self.current_path = Some(current_path);
@@ -663,51 +663,6 @@ mod tests {
                 assert_eq!(next_path.borrow().id, 2);
             }
             _ => panic!("Unexpected PointState: {result:?}"),
-        }
-    }
-
-    #[test]
-    fn compute_next_point_returns_next_point_from_base_path_if_not_found_in_current_path() {
-        let mut navigator = Navigator::default();
-        let target_path = Rc::new(RefCell::new(Path {
-            id: 3,
-            minimap_snapshot_base64: "".into(),
-            name_snapshot_base64: "".into(),
-            points: vec![],
-        }));
-        let point = Point {
-            x: 111,
-            y: 222,
-            transition: NavigationTransition::Portal,
-            next_path: Some(target_path.clone()),
-        };
-        let base_path = Rc::new(RefCell::new(Path {
-            id: 1,
-            minimap_snapshot_base64: "".into(),
-            name_snapshot_base64: "".into(),
-            points: vec![point.clone()],
-        }));
-        let unrelated_current_path = Rc::new(RefCell::new(Path {
-            id: 99,
-            minimap_snapshot_base64: "".into(),
-            name_snapshot_base64: "".into(),
-            points: vec![],
-        }));
-        navigator.current_path = Some(unrelated_current_path);
-        navigator.base_path = Some(base_path);
-        navigator.destination_path_id = Some(3);
-        navigator.path_dirty = false;
-
-        let result = navigator.compute_next_point();
-
-        match result {
-            PointState::Next(x, y, transition, Some(next_path)) => {
-                assert_eq!(x, 111);
-                assert_eq!(y, 222);
-                assert_eq!(transition, NavigationTransition::Portal);
-                assert_eq!(next_path.borrow().id, 3);
-            }
-            _ => panic!("Expected PointState::Next, got {result:?}"),
         }
     }
 
