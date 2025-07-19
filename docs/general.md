@@ -10,10 +10,12 @@
     - [Auto-mobbing](#auto-mobbing)
     - [Ping Pong](#ping-pong)
   - [Platforms Pathing](#platforms-pathing)
+  - [Navigation](#navigation)
+  - [Run/stop Cycle](#run%2Fstop-cycle)
   - [Capture Modes](#capture-modes)
   - [Familiars Swapping](#familiars-swapping)
   - [Panic Mode](#panic-mode)
-  - [Change Channel On Elite Boss](#change-channel-on-elite-boss)
+  - [Elite Boss Spawns Behavior](#elite-boss-spawns-behavior)
 - [Video guides](#video-guides)
 - [Showcase](#showcase)
   - [Rotation](#rotation)
@@ -199,6 +201,47 @@ from the ground level.
 
 When adding platforms, hot keys can be used to add platforms more quickly. And it is encouraged to add platforms when
 used for auto-mobbing as it can help auto-mobbing as documented in [Auto-mobbing](#auto-mobbing).
+
+#### Navigation
+(Added in v0.19)
+
+Navigation is a feature to help the player moves to a designated map automatically. The current system only supports
+navigating through map with a visible minimap. There are two main concepts:
+- Path:
+  - Represents a snapshot of a minimap that contains minimap and its name images
+  - Contains point(s) (e.g. portal coordinates) that will transition to another path upon moving
+- Point:
+  - Represents a transition to a different path
+
+Navigation paths can be created following this procedure:
+1. Open `Navigation` tab
+2. Note down a list of maps you want to navigate (e.g. Esfera Base Camp -> Esfera Mirror-touched Sea 3)
+3. Go to each map and ensure the minimap is currently detectable
+4. Click `Add path`:
+    - Automatically capture the current minimap and its name images
+    - Used for matching against other paths to know the player current location
+5. Go to a portal inside the map and click `Add point`:
+    - Automatically record the portal coordinate to be used for navigating
+    - Can optionally select the next path this point will transition to
+6. Repeat from 3. until all paths are added
+7. Select a created map and attach a path to it through `Attached path`
+
+After following the above procedure, when clicking `Start`, the bot will try to navigate to the attached path first before 
+rotating the actual actions. Useful for:
+- Bot [run/stop Cycle](#run%2Fstop-cycle) that will stop, go town for a specified duration and start again
+- Navigate back to the original map if accidental map changing occurs
+
+This system is currently experimental and subject to changes. It has many limitations in that it cannot do interaction-based
+navigation (e.g. Maple Guide, teleport, ...) or minimap is not visible. But can serve as a foundation for implementing other 
+features that may require navigation.
+
+![Navigation](https://github.com/sasanquaa/komari/blob/master/.github/images/navigation.png?raw=true)
+
+#### Run/stop Cycle
+(Added in v0.19)
+
+Added in the `Settings` tab under `Run/stop cycle` section. When `Enabled`, the bot will run for the specified `Run duration` and then stop, go to town, AFK for the specified `Stop duration` and back to running. Using this feature requires the key binding 
+for `To town` is set and navigation paths for the selected map are available.
 
 #### Capture Modes
 `Capture` section in the `Settings` tab can be used to change how the bot captures game images. There are three capture modes, the first two are similar to what you see in OBS:
