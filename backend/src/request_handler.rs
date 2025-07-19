@@ -31,6 +31,7 @@ use crate::debug::{
 use crate::detect::{ArrowsCalibrating, ArrowsState, CachedDetector, Detector};
 #[cfg(debug_assertions)]
 use crate::mat::OwnedMat;
+use crate::pathing::Platform;
 use crate::{
     Action, ActionCondition, ActionConfigurationCondition, ActionKey, BoundQuadrant, CaptureMode,
     Character, GameOperation, GameState, KeyBinding, KeyBindingConfiguration,
@@ -63,6 +64,7 @@ pub struct DefaultRequestHandler<'a> {
     pub navigator: &'a mut Navigator,
     pub player: &'a mut PlayerState,
     pub minimap: &'a mut MinimapState,
+    pub minimap_data: &'a mut Option<MinimapData>,
     pub key_sender: &'a broadcast::Sender<KeyBinding>,
     pub key_receiver: &'a mut KeyReceiver,
     pub image_capture: &'a mut ImageCapture,
@@ -116,8 +118,8 @@ impl DefaultRequestHandler<'_> {
                     .map(|detector| detector.mat())
                     .and_then(|mat| extract_minimap(self.context, mat)),
                 platforms_bound: if self
-                    .minimap
-                    .data()
+                    .minimap_data
+                    .as_ref()
                     .is_some_and(|data| data.auto_mob_platforms_bound)
                     && let Minimap::Idle(idle) = self.context.minimap
                 {
@@ -148,8 +150,8 @@ impl DefaultRequestHandler<'_> {
 
     fn update_rotator_actions(&mut self) {
         let mode = self
-            .minimap
-            .data()
+            .minimap_data
+            .as_ref()
             .map(|minimap| match minimap.rotation_mode {
                 RotationMode::StartToEnd => RotatorMode::StartToEnd,
                 RotationMode::StartToEndThenReverse => RotatorMode::StartToEndThenReverse,
@@ -164,8 +166,8 @@ impl DefaultRequestHandler<'_> {
             })
             .unwrap_or_default();
         let reset_on_erda = self
-            .minimap
-            .data()
+            .minimap_data
+            .as_ref()
             .map(|minimap| minimap.actions_any_reset_on_erda_condition)
             .unwrap_or_default();
         let actions = self
@@ -210,7 +212,7 @@ impl DefaultRequestHandler<'_> {
     }
 
     pub fn update_context_halting(&mut self, halting: bool, reset_player_to_idle: bool) {
-        if self.minimap.data().is_some() && self.character.is_some() {
+        if self.minimap_data.as_ref().is_some() && self.character.is_some() {
             self.context.operation = match (halting, self.settings.cycle_run_stop) {
                 (true, _) => Operation::Halting,
                 (false, true) => Instant::now()
@@ -248,10 +250,22 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: Option<MinimapData>) {
-        self.minimap.set_data(minimap);
+        *self.minimap_data = minimap;
+        self.minimap.set_platforms(
+            self.minimap_data
+                .as_ref()
+                .map(|data| {
+                    data.platforms
+                        .iter()
+                        .copied()
+                        .map(Platform::from)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        );
         self.player.reset();
 
-        let Some(minimap) = self.minimap.data() else {
+        let Some(minimap) = self.minimap_data.as_ref() else {
             *self.actions = Vec::new();
             self.update_rotator_actions();
             return;
@@ -567,12 +581,12 @@ fn poll_database_event(handler: &mut DefaultRequestHandler) {
             let id = minimap
                 .id
                 .expect("valid minimap id if updated from database");
-            if Some(id) == handler.minimap.data().and_then(|minimap| minimap.id) {
+            if Some(id) == handler.minimap_data.as_ref().and_then(|minimap| minimap.id) {
                 todo!()
             }
         }
         DatabaseEvent::MinimapDeleted(deleted_id) => {
-            if Some(deleted_id) == handler.minimap.data().and_then(|minimap| minimap.id) {
+            if Some(deleted_id) == handler.minimap_data.as_ref().and_then(|minimap| minimap.id) {
                 handler.on_update_minimap(None, None);
             }
         }

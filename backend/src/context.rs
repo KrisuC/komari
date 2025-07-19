@@ -188,6 +188,7 @@ fn update_loop() {
     let mut rotator = Rotator::default();
     let mut navigator = Navigator::default();
     let mut actions = Vec::<Action>::new();
+    let mut minimap = None; // Override by UI
     let mut character = None; // Override by UI
     let mut buffs = vec![];
     let settings = query_settings(); // Override by UI
@@ -341,6 +342,7 @@ fn update_loop() {
             navigator: &mut navigator,
             player: &mut player_state,
             minimap: &mut minimap_state,
+            minimap_data: &mut minimap,
             key_sender: &key_sender,
             key_receiver: &mut key_receiver,
             image_capture: &mut image_capture,
@@ -362,7 +364,7 @@ fn update_loop() {
         }
         // Upon accidental or white roomed causing map to change,
         // abort actions and send notification
-        if handler.minimap.data().is_some() && !handler.context.operation.halting() {
+        if handler.minimap_data.is_some() && !handler.context.operation.halting() {
             if was_player_navigating {
                 pending_halt = None;
             }
