@@ -20,7 +20,7 @@ use crate::{
 /// Number of familiar slots available.
 const FAMILIAR_SLOTS: usize = 3;
 
-const MAX_RETRY: u32 = 4;
+const MAX_RETRY: u32 = 3;
 
 /// Internal state machine representing the current stage of familiar swapping.
 #[derive(Debug, Clone, Copy)]
@@ -220,7 +220,7 @@ fn update_open_menu(
             let _ = context.keys.send_mouse(rest.x, rest.y, MouseAction::Move);
             if context.detector_unwrap().detect_familiar_menu_opened() {
                 swapping.stage_open_setup(Timeout::default(), 0)
-            } else if retry_count + 1 < MAX_RETRY {
+            } else if retry_count < MAX_RETRY {
                 let _ = context.keys.send(key);
                 swapping.stage_open_menu(timeout, retry_count + 1)
             } else {
@@ -260,7 +260,7 @@ fn open_setup(
                 .detect_familiar_setup_button()
                 .is_ok()
             {
-                if retry_count + 1 < MAX_RETRY {
+                if retry_count < MAX_RETRY {
                     swapping.stage_open_setup(Timeout::default(), retry_count + 1)
                 } else {
                     swapping.stage_completing(Timeout::default(), false)
@@ -564,7 +564,7 @@ fn update_scrolling(
                         cards: Array::new(), // Reset cards array
                         ..swapping.stage(SwappingStage::FindCards)
                     };
-                } else if retry_count + 1 < MAX_RETRY {
+                } else if retry_count < MAX_RETRY {
                     // Try again because scrolling might have failed. This could also indicate
                     // the list is empty.
                     return swapping.stage_scrolling(
@@ -613,9 +613,7 @@ fn update_saving(
             swapping.stage_saving(timeout, retry_count)
         }
         Lifecycle::Ended => {
-            if context.detector_unwrap().detect_familiar_menu_opened()
-                && retry_count + 1 < MAX_RETRY
-            {
+            if context.detector_unwrap().detect_familiar_menu_opened() && retry_count < MAX_RETRY {
                 swapping.stage_saving(Timeout::default(), retry_count + 1)
             } else {
                 swapping.stage_completing(Timeout::default(), false)

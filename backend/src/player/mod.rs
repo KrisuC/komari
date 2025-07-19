@@ -180,7 +180,7 @@ impl Contextual for Player {
             if let Some(next) = update_non_positional_context(self, context, state, true) {
                 return ControlFlow::Next(next);
             }
-            let next = if !context.halting
+            let next = if !context.operation.halting()
                 && let Minimap::Idle(idle) = context.minimap
                 && !idle.partially_overlapping
             {

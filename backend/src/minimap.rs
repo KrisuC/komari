@@ -389,7 +389,7 @@ fn update_rune_task(
             .map(|rune| center_of_bbox(rune, minimap))
     });
 
-    if was_none && rune.value.is_some() && !context.halting {
+    if was_none && rune.value.is_some() && !context.operation.halting() {
         info!(target: "minimap", "sending notification for rune...");
         let _ = context
             .notification
@@ -414,7 +414,7 @@ fn update_elite_boss_task(
             }
         });
 
-    if !context.halting && !did_have_elite_boss && has_elite_boss.value.is_some() {
+    if !context.operation.halting() && !did_have_elite_boss && has_elite_boss.value.is_some() {
         info!(target: "minimap", "sending elite boss notification...");
         let _ = context
             .notification
@@ -439,7 +439,7 @@ fn update_other_player_task(
             Err(anyhow!("player not found"))
         }
     });
-    if !context.halting && !has_player && threshold.value.is_some() {
+    if !context.operation.halting() && !has_player && threshold.value.is_some() {
         info!(target: "minimap", "sending {kind:?} notification...");
         let notification = match kind {
             OtherPlayerKind::Guildie => NotificationKind::PlayerGuildieAppear,

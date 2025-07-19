@@ -174,6 +174,12 @@ pub struct Settings {
     pub enable_rune_solving: bool,
     pub enable_panic_mode: bool,
     pub stop_on_fail_or_change_map: bool,
+    #[serde(default)]
+    pub cycle_run_stop: bool,
+    #[serde(default = "cycle_run_duration_millis_default")]
+    pub cycle_run_duration_millis: u64,
+    #[serde(default = "cycle_stop_duration_millis_default")]
+    pub cycle_stop_duration_millis: u64,
     pub input_method: InputMethod,
     pub input_method_rpc_server_url: String,
     pub notifications: Notifications,
@@ -198,6 +204,9 @@ impl Default for Settings {
             input_method: InputMethod::default(),
             input_method_rpc_server_url: String::default(),
             stop_on_fail_or_change_map: false,
+            cycle_run_stop: false,
+            cycle_run_duration_millis: cycle_run_duration_millis_default(),
+            cycle_stop_duration_millis: cycle_stop_duration_millis_default(),
             notifications: Notifications::default(),
             familiars: Familiars::default(),
             toggle_actions_key: toggle_actions_key_default(),
@@ -209,6 +218,14 @@ impl Default for Settings {
 }
 
 impl_identifiable!(Settings);
+
+fn cycle_run_duration_millis_default() -> u64 {
+    14400000 // 4 hours
+}
+
+fn cycle_stop_duration_millis_default() -> u64 {
+    3600000 // 1 hour
+}
 
 fn enable_rune_solving_default() -> bool {
     true

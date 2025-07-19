@@ -291,7 +291,7 @@ impl Rotator {
 
     #[inline]
     pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
-        if context.halting || matches!(context.player, Player::CashShopThenExit(_, _)) {
+        if context.operation.halting() || matches!(context.player, Player::CashShopThenExit(_, _)) {
             return;
         }
         self.rotate_priority_actions(context, player);

@@ -61,6 +61,7 @@ pub fn Settings() -> Element {
             SectionFamiliars { settings_view, save_settings }
             SectionNotifications { settings_view, save_settings }
             SectionHotkeys { settings_view, save_settings }
+            SectionRunStopCycle { settings_view, save_settings }
             SectionOthers { settings_view, save_settings }
         }
     }
@@ -481,6 +482,49 @@ fn SectionHotkeys(
                         });
                     },
                     value: settings_view().platform_end_key,
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SectionRunStopCycle(
+    settings_view: Memo<SettingsData>,
+    save_settings: EventHandler<SettingsData>,
+) -> Element {
+    rsx! {
+        Section { name: "Others",
+            div { class: "grid grid-cols-3 gap-3",
+                MillisInput {
+                    label: "Run duration",
+                    on_value: move |cycle_run_duration_millis| {
+                        save_settings(SettingsData {
+                            cycle_run_duration_millis,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: settings_view().cycle_run_duration_millis,
+                }
+                MillisInput {
+                    label: "Stop duration",
+                    on_value: move |cycle_stop_duration_millis| {
+                        save_settings(SettingsData {
+                            cycle_stop_duration_millis,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: settings_view().cycle_stop_duration_millis,
+                }
+                SettingsCheckbox {
+                    label: "Enabled",
+                    on_value: move |cycle_run_stop| {
+                        save_settings(SettingsData {
+                            cycle_run_stop,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: settings_view().cycle_run_stop,
                 }
             }
         }

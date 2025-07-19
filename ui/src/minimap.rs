@@ -1,9 +1,14 @@
-use std::{fs::File, io::BufReader, ops::Deref, time::Duration};
+use std::{
+    fs::File,
+    io::BufReader,
+    ops::Deref,
+    time::{Duration, Instant},
+};
 
 use backend::{
-    Action, ActionKey, ActionMove, Minimap as MinimapData, Position, RotationMode, create_minimap,
-    delete_minimap, game_state_receiver, query_minimaps, redetect_minimap, rotate_actions,
-    update_minimap, upsert_minimap,
+    Action, ActionKey, ActionMove, GameOperation, Minimap as MinimapData, Position, RotationMode,
+    create_minimap, delete_minimap, game_state_receiver, query_minimaps, redetect_minimap,
+    rotate_actions, update_minimap, upsert_minimap,
 };
 use dioxus::{document::EvalError, prelude::*};
 use futures_util::StreamExt;
@@ -286,7 +291,7 @@ struct MinimapState {
     normal_action: Option<String>,
     priority_action: Option<String>,
     erda_shower_state: String,
-    halting: bool,
+    operation: GameOperation,
     detected_size: Option<(usize, usize)>,
 }
 
@@ -527,7 +532,7 @@ fn Canvas(
                 normal_action: current_state.normal_action,
                 priority_action: current_state.priority_action,
                 erda_shower_state: current_state.erda_shower_state,
-                halting: current_state.halting,
+                operation: current_state.operation,
                 detected_size: frame.as_ref().map(|(_, width, height)| (*width, *height)),
             };
 
@@ -588,6 +593,7 @@ fn Info(
         erda_shower_state: String,
         detected_minimap_size: String,
         selected_minimap_size: String,
+        cycle_duration: String,
     }
 
     let info = use_memo(move || {
@@ -595,11 +601,12 @@ fn Info(
             position: "Unknown".to_string(),
             health: "Unknown".to_string(),
             state: "Unknown".to_string(),
-            normal_action: "Unknown".to_string(),
-            priority_action: "Unknown".to_string(),
+            normal_action: "None".to_string(),
+            priority_action: "None".to_string(),
             erda_shower_state: "Unknown".to_string(),
             detected_minimap_size: "Unknown".to_string(),
             selected_minimap_size: "Unknown".to_string(),
+            cycle_duration: "None".to_string(),
         };
 
         if let Some(minimap) = minimap() {
@@ -609,6 +616,16 @@ fn Info(
         if let Some(state) = state() {
             info.state = state.state;
             info.erda_shower_state = state.erda_shower_state;
+            info.cycle_duration = match state.operation {
+                GameOperation::Halting | GameOperation::Running => "None".to_string(),
+                GameOperation::HaltUntil(instant) | GameOperation::RunUntil(instant) => {
+                    let duration = instant.saturating_duration_since(Instant::now());
+                    let seconds = duration.as_secs() % 60;
+                    let minutes = (duration.as_secs() / 60) % 60;
+                    let hours = (duration.as_secs() / 60) / 60;
+                    format!("{hours:0>2}:{minutes:0>2}:{seconds:0>2}")
+                }
+            };
             if let Some((x, y)) = state.position {
                 info.position = format!("{x}, {y}");
             }
@@ -630,7 +647,7 @@ fn Info(
     });
 
     rsx! {
-        div { class: "grid grid-cols-2 items-center justify-center px-4 py-3 gap-2",
+        div { class: "grid grid-cols-2 items-center justify-center px-4 py-3 gap-1",
             InfoItem { name: "State", value: info().state }
             InfoItem { name: "Position", value: info().position }
             InfoItem { name: "Health", value: info().health }
@@ -639,6 +656,7 @@ fn Info(
             InfoItem { name: "Erda Shower", value: info().erda_shower_state }
             InfoItem { name: "Detected size", value: info().detected_minimap_size }
             InfoItem { name: "Selected size", value: info().selected_minimap_size }
+            InfoItem { name: "Run/stop cycle", value: info().cycle_duration }
         }
     }
 }
@@ -656,7 +674,11 @@ fn Buttons(
     state: ReadOnlySignal<Option<MinimapState>>,
     minimap: ReadOnlySignal<Option<MinimapData>>,
 ) -> Element {
-    let halting = use_memo(move || state().map(|state| state.halting).unwrap_or_default());
+    let halting = use_memo(move || {
+        state()
+            .map(|state| matches!(state.operation, GameOperation::Halting))
+            .unwrap_or_default()
+    });
     let character = use_context::<AppState>().character;
 
     rsx! {

@@ -11,7 +11,7 @@ use crate::{
     player::timeout::{Lifecycle, next_timeout_lifecycle},
 };
 
-const MAX_RETRY: u32 = 4;
+const MAX_RETRY: u32 = 3;
 
 /// Stages of panicking mode.
 #[derive(Debug, Clone, Copy)]
@@ -144,7 +144,7 @@ fn update_changing_channel(
         }
         Lifecycle::Ended => {
             if matches!(context.minimap, Minimap::Idle(_)) {
-                if retry_count + 1 < MAX_RETRY {
+                if retry_count < MAX_RETRY {
                     panicking.stage_changing_channel(Timeout::default(), retry_count + 1)
                 } else {
                     panicking.stage_completing(Timeout::default(), true)
@@ -205,7 +205,7 @@ fn update_going_to_town(
                 let _ = context.keys.send(KeyKind::Enter);
             }
 
-            if !has_confirm_button && retry_count + 1 < MAX_RETRY {
+            if !has_confirm_button && retry_count < MAX_RETRY {
                 panicking.stage_going_to_town(Timeout::default(), retry_count + 1)
             } else {
                 panicking.stage_completing(Timeout::default(), true)

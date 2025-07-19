@@ -6,7 +6,10 @@
 #![feature(associated_type_defaults)]
 #![feature(assert_matches)]
 
-use std::sync::{LazyLock, Mutex};
+use std::{
+    sync::{LazyLock, Mutex},
+    time::Instant,
+};
 
 use strum::Display;
 use tokio::{
@@ -203,11 +206,19 @@ pub struct GameState {
     pub priority_action: Option<String>,
     pub erda_shower_state: String,
     pub destinations: Vec<(i32, i32)>,
-    pub halting: bool,
+    pub operation: GameOperation,
     pub frame: Option<(Vec<u8>, usize, usize)>,
     pub platforms_bound: Option<Bound>,
     pub portals: Vec<Bound>,
     pub auto_mob_quadrant: Option<BoundQuadrant>,
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum GameOperation {
+    Halting,
+    HaltUntil(Instant),
+    Running,
+    RunUntil(Instant),
 }
 
 pub async fn rotate_actions(halting: bool) {
