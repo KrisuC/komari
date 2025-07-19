@@ -1,6 +1,5 @@
-use std::sync::LazyLock;
-#[cfg(debug_assertions)]
 use std::time::Instant;
+use std::{sync::LazyLock, time::Duration};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 #[cfg(debug_assertions)]
@@ -33,11 +32,12 @@ use crate::detect::{ArrowsCalibrating, ArrowsState, CachedDetector, Detector};
 use crate::mat::OwnedMat;
 use crate::{
     Action, ActionCondition, ActionConfigurationCondition, ActionKey, BoundQuadrant, CaptureMode,
-    Character, GameState, KeyBinding, KeyBindingConfiguration, Minimap as MinimapData,
-    NavigationPath, PotionMode, RequestHandler, RotationMode, RotatorMode, Settings,
+    Character, GameOperation, GameState, KeyBinding, KeyBindingConfiguration,
+    Minimap as MinimapData, NavigationPath, PotionMode, RequestHandler, RotationMode, RotatorMode,
+    Settings,
     bridge::{ImageCapture, ImageCaptureKind, KeySenderMethod},
     buff::{BuffKind, BuffState},
-    context::Context,
+    context::{Context, Operation},
     database::InputMethod,
     minimap::{Minimap, MinimapState},
     navigation::Navigator,
@@ -50,6 +50,7 @@ use crate::{
 static GAME_STATE: LazyLock<broadcast::Sender<GameState>> =
     LazyLock::new(|| broadcast::channel(1).0);
 
+// TODO: Add unit tests
 pub struct DefaultRequestHandler<'a> {
     pub context: &'a mut Context,
     pub character: &'a mut Option<Character>,
@@ -96,7 +97,12 @@ impl DefaultRequestHandler<'_> {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default(),
-                halting: self.context.halting,
+                operation: match self.context.operation {
+                    Operation::HaltUntil(instant) => GameOperation::HaltUntil(instant),
+                    Operation::Halting => GameOperation::Halting,
+                    Operation::Running => GameOperation::Running,
+                    Operation::RunUntil(instant) => GameOperation::RunUntil(instant),
+                },
                 frame: self
                     .context
                     .detector
@@ -241,7 +247,16 @@ impl DefaultRequestHandler<'_> {
 
     pub fn update_context_halting(&mut self, halting: bool, reset_player_to_idle: bool) {
         if self.minimap.data().is_some() && self.character.is_some() {
-            self.context.halting = halting;
+            self.context.operation = match (halting, self.settings.cycle_run_stop) {
+                (true, _) => Operation::Halting,
+                (false, true) => Instant::now()
+                    .checked_add(Duration::from_millis(
+                        self.settings.cycle_run_duration_millis,
+                    ))
+                    .map(Operation::RunUntil)
+                    .unwrap_or(Operation::Running),
+                (false, false) => Operation::Running,
+            };
             if halting {
                 self.rotator.reset_queue();
                 self.player.clear_actions_aborted(reset_player_to_idle);
@@ -392,7 +407,27 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                 }
             }
         }
-
+        self.context.operation = match self.context.operation {
+            Operation::HaltUntil(_) => {
+                if settings.cycle_run_stop {
+                    Operation::HaltUntil(
+                        Instant::now() + Duration::from_millis(settings.cycle_stop_duration_millis),
+                    )
+                } else {
+                    Operation::Halting
+                }
+            }
+            Operation::Halting => Operation::Halting,
+            Operation::Running | Operation::RunUntil(_) => {
+                if settings.cycle_run_stop {
+                    Operation::RunUntil(
+                        Instant::now() + Duration::from_millis(settings.cycle_run_duration_millis),
+                    )
+                } else {
+                    Operation::Running
+                }
+            }
+        };
         *self.settings = settings;
 
         let Some(character) = self.character else {
@@ -552,7 +587,7 @@ fn poll_key(handler: &mut DefaultRequestHandler) {
     if let KeyBindingConfiguration { key, enabled: true } = handler.settings.toggle_actions_key
         && KeyKind::from(key) == received_key
     {
-        handler.on_rotate_actions(!handler.context.halting);
+        handler.on_rotate_actions(!handler.context.operation.halting());
     }
     let _ = handler.key_sender.send(received_key.into());
 }

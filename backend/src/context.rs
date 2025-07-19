@@ -92,8 +92,8 @@ pub struct Context {
     pub skills: [Skill; SkillKind::COUNT],
     /// The buff contextual states.
     pub buffs: [Buff; BuffKind::COUNT],
-    /// Whether the bot is halting.
-    pub halting: bool,
+    /// The bot current's operation.
+    pub operation: Operation,
     /// The game current tick.
     ///
     /// This is increased on each update tick.
@@ -115,7 +115,7 @@ impl Context {
             player: Player::Detecting,
             skills: [Skill::Detecting; SkillKind::COUNT],
             buffs: [Buff::No; BuffKind::COUNT],
-            halting: false,
+            operation: Operation::Running,
             tick: 0,
             did_minimap_changed: false,
         }
@@ -132,6 +132,21 @@ impl Context {
     #[inline]
     pub fn detector_cloned_unwrap(&self) -> Box<dyn Detector> {
         clone_box(self.detector_unwrap())
+    }
+}
+
+#[derive(Debug)]
+pub enum Operation {
+    HaltUntil(Instant),
+    Halting,
+    Running,
+    RunUntil(Instant),
+}
+
+impl Operation {
+    #[inline]
+    pub fn halting(&self) -> bool {
+        matches!(self, Operation::Halting | Operation::HaltUntil(_))
     }
 }
 
@@ -215,7 +230,7 @@ fn update_loop() {
         player: Player::Idle,
         skills: [Skill::Detecting],
         buffs: [Buff::No; BuffKind::COUNT],
-        halting: true,
+        operation: Operation::Halting,
         tick: 0,
         did_minimap_changed: false,
     };
@@ -241,10 +256,38 @@ fn update_loop() {
     loop_with_fps(FPS, || {
         let mat = image_capture.grab().map(OwnedMat::new_from_frame);
         let was_player_alive = !player_state.is_dead();
-        let was_player_navigating = navigator.was_last_point_available();
+        let was_player_navigating = navigator.was_last_point_available_or_completed();
+        let mut was_cycled_to_stop = false;
         let detector = mat.map(CachedDetector::new);
 
         context.tick += 1;
+        context.operation = match context.operation {
+            // Imply run/stop cycle enabled
+            Operation::HaltUntil(instant) => {
+                let now = Instant::now();
+                if now < instant {
+                    Operation::HaltUntil(instant)
+                } else {
+                    Operation::RunUntil(
+                        now + Duration::from_millis(settings.borrow().cycle_run_duration_millis),
+                    )
+                }
+            }
+            Operation::Halting => Operation::Halting,
+            Operation::Running => Operation::Running,
+            // Imply run/stop cycle enabled
+            Operation::RunUntil(instant) => {
+                let now = Instant::now();
+                if now < instant {
+                    Operation::RunUntil(instant)
+                } else {
+                    was_cycled_to_stop = true;
+                    Operation::HaltUntil(
+                        now + Duration::from_millis(settings.borrow().cycle_stop_duration_millis),
+                    )
+                }
+            }
+        };
         if let Some(detector) = detector {
             let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
 
@@ -317,9 +360,15 @@ fn update_loop() {
             )
         });
 
+        // Go to town on stop cycle
+        if was_cycled_to_stop {
+            handler.rotator.reset_queue();
+            handler.player.clear_actions_aborted(false);
+            handler.context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+        }
         // Upon accidental or white roomed causing map to change,
         // abort actions and send notification
-        if handler.minimap.data().is_some() && !handler.context.halting {
+        if handler.minimap.data().is_some() && !handler.context.operation.halting() {
             if was_player_navigating {
                 pending_halt = None;
             }
@@ -356,7 +405,7 @@ fn update_loop() {
                 }
                 _ => (),
             }
-            if can_halt_or_notify {
+            if can_halt_or_notify && pending_halt.is_none() {
                 drop(settings_borrow_mut); // For notification to borrow immutably
                 let _ = context
                     .notification

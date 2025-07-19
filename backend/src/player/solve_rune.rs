@@ -11,7 +11,7 @@ use crate::{
     player::{on_action_state_mut, timeout::Timeout},
 };
 
-const MAX_RETRY_COUNT: u32 = 3;
+const MAX_RETRY_COUNT: u32 = 2;
 
 /// Representing the current stage of rune solving.
 #[derive(Debug, Default, Clone, Copy)]
@@ -191,7 +191,7 @@ fn update_find_region(
             }
             Ok(ArrowsState::Complete(_)) => unreachable!(),
             Err(_) => {
-                if retry_count + 1 < MAX_RETRY_COUNT {
+                if retry_count < MAX_RETRY_COUNT {
                     // Retry possibly because mis-pressing the interact key
                     solving_rune.stage_find_region(
                         ArrowsCalibrating::default(),

@@ -30,7 +30,12 @@ const SOFT_UP_JUMP_THRESHOLD: i32 = 16;
 #[derive(Debug, Clone, Copy)]
 pub struct UpJumping {
     pub moving: Moving,
+    /// Number of ticks to wait before sending jump key(s).
     spam_delay: u32,
+    /// Whether auto-mobbing should wait for up jump completion in non-intermediate destination.
+    ///
+    /// This is false initially but randomized in on start lifecycle.
+    auto_mob_wait_completion: bool,
 }
 
 impl UpJumping {
@@ -41,12 +46,24 @@ impl UpJumping {
         } else {
             SPAM_DELAY
         };
-        Self { moving, spam_delay }
+        Self {
+            moving,
+            spam_delay,
+            auto_mob_wait_completion: false,
+        }
     }
 
     #[inline]
-    pub fn moving(self, moving: Moving) -> UpJumping {
+    fn moving(self, moving: Moving) -> UpJumping {
         UpJumping { moving, ..self }
+    }
+
+    #[inline]
+    fn auto_mob_wait_completion(self, auto_mob_wait_completion: bool) -> UpJumping {
+        UpJumping {
+            auto_mob_wait_completion,
+            ..self
+        }
     }
 }
 
@@ -103,7 +120,12 @@ pub fn update_up_jumping_context(
                 _ => (),
             }
 
-            Player::UpJumping(up_jumping.moving(moving))
+            // TODO: Should be fine to not check auto-mob action only?
+            Player::UpJumping(
+                up_jumping
+                    .moving(moving)
+                    .auto_mob_wait_completion(context.rng.random_bool(0.5)),
+            )
         }
         MovingLifecycle::Ended(moving) => {
             let _ = context.keys.send_up(KeyKind::Up);
@@ -152,17 +174,19 @@ pub fn update_up_jumping_context(
                 state,
                 |action| match action {
                     PlayerAction::AutoMob(_) => {
-                        if !moving.completed {
-                            return None;
-                        }
-                        if moving.is_destination_intermediate() && y_direction <= 0 {
+                        if moving.completed
+                            && moving.is_destination_intermediate()
+                            && y_direction <= 0
+                        {
                             let _ = context.keys.send_up(KeyKind::Up);
                             return Some((
                                 Player::Moving(moving.dest, moving.exact, moving.intermediates),
                                 false,
                             ));
                         }
-
+                        if up_jumping.auto_mob_wait_completion && !moving.completed {
+                            return None;
+                        }
                         let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
                         let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                         on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)

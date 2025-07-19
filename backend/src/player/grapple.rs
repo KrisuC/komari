@@ -125,7 +125,7 @@ pub fn update_grappling_context(
 /// Converts vertical velocity to a stopping threshold.
 #[inline]
 fn stopping_threshold(velocity: f32) -> i32 {
-    (STOPPING_THRESHOLD as f32 + 1.1 * velocity).ceil() as i32
+    (STOPPING_THRESHOLD as f32 + 1.07 * velocity).round() as i32
 }
 
 #[cfg(test)]

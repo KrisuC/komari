@@ -6,7 +6,7 @@ use std::{
     time::Instant,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use base64::{Engine, prelude::BASE64_STANDARD};
 use log::{debug, info};
 #[cfg(test)]
@@ -25,6 +25,9 @@ use crate::{
     player::{PlayerAction, PlayerActionKey, PlayerState},
 };
 
+/// Internal representation of [`NavigationPath`].
+///
+/// This is used for eagerly resolving all of a path's referenced ids.
 #[derive(Clone)]
 struct Path {
     id: i64,
@@ -43,6 +46,7 @@ impl Debug for Path {
     }
 }
 
+/// Internal representation of [`NavigationPoint`].
 #[derive(Debug, Clone)]
 struct Point {
     next_path: Option<Rc<RefCell<Path>>>, // TODO: How to Rc<RefCell<Path>> into Rc<Path>?
@@ -51,12 +55,21 @@ struct Point {
     transition: NavigationTransition,
 }
 
+/// Next point computation state to navigate the player to [`Navigator::destination_path_id`].
 #[derive(Debug, Clone)]
 enum PointState {
     Dirty,
     Completed,
     Unreachable,
     Next(i32, i32, NavigationTransition, Option<Rc<RefCell<Path>>>),
+}
+
+/// Update state when [`Navigator::path_dirty`] is `true`.
+#[derive(Debug)]
+enum UpdateState {
+    Pending,
+    Completed,
+    NoMatch,
 }
 
 /// A data source to query [`NavigationPath`].
@@ -68,7 +81,7 @@ pub trait NavigatorDataSource: Debug + 'static {
 }
 
 #[derive(Debug)]
-pub struct DefaultNavigatorDataSource;
+struct DefaultNavigatorDataSource;
 
 impl NavigatorDataSource for DefaultNavigatorDataSource {
     fn query_paths(&self) -> Result<Vec<NavigationPath>> {
@@ -80,11 +93,22 @@ impl NavigatorDataSource for DefaultNavigatorDataSource {
 #[derive(Debug)]
 pub struct Navigator {
     // TODO: Cache mat?
+    /// Data source for querying [`NavigationPath`]s.
     source: Box<dyn NavigatorDataSource>,
+    /// Base path to search for navigation points.
     base_path: Option<Rc<RefCell<Path>>>,
+    /// The player's current path.
     current_path: Option<Rc<RefCell<Path>>>,
+    /// Whether paths are dirty.
+    ///
+    /// If true, [`Self::base_path`] and [`Self::current_path`] must be updated before computing
+    /// the next navigation point to reach [`Self::destination_path_id`].
     path_dirty: bool,
+    /// Number of times to retry updating when paths are dirty.
+    path_dirty_retry_count: u32,
+    /// Last time an update attempt was made.
     path_last_update: Instant,
+    /// Cached next point navigation computation.
     last_point_state: Option<PointState>,
     destination_path_id: Option<i64>,
 }
@@ -102,6 +126,7 @@ impl Navigator {
             base_path: None,
             current_path: None,
             path_dirty: true,
+            path_dirty_retry_count: 0,
             path_last_update: Instant::now(),
             last_point_state: None,
             destination_path_id: None,
@@ -112,7 +137,7 @@ impl Navigator {
     ///
     /// Returns `true` if the player has reached the destination.
     pub fn navigate_player(&mut self, context: &Context, player: &mut PlayerState) -> bool {
-        if context.halting {
+        if context.operation.halting() {
             return false;
         }
 
@@ -157,8 +182,9 @@ impl Navigator {
         }
     }
 
+    /// Whether the last point to navigate to was available or the navigation is completed.
     #[inline]
-    pub fn was_last_point_available(&self) -> bool {
+    pub fn was_last_point_available_or_completed(&self) -> bool {
         matches!(
             self.last_point_state,
             Some(PointState::Next(_, _, _, _) | PointState::Completed)
@@ -207,7 +233,7 @@ impl Navigator {
         // Re-use cached point
         if matches!(
             self.last_point_state,
-            Some(PointState::Next(_, _, _, _) | PointState::Completed)
+            Some(PointState::Next(_, _, _, _) | PointState::Completed | PointState::Unreachable)
         ) {
             return self.last_point_state.clone().expect("has value");
         }
@@ -225,7 +251,11 @@ impl Navigator {
         }
 
         // Search from current forward
-        if let Some(point) = search_point(self.current_path.clone().expect("not dirty"), path_id) {
+        if let Some(point) = self
+            .current_path
+            .clone()
+            .and_then(|path| search_point(path, path_id))
+        {
             return PointState::Next(point.x, point.y, point.transition, point.next_path.clone());
         }
 
@@ -236,12 +266,13 @@ impl Navigator {
     pub fn reset(&mut self) {
         self.base_path = None;
         self.current_path = None;
-        self.mark_path_dirty();
+        self.mark_dirty();
     }
 
     #[inline]
-    fn mark_path_dirty(&mut self) {
+    fn mark_dirty(&mut self) {
         self.path_dirty = true;
+        self.path_dirty_retry_count = 0;
     }
 
     #[inline]
@@ -252,27 +283,37 @@ impl Navigator {
 
     #[inline]
     pub fn update(&mut self, context: &Context) {
+        const UPDATE_RETRY_MAX_COUNT: u32 = 3;
+
         if context.did_minimap_changed {
-            self.mark_path_dirty();
+            self.mark_dirty();
         }
         if self.path_dirty {
-            self.path_dirty = self
-                .update_current_path_from_current_location(context)
-                .is_err();
+            match self.update_current_path_from_current_location(context) {
+                UpdateState::Pending => (),
+                UpdateState::Completed => self.path_dirty = false,
+                UpdateState::NoMatch => {
+                    if self.path_dirty_retry_count < UPDATE_RETRY_MAX_COUNT {
+                        self.path_dirty_retry_count += 1;
+                    } else {
+                        self.path_dirty = false;
+                    }
+                }
+            }
         }
     }
 
     // TODO: Do this on background thread?
-    fn update_current_path_from_current_location(&mut self, context: &Context) -> Result<()> {
+    fn update_current_path_from_current_location(&mut self, context: &Context) -> UpdateState {
         const UPDATE_INTERVAL_SECS: u64 = 2;
 
         let minimap_bbox = match context.minimap {
             Minimap::Idle(idle) => idle.bbox,
-            Minimap::Detecting => bail!("minimap not idle"),
+            Minimap::Detecting => return UpdateState::Pending,
         };
         let instant = Instant::now();
         if instant.duration_since(self.path_last_update).as_secs() < UPDATE_INTERVAL_SECS {
-            bail!("update debounce");
+            return UpdateState::Pending;
         }
         self.path_last_update = instant;
         debug!(target: "navigator", "updating current path from current location...");
@@ -280,9 +321,12 @@ impl Navigator {
         let detector = context
             .detector
             .as_ref()
-            .ok_or(anyhow!("detector not available"))?
+            .expect("detector must available because minimap is idle")
             .as_ref();
-        let minimap_name_bbox = detector.detect_minimap_name(minimap_bbox)?;
+        let Ok(minimap_name_bbox) = detector.detect_minimap_name(minimap_bbox) else {
+            return UpdateState::NoMatch;
+        };
+
         // Try from next_path if previously exists due to player navigating
         if let Some(PointState::Next(_, _, _, Some(next_path))) = self.last_point_state.take()
             && let Ok(current_path) =
@@ -290,8 +334,9 @@ impl Navigator {
         {
             info!(target: "navigator", "current path updated from previous point's next path");
             self.current_path = Some(current_path);
-            return Ok(());
+            return UpdateState::Completed;
         }
+
         // Try from base_path if previously exists
         if let Some(base_path) = self.base_path.clone() {
             if let Ok(current_path) =
@@ -299,7 +344,7 @@ impl Navigator {
             {
                 info!(target: "navigator", "current path updated from previous base path");
                 self.current_path = Some(current_path);
-                return Ok(());
+                return UpdateState::Completed;
             } else {
                 self.base_path = None;
                 self.current_path = None;
@@ -309,11 +354,13 @@ impl Navigator {
         // Query from database
         let paths = self
             .source
-            .query_paths()?
+            .query_paths()
+            .unwrap_or_default()
             .into_iter()
             .map(|path| (path.id.expect("valid id"), path))
             .collect::<HashMap<_, _>>();
         let mut visited_ids = HashSet::new();
+
         for path_id in paths.keys() {
             if !visited_ids.insert(*path_id) {
                 continue;
@@ -335,10 +382,10 @@ impl Navigator {
 
             self.base_path = Some(base_path);
             self.current_path = Some(current_path);
-            return Ok(());
+            return UpdateState::Completed;
         }
 
-        bail!("unable to determine current location")
+        UpdateState::NoMatch
     }
 }
 
@@ -458,6 +505,8 @@ fn decode_base64_to_mat(base64: &str, grayscale: bool) -> Result<Mat> {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches::assert_matches;
+
     use super::*;
     use crate::{database::NavigationPoint, detect::MockDetector, minimap::MinimapIdle};
 
@@ -729,7 +778,7 @@ mod tests {
 
         let result = navigator.update_current_path_from_current_location(&context);
 
-        assert!(result.is_ok());
+        assert_matches!(result, UpdateState::Completed);
         assert!(navigator.current_path.is_some());
         assert!(navigator.base_path.is_some());
     }

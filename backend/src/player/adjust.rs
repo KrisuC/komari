@@ -27,7 +27,7 @@ pub const ADJUSTING_SHORT_THRESHOLD: i32 = 1;
 /// Minimum x distance from the destination required to walk.
 pub const ADJUSTING_MEDIUM_THRESHOLD: i32 = 3;
 
-const ADJUSTING_SHORT_TIMEOUT: u32 = 3;
+const ADJUSTING_SHORT_TIMEOUT: u32 = MOVE_TIMEOUT + 1;
 
 /// Minimium y distance required to perform a fall and then walk.
 const FALLING_THRESHOLD: i32 = 8;
