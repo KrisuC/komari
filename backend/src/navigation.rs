@@ -279,6 +279,7 @@ impl Navigator {
     pub fn update_destination_path(&mut self, path_id: Option<i64>) {
         self.destination_path_id = path_id;
         self.last_point_state = None;
+        self.mark_dirty();
     }
 
     #[inline]

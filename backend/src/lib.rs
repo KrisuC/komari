@@ -46,10 +46,10 @@ pub use {
     database::{
         Action, ActionCondition, ActionConfiguration, ActionConfigurationCondition, ActionKey,
         ActionKeyDirection, ActionKeyWith, ActionMove, Bound, CaptureMode, Character, Class,
-        EliteBossBehavior, FamiliarRarity, Familiars, InputMethod, KeyBinding,
+        DatabaseEvent, EliteBossBehavior, FamiliarRarity, Familiars, InputMethod, KeyBinding,
         KeyBindingConfiguration, LinkKeyBinding, Minimap, MobbingKey, NavigationPath,
         NavigationPoint, NavigationTransition, Notifications, Platform, Position, PotionMode,
-        RotationMode, Settings, SwappableFamiliars,
+        RotationMode, Settings, SwappableFamiliars, database_event_receiver,
     },
     pathing::MAX_PLATFORMS_COUNT,
     rotator::RotatorMode,
@@ -236,7 +236,7 @@ pub async fn query_settings() -> Settings {
 /// Upserts settings to the database.
 pub async fn upsert_settings(mut settings: Settings) -> Settings {
     spawn_blocking(move || {
-        database::upsert_settings(&mut settings).expect("failed to upsert settings");
+        let _ = database::upsert_settings(&mut settings);
         settings
     })
     .await
@@ -263,11 +263,12 @@ pub async fn create_minimap(name: String) -> Option<Minimap> {
 /// If `minimap` does not previously exist, a new one will be created and its `id` will
 /// be updated.
 ///
-/// Returns the updated [`Minimap`].
-pub async fn upsert_minimap(mut minimap: Minimap) -> Minimap {
+/// Returns the updated [`Minimap`] on success.
+pub async fn upsert_minimap(mut minimap: Minimap) -> Option<Minimap> {
     spawn_blocking(move || {
-        database::upsert_minimap(&mut minimap).expect("failed to upsert minimap");
-        minimap
+        database::upsert_minimap(&mut minimap)
+            .is_ok()
+            .then_some(minimap)
     })
     .await
     .unwrap()
@@ -282,12 +283,12 @@ pub async fn update_minimap(preset: Option<String>, minimap: Option<Minimap>) {
 }
 
 /// Deletes `minimap` from the database.
-pub async fn delete_minimap(minimap: Minimap) {
-    spawn_blocking(move || {
-        database::delete_minimap(&minimap).expect("failed to delete minimap");
-    })
-    .await
-    .unwrap();
+///
+/// Returns `true` if the minimap was deleted.
+pub async fn delete_minimap(minimap: Minimap) -> bool {
+    spawn_blocking(move || database::delete_minimap(&minimap).is_ok())
+        .await
+        .unwrap()
 }
 
 /// Queries navigation paths from the database.
@@ -310,7 +311,7 @@ pub async fn create_navigation_path() -> Option<NavigationPath> {
 
 pub async fn upsert_navigation_path(mut path: NavigationPath) -> NavigationPath {
     spawn_blocking(move || {
-        database::upsert_navigation_path(&mut path).expect("failed to upsert path");
+        let _ = database::upsert_navigation_path(&mut path);
         path
     })
     .await
@@ -333,7 +334,7 @@ pub async fn update_navigation_path() {
 
 pub async fn delete_navigation_path(path: NavigationPath) {
     spawn_blocking(move || {
-        database::delete_navigation_path(&path).expect("failed to delete path");
+        let _ = database::delete_navigation_path(&path);
     })
     .await
     .unwrap();
@@ -352,10 +353,10 @@ pub async fn query_characters() -> Option<Vec<Character>> {
 /// If `character` does not previously exist, a new one will be created and its `id` will
 /// be updated.
 ///
-/// Returns the updated [`Character`].
+/// Returns the updated [`Character`] or original if fails.
 pub async fn upsert_character(mut character: Character) -> Character {
     spawn_blocking(move || {
-        database::upsert_character(&mut character).expect("failed to upsert character");
+        let _ = database::upsert_character(&mut character);
         character
     })
     .await
@@ -373,7 +374,7 @@ pub async fn update_character(character: Option<Character>) {
 /// Deletes `character` from the database.
 pub async fn delete_character(character: Character) {
     spawn_blocking(move || {
-        database::delete_character(&character).expect("failed to delete character");
+        let _ = database::delete_character(&character);
     })
     .await
     .unwrap();

@@ -1,6 +1,6 @@
 use backend::{
     NavigationPath, NavigationPoint, NavigationTransition, create_navigation_path,
-    delete_navigation_path, query_navigation_paths, recapture_navigation_path, update_minimap,
+    delete_navigation_path, query_navigation_paths, recapture_navigation_path,
     update_navigation_path, upsert_minimap, upsert_navigation_path,
 };
 use dioxus::prelude::*;
@@ -162,7 +162,6 @@ fn PopupPoint(
 fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
     let position = use_context::<AppState>().position;
     let mut minimap = use_context::<AppState>().minimap;
-    let minimap_preset = use_context::<AppState>().minimap_preset;
     let mut paths = use_resource(async || query_navigation_paths().await.unwrap_or_default());
     // TODO: How to better display paths_view that shows some form of grouping? Tarjan what?
     let paths_view = use_memo(move || paths().unwrap_or_default());
@@ -225,10 +224,9 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                             continue;
                         };
                         current_minimap.path_id = path_id;
-                        current_minimap = upsert_minimap(current_minimap).await;
-
-                        minimap.set(Some(current_minimap));
-                        update_minimap(minimap_preset(), minimap()).await;
+                        if let Some(current_minimap) = upsert_minimap(current_minimap).await {
+                            minimap.set(Some(current_minimap));
+                        }
                     }
                 }
             }

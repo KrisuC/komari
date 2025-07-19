@@ -22,6 +22,7 @@ use rand::distr::{Alphanumeric, SampleString};
 use strum::IntoEnumIterator;
 use tokio::sync::broadcast;
 
+use crate::DatabaseEvent;
 #[cfg(debug_assertions)]
 use crate::debug::{
     save_image_for_training, save_image_for_training_to, save_minimap_for_training,
@@ -67,6 +68,7 @@ pub struct DefaultRequestHandler<'a> {
     pub image_capture: &'a mut ImageCapture,
     pub capture_handles: &'a mut Vec<(String, Handle)>,
     pub selected_capture_handle: &'a mut Option<Handle>,
+    pub database_event_receiver: &'a mut broadcast::Receiver<DatabaseEvent>,
     #[cfg(debug_assertions)]
     pub recording_images_id: &'a mut Option<String>,
     #[cfg(debug_assertions)]
@@ -76,6 +78,10 @@ pub struct DefaultRequestHandler<'a> {
 impl DefaultRequestHandler<'_> {
     pub fn poll_request(&mut self) {
         poll_request(self);
+        poll_key(self);
+        poll_database_event(self);
+        #[cfg(debug_assertions)]
+        poll_debug(self);
 
         if GAME_STATE.is_empty() {
             // TODO: Separate into variables for better readability
@@ -137,48 +143,6 @@ impl DefaultRequestHandler<'_> {
                 }),
             };
             let _ = GAME_STATE.send(game_state);
-        }
-    }
-
-    pub fn poll_key(&mut self) {
-        poll_key(self);
-    }
-
-    #[cfg(debug_assertions)]
-    pub fn poll_debug(&mut self) {
-        if let Some((calibrating, instant)) = self.infering_rune.as_ref().copied() {
-            if instant.elapsed().as_secs() >= 10 {
-                debug!(target: "debug", "infer rune timed out");
-                *self.infering_rune = None;
-            } else {
-                match self
-                    .context
-                    .detector_unwrap()
-                    .detect_rune_arrows(calibrating)
-                {
-                    Ok(ArrowsState::Complete(arrows)) => {
-                        debug!(target: "debug", "infer rune result {arrows:?}");
-                        // TODO: Save
-                        *self.infering_rune = None;
-                    }
-                    Ok(ArrowsState::Calibrating(calibrating)) => {
-                        *self.infering_rune = Some((calibrating, instant));
-                    }
-                    Err(err) => {
-                        debug!(target: "debug", "infer rune failed {err}");
-                        *self.infering_rune = None;
-                    }
-                }
-            }
-        }
-
-        if let Some(id) = self.recording_images_id.clone() {
-            save_image_for_training_to(
-                self.context.detector_unwrap().mat(),
-                Some(id),
-                false,
-                false,
-            );
         }
     }
 
@@ -590,6 +554,90 @@ fn poll_key(handler: &mut DefaultRequestHandler) {
         handler.on_rotate_actions(!handler.context.operation.halting());
     }
     let _ = handler.key_sender.send(received_key.into());
+}
+
+#[inline]
+fn poll_database_event(handler: &mut DefaultRequestHandler) {
+    let Ok(event) = handler.database_event_receiver.try_recv() else {
+        return;
+    };
+    debug!(target: "handler", "received database event {event:?}");
+    match event {
+        DatabaseEvent::MinimapUpdated(minimap) => {
+            let id = minimap
+                .id
+                .expect("valid minimap id if updated from database");
+            if Some(id) == handler.minimap.data().and_then(|minimap| minimap.id) {
+                todo!()
+            }
+        }
+        DatabaseEvent::MinimapDeleted(deleted_id) => {
+            if Some(deleted_id) == handler.minimap.data().and_then(|minimap| minimap.id) {
+                handler.on_update_minimap(None, None);
+            }
+        }
+        DatabaseEvent::SettingsUpdated(settings) => handler.on_update_settings(settings),
+        DatabaseEvent::CharacterUpdated(character) => {
+            let updated_id = character
+                .id
+                .expect("valid character id if updated from database");
+            let current_id = handler
+                .character
+                .as_ref()
+                .and_then(|character| character.id);
+
+            if Some(updated_id) == current_id {
+                handler.on_update_character(Some(character));
+            }
+        }
+        DatabaseEvent::CharacterDeleted(deleted_id) => {
+            let current_id = handler
+                .character
+                .as_ref()
+                .and_then(|character| character.id);
+            if Some(deleted_id) == current_id {
+                handler.on_update_character(None);
+            }
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+fn poll_debug(handler: &mut DefaultRequestHandler) {
+    if let Some((calibrating, instant)) = handler.infering_rune.as_ref().copied() {
+        if instant.elapsed().as_secs() >= 10 {
+            debug!(target: "debug", "infer rune timed out");
+            *handler.infering_rune = None;
+        } else {
+            match handler
+                .context
+                .detector_unwrap()
+                .detect_rune_arrows(calibrating)
+            {
+                Ok(ArrowsState::Complete(arrows)) => {
+                    debug!(target: "debug", "infer rune result {arrows:?}");
+                    // TODO: Save
+                    *handler.infering_rune = None;
+                }
+                Ok(ArrowsState::Calibrating(calibrating)) => {
+                    *handler.infering_rune = Some((calibrating, instant));
+                }
+                Err(err) => {
+                    debug!(target: "debug", "infer rune failed {err}");
+                    *handler.infering_rune = None;
+                }
+            }
+        }
+    }
+
+    if let Some(id) = handler.recording_images_id.clone() {
+        save_image_for_training_to(
+            handler.context.detector_unwrap().mat(),
+            Some(id),
+            false,
+            false,
+        );
+    }
 }
 
 // TODO: Better way?

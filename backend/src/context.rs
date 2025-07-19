@@ -23,6 +23,7 @@ use crate::{
     bridge::{DefaultKeySender, ImageCapture, ImageCaptureKind, KeySender, KeySenderMethod},
     buff::{Buff, BuffKind, BuffState},
     database::{CaptureMode, InputMethod, KeyBinding, query_seeds, query_settings},
+    database_event_receiver,
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
@@ -247,6 +248,7 @@ fn update_loop() {
     // specified threshold to pass before determining panicking is needed. This can be beneficial
     // when navigator falsely navigates to a wrong unknown location.
     let mut pending_halt = None;
+    let mut database_event_receiver = database_event_receiver();
 
     #[cfg(debug_assertions)]
     let mut recording_images_id = None;
@@ -321,6 +323,9 @@ fn update_loop() {
             .downcast_mut::<DefaultKeySender>()
             .unwrap()
             .update_input_delay(context.tick);
+        context.notification.update_scheduled_frames(|| {
+            to_png(context.detector.as_ref().map(|detector| detector.mat()))
+        });
 
         // Poll requests, keys and update scheduled notifications frames
         let mut settings_borrow_mut = settings.borrow_mut();
@@ -341,24 +346,13 @@ fn update_loop() {
             image_capture: &mut image_capture,
             capture_handles: &mut capture_handles,
             selected_capture_handle: &mut selected_capture_handle,
+            database_event_receiver: &mut database_event_receiver,
             #[cfg(debug_assertions)]
             recording_images_id: &mut recording_images_id,
             #[cfg(debug_assertions)]
             infering_rune: &mut infering_rune,
         };
         handler.poll_request();
-        handler.poll_key();
-        #[cfg(debug_assertions)]
-        handler.poll_debug();
-        handler.context.notification.update_scheduled_frames(|| {
-            to_png(
-                handler
-                    .context
-                    .detector
-                    .as_ref()
-                    .map(|detector| detector.mat()),
-            )
-        });
 
         // Go to town on stop cycle
         if was_cycled_to_stop {

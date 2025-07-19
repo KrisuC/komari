@@ -12,8 +12,8 @@ use crate::{context::Context, detect::Detector};
 
 /// An asynchronous task.
 ///
-/// The task is a wrapper around `tokio::task::spawn` mainly for using
-/// inside synchronous code to do blocking or expensive operation.
+/// This is a simple wrapper around [`tokio::task::spawn`] and [`tokio::sync::oneshot`] mainly
+/// for using inside synchronous code to do blocking or expensive operation.
 #[derive(Debug)]
 pub struct Task<T> {
     rx: Receiver<T>,

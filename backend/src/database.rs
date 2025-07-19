@@ -4,13 +4,14 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use opencv::core::Rect;
 use platforms::windows::KeyKind;
 use rusqlite::{Connection, Params, Statement, types::Null};
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use strum::{Display, EnumIter, EnumString};
+use tokio::sync::broadcast::{Receiver, Sender, channel};
 
 use crate::pathing;
 
@@ -55,6 +56,16 @@ static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
     .unwrap();
     Mutex::new(conn)
 });
+static EVENT: LazyLock<Sender<DatabaseEvent>> = LazyLock::new(|| channel(10).0);
+
+#[derive(Debug, Clone)]
+pub enum DatabaseEvent {
+    MinimapUpdated(Minimap),
+    MinimapDeleted(i64),
+    SettingsUpdated(Settings),
+    CharacterUpdated(Character),
+    CharacterDeleted(i64),
+}
 
 trait Identifiable {
     fn id(&self) -> Option<i64>;
@@ -1015,6 +1026,10 @@ impl From<KeyKind> for KeyBinding {
     }
 }
 
+pub fn database_event_receiver() -> Receiver<DatabaseEvent> {
+    EVENT.subscribe()
+}
+
 pub fn query_seeds() -> Seeds {
     let mut seeds = query_from_table::<Seeds>(SEEDS)
         .unwrap()
@@ -1040,7 +1055,9 @@ pub fn query_settings() -> Settings {
 }
 
 pub fn upsert_settings(settings: &mut Settings) -> Result<()> {
-    upsert_to_table(SETTINGS, settings)
+    upsert_to_table(SETTINGS, settings).inspect(|_| {
+        let _ = EVENT.send(DatabaseEvent::SettingsUpdated(settings.clone()));
+    })
 }
 
 pub fn query_characters() -> Result<Vec<Character>> {
@@ -1048,23 +1065,35 @@ pub fn query_characters() -> Result<Vec<Character>> {
 }
 
 pub fn upsert_character(character: &mut Character) -> Result<()> {
-    upsert_to_table(CHARACTERS, character)
+    upsert_to_table(CHARACTERS, character).inspect(|_| {
+        let _ = EVENT.send(DatabaseEvent::CharacterUpdated(character.clone()));
+    })
 }
 
 pub fn delete_character(character: &Character) -> Result<()> {
-    delete_from_table(CHARACTERS, character)
+    delete_from_table(CHARACTERS, character).inspect(|_| {
+        let _ = EVENT.send(DatabaseEvent::MinimapDeleted(
+            character.id.expect("valid id if deleted"),
+        ));
+    })
 }
 
 pub fn query_minimaps() -> Result<Vec<Minimap>> {
     query_from_table(MAPS)
 }
 
-pub fn upsert_minimap(map: &mut Minimap) -> Result<()> {
-    upsert_to_table(MAPS, map)
+pub fn upsert_minimap(minimap: &mut Minimap) -> Result<()> {
+    upsert_to_table(MAPS, minimap).inspect(|_| {
+        let _ = EVENT.send(DatabaseEvent::MinimapUpdated(minimap.clone()));
+    })
 }
 
-pub fn delete_minimap(map: &Minimap) -> Result<()> {
-    delete_from_table(MAPS, map)
+pub fn delete_minimap(minimap: &Minimap) -> Result<()> {
+    delete_from_table(MAPS, minimap).inspect(|_| {
+        let _ = EVENT.send(DatabaseEvent::MinimapDeleted(
+            minimap.id.expect("valid id if deleted"),
+        ));
+    })
 }
 
 pub fn query_navigation_paths() -> Result<Vec<NavigationPath>> {
@@ -1116,13 +1145,19 @@ where
     );
     match data.id() {
         Some(id) => {
-            conn.execute(&stmt, (id, &json))?;
-            Ok(())
+            if conn.execute(&stmt, (id, &json))? > 0 {
+                Ok(())
+            } else {
+                bail!("no row was updated")
+            }
         }
         None => {
-            conn.execute(&stmt, (Null, &json))?;
-            data.set_id(conn.last_insert_rowid());
-            Ok(())
+            if conn.execute(&stmt, (Null, &json))? > 0 {
+                data.set_id(conn.last_insert_rowid());
+                Ok(())
+            } else {
+                bail!("no row was inserted")
+            }
         }
     }
 }
@@ -1132,9 +1167,14 @@ fn delete_from_table<T: Identifiable>(table: &str, data: &T) -> Result<()> {
         if id.is_some() {
             let conn = CONNECTION.lock().unwrap();
             let stmt = format!("DELETE FROM {table} WHERE id = ?1;");
-            conn.execute(&stmt, [id.unwrap()])?;
+            let deleted = conn.execute(&stmt, [id.unwrap()])?;
+
+            if deleted > 0 {
+                return Ok(());
+            }
         }
-        Ok(())
+        bail!("no row was deleted")
     }
+
     inner(table, data.id())
 }
