@@ -237,7 +237,7 @@ pub async fn update_settings(settings: Settings) {
     )
 }
 
-/// Upserts settings to the database.
+/// Upserts `settings` to the database.
 ///
 /// Returns the updated [`Settings`] or original if fails.
 pub async fn upsert_settings(mut settings: Settings) -> Settings {
@@ -264,7 +264,7 @@ pub async fn create_minimap(name: String) -> Option<Minimap> {
     )
 }
 
-/// Upserts minimap to the database.
+/// Upserts `minimap` to the database.
 ///
 /// If `minimap` does not previously exist, a new one will be created and its `id` will
 /// be updated.
