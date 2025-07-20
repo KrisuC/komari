@@ -1,10 +1,11 @@
 use backend::{
-    NavigationPath, NavigationPoint, NavigationTransition, create_navigation_path,
-    delete_navigation_path, query_navigation_paths, recapture_navigation_path, update_minimap,
-    update_navigation_path, upsert_minimap, upsert_navigation_path,
+    DatabaseEvent, NavigationPath, NavigationPoint, NavigationTransition, create_navigation_path,
+    database_event_receiver, delete_navigation_path, query_navigation_paths,
+    recapture_navigation_path, upsert_minimap, upsert_navigation_path,
 };
 use dioxus::prelude::*;
 use futures_util::StreamExt;
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
     AppState,
@@ -162,7 +163,6 @@ fn PopupPoint(
 fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
     let position = use_context::<AppState>().position;
     let mut minimap = use_context::<AppState>().minimap;
-    let minimap_preset = use_context::<AppState>().minimap_preset;
     let mut paths = use_resource(async || query_navigation_paths().await.unwrap_or_default());
     // TODO: How to better display paths_view that shows some form of grouping? Tarjan what?
     let paths_view = use_memo(move || paths().unwrap_or_default());
@@ -188,47 +188,39 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
 
     let coroutine = use_coroutine(
         move |mut rx: UnboundedReceiver<NavigationUpdate>| async move {
-            let update_and_restart = move || async move {
-                update_navigation_path().await;
-                paths.restart();
-            };
             while let Some(message) = rx.next().await {
                 match message {
                     NavigationUpdate::Update(path) => {
                         let _ = upsert_navigation_path(path).await;
-                        update_and_restart().await;
                     }
                     NavigationUpdate::Create => {
                         let Some(path) = create_navigation_path().await else {
                             continue;
                         };
                         let _ = upsert_navigation_path(path).await;
-                        update_and_restart().await;
                     }
                     NavigationUpdate::Delete(path) => {
                         delete_navigation_path(path).await;
-                        update_and_restart().await;
                     }
                     NavigationUpdate::Recapture(path) => {
                         let new_path = recapture_navigation_path(path).await;
                         let new_path = upsert_navigation_path(new_path).await;
 
                         if let Some(NavigationPopup::Snapshots(path)) = popup()
+                            && let Some(new_path) = new_path
                             && path.id == new_path.id
                         {
                             popup.set(Some(NavigationPopup::Snapshots(new_path)));
                         }
-                        update_and_restart().await;
                     }
                     NavigationUpdate::Attach(path_id) => {
                         let Some(mut current_minimap) = minimap() else {
                             continue;
                         };
                         current_minimap.path_id = path_id;
-                        current_minimap = upsert_minimap(current_minimap).await;
-
-                        minimap.set(Some(current_minimap));
-                        update_minimap(minimap_preset(), minimap()).await;
+                        if let Some(current_minimap) = upsert_minimap(current_minimap).await {
+                            minimap.set(Some(current_minimap));
+                        }
                     }
                 }
             }
@@ -259,6 +251,23 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
             }
         },
     );
+
+    use_future(move || async move {
+        let mut rx = database_event_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(value) => value,
+                Err(RecvError::Closed) => break,
+                Err(RecvError::Lagged(_)) => continue,
+            };
+            if matches!(
+                event,
+                DatabaseEvent::NavigationPathUpdated | DatabaseEvent::NavigationPathDeleted
+            ) {
+                paths.restart();
+            }
+        }
+    });
 
     rsx! {
         Section { name: "Selected map",

@@ -6,15 +6,15 @@ use std::{
 };
 
 use backend::{
-    Action, ActionKey, ActionMove, GameOperation, Minimap as MinimapData, Position, RotationMode,
-    create_minimap, delete_minimap, game_state_receiver, query_minimaps, redetect_minimap,
-    rotate_actions, update_minimap, upsert_minimap,
+    Action, ActionKey, ActionMove, DatabaseEvent, GameOperation, Minimap as MinimapData, Position,
+    RotationMode, create_minimap, database_event_receiver, delete_minimap, game_state_receiver,
+    query_minimaps, redetect_minimap, rotate_actions, update_minimap, upsert_minimap,
 };
 use dioxus::{document::EvalError, prelude::*};
 use futures_util::StreamExt;
 use rand::distr::{Alphanumeric, SampleString};
 use serde::Serialize;
-use tokio::time::sleep;
+use tokio::{sync::broadcast::error::RecvError, time::sleep};
 
 use crate::{
     AppState,
@@ -341,23 +341,23 @@ pub fn Minimap() -> Element {
                     let Some(new_minimap) = create_minimap(name).await else {
                         continue;
                     };
-                    let new_minimap = upsert_minimap(new_minimap).await;
+                    let Some(new_minimap) = upsert_minimap(new_minimap).await else {
+                        continue;
+                    };
 
                     minimap.set(Some(new_minimap));
                     minimap_preset.set(None);
-                    minimaps.restart();
                     update_minimap(None, minimap()).await;
                 }
                 MinimapUpdate::Import(minimap) => {
                     upsert_minimap(minimap).await;
-                    minimaps.restart();
                 }
                 MinimapUpdate::Delete => {
-                    if let Some(minimap) = minimap.take() {
+                    if let Some(current_minimap) = minimap()
+                        && delete_minimap(current_minimap).await
+                    {
+                        minimap.set(None);
                         minimap_preset.set(None);
-                        delete_minimap(minimap).await;
-                        update_minimap(None, None).await;
-                        minimaps.restart();
                     }
                 }
             }
@@ -385,15 +385,19 @@ pub fn Minimap() -> Element {
         }
     });
     // External modification checking
-    use_effect(move || {
-        if let Some((current_minimaps, current_minimap)) = minimaps().zip(minimap()) {
-            for minimap in current_minimaps {
-                if minimap.id == current_minimap.id {
-                    if minimap != current_minimap {
-                        minimaps.restart();
-                    }
-                    break;
-                }
+    use_future(move || async move {
+        let mut rx = database_event_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(value) => value,
+                Err(RecvError::Closed) => break,
+                Err(RecvError::Lagged(_)) => continue,
+            };
+            if matches!(
+                event,
+                DatabaseEvent::MinimapUpdated(_) | DatabaseEvent::MinimapDeleted(_)
+            ) {
+                minimaps.restart();
             }
         }
     });

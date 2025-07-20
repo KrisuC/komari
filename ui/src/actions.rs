@@ -14,6 +14,7 @@ use backend::{
 use dioxus::prelude::*;
 use futures_util::StreamExt;
 use rand::distr::{Alphanumeric, SampleString};
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
     AppState,
@@ -92,13 +93,6 @@ pub fn Actions() -> Element {
     // Handles async operations for action-related
     // TODO: Split into functions
     let coroutine = use_coroutine(move |mut rx: UnboundedReceiver<ActionUpdate>| async move {
-        let mut save_minimap = async move |new_minimap: Minimap| {
-            let new_minimap = upsert_minimap(new_minimap).await;
-
-            minimap.set(Some(new_minimap));
-            update_minimap(minimap_preset(), minimap()).await;
-        };
-
         while let Some(message) = rx.next().await {
             match message {
                 ActionUpdate::Set => {
@@ -108,14 +102,17 @@ pub fn Actions() -> Element {
                     let Some(mut current_minimap) = minimap() else {
                         continue;
                     };
-
                     if current_minimap
                         .actions
                         .try_insert(preset.clone(), vec![])
-                        .is_ok()
+                        .is_err()
                     {
+                        continue;
+                    }
+                    if let Some(current_minimap) = upsert_minimap(current_minimap).await {
                         minimap_preset.set(Some(preset));
-                        save_minimap(current_minimap).await;
+                        minimap.set(Some(current_minimap));
+                        update_minimap(minimap_preset(), minimap()).await;
                     }
                 }
                 ActionUpdate::Delete => {
@@ -126,9 +123,13 @@ pub fn Actions() -> Element {
                         continue;
                     };
 
-                    if current_minimap.actions.remove(&preset).is_some() {
+                    if current_minimap.actions.remove(&preset).is_none() {
+                        continue;
+                    }
+                    if let Some(current_minimap) = upsert_minimap(current_minimap).await {
                         minimap_preset.set(current_minimap.actions.keys().next().cloned());
-                        save_minimap(current_minimap).await;
+                        minimap.set(Some(current_minimap));
+                        update_minimap(minimap_preset(), minimap()).await;
                     }
                 }
                 ActionUpdate::Update(actions) => {
@@ -140,10 +141,14 @@ pub fn Actions() -> Element {
                     };
 
                     current_minimap.actions.insert(preset, actions);
-                    save_minimap(current_minimap).await;
+                    if let Some(current_minimap) = upsert_minimap(current_minimap).await {
+                        minimap.set(Some(current_minimap));
+                    }
                 }
                 ActionUpdate::UpdateMinimap(new_minimap) => {
-                    save_minimap(new_minimap).await;
+                    if let Some(new_minimap) = upsert_minimap(new_minimap).await {
+                        minimap.set(Some(new_minimap));
+                    }
                 }
             }
         }
@@ -310,11 +315,9 @@ pub fn Actions() -> Element {
                 placeholder: "Create an actions preset for the selected map...",
                 on_create: move |name| {
                     coroutine.send(ActionUpdate::Create(name));
-                    coroutine.send(ActionUpdate::Set);
                 },
                 on_delete: move |_| {
                     coroutine.send(ActionUpdate::Delete);
-                    coroutine.send(ActionUpdate::Set);
                 },
                 on_select: move |(_, preset)| {
                     minimap_preset.set(Some(preset));
@@ -489,8 +492,10 @@ fn SectionPlatforms(
         let mut platform = Platform::default();
         let mut key_receiver = key_receiver().await;
         loop {
-            let Ok(key) = key_receiver.recv().await else {
-                continue;
+            let key = match key_receiver.recv().await {
+                Ok(value) => value,
+                Err(RecvError::Closed) => break,
+                Err(RecvError::Lagged(_)) => continue,
             };
             let Some(settings) = &*settings.peek() else {
                 continue;

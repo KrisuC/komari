@@ -11,7 +11,6 @@ use opencv::core::{MatTraitConst, Point, Rect, Vec4b};
 use crate::{
     array::Array,
     context::{Context, Contextual, ControlFlow},
-    database::Minimap as MinimapData,
     detect::{Detector, OtherPlayerKind},
     network::NotificationKind,
     pathing::{
@@ -42,11 +41,6 @@ impl Hash for HashedRect {
 /// Minimap persistent state.
 #[derive(Debug, Default)]
 pub struct MinimapState {
-    /// The minimap data saved in the database.
-    ///
-    /// This data is created based on the current detected minimap, saved to the database and then
-    /// later (re-)selected by user.
-    data: Option<MinimapData>,
     /// Task to detect the current minimap bounding box and anchor points.
     minimap_task: Option<Task<Result<(Anchors, Rect)>>>,
     /// Task to detect the current minimap's rune.
@@ -66,20 +60,18 @@ pub struct MinimapState {
     has_stranger_player_task: Option<Task<Result<()>>>,
     /// Task to detect firend player(s) in the minimap.
     has_friend_player_task: Option<Task<Result<()>>>,
+
+    platforms: Vec<Platform>,
     /// Whether to update the [`MinimapIdle::platforms`].
     ///
     /// This is set to true each time [`Self::data`] is updated.
-    update_platforms: bool,
+    platforms_dirty: bool,
 }
 
 impl MinimapState {
-    pub fn data(&self) -> Option<&MinimapData> {
-        self.data.as_ref()
-    }
-
-    pub fn set_data(&mut self, data: Option<MinimapData>) {
-        self.data = data;
-        self.update_platforms = true;
+    pub fn set_platforms(&mut self, platforms: Vec<Platform>) {
+        self.platforms = platforms;
+        self.platforms_dirty = true;
     }
 }
 
@@ -235,12 +227,8 @@ fn update_detecting_context(context: &Context, state: &mut MinimapState) -> Mini
         return Minimap::Detecting;
     };
 
-    let (platforms, platforms_bound) = state
-        .data
-        .as_ref()
-        .map(|data| platforms_from_data(bbox, data))
-        .unwrap_or_default();
-    state.update_platforms = false;
+    let (platforms, platforms_bound) = platforms_and_bound(bbox, &state.platforms);
+    state.platforms_dirty = false;
     state.rune_task = None;
     state.portals_task = None;
     state.portals_invalidate_map.clear();
@@ -333,17 +321,11 @@ fn update_idle_context(
         bbox,
     );
 
-    // TODO: any better way to read persistent state in other contextual?
-    if state.update_platforms {
-        if let Some(data) = state.data() {
-            let (updated_platforms, updated_bound) = platforms_from_data(bbox, data);
-            platforms = updated_platforms;
-            platforms_bound = updated_bound
-        } else {
-            platforms = Array::new();
-            platforms_bound = None;
-        }
-        state.update_platforms = false;
+    if state.platforms_dirty {
+        let (updated_platforms, updated_bound) = platforms_and_bound(bbox, &state.platforms);
+        platforms = updated_platforms;
+        platforms_bound = updated_bound;
+        state.platforms_dirty = false;
     }
 
     Some(Minimap::Idle(MinimapIdle {
@@ -525,17 +507,12 @@ fn merge_portals_and_invalidate_if_needed(
     Array::from_iter(merged_portals.into_iter().map(|portal| portal.inner))
 }
 
-fn platforms_from_data(
+fn platforms_and_bound(
     bbox: Rect,
-    minimap: &MinimapData,
+    platforms: &[Platform],
 ) -> (Array<PlatformWithNeighbors, 24>, Option<Rect>) {
     let platforms = Array::from_iter(find_neighbors(
-        &minimap
-            .platforms
-            .iter()
-            .copied()
-            .map(Platform::from)
-            .collect::<Vec<_>>(),
+        platforms,
         DOUBLE_JUMP_THRESHOLD,
         JUMP_THRESHOLD,
         GRAPPLING_MAX_THRESHOLD,
@@ -709,7 +686,6 @@ mod tests {
                 assert!(!idle.has_any_other_player());
                 assert!(idle.portals.is_empty());
 
-                assert_eq!(state.data, None);
                 assert_matches!(state.minimap_task, Some(_));
                 assert_matches!(state.rune_task, None);
                 assert_matches!(state.has_elite_boss_task, None);

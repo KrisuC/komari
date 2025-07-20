@@ -46,10 +46,10 @@ pub use {
     database::{
         Action, ActionCondition, ActionConfiguration, ActionConfigurationCondition, ActionKey,
         ActionKeyDirection, ActionKeyWith, ActionMove, Bound, CaptureMode, Character, Class,
-        EliteBossBehavior, FamiliarRarity, Familiars, InputMethod, KeyBinding,
+        DatabaseEvent, EliteBossBehavior, FamiliarRarity, Familiars, InputMethod, KeyBinding,
         KeyBindingConfiguration, LinkKeyBinding, Minimap, MobbingKey, NavigationPath,
         NavigationPoint, NavigationTransition, Notifications, Platform, Position, PotionMode,
-        RotationMode, Settings, SwappableFamiliars,
+        RotationMode, Settings, SwappableFamiliars, database_event_receiver,
     },
     pathing::MAX_PLATFORMS_COUNT,
     rotator::RotatorMode,
@@ -92,9 +92,7 @@ enum Request {
     UpdateMinimap(Option<String>, Option<Minimap>),
     CreateNavigationPath,
     RecaptureNavigationPath(NavigationPath),
-    UpdateNavigationPath,
     UpdateCharacter(Option<Character>),
-    UpdateSettings(Settings),
     RedetectMinimap,
     GameStateReceiver,
     KeyReceiver,
@@ -123,9 +121,7 @@ enum Response {
     UpdateMinimap,
     CreateNavigationPath(Option<NavigationPath>),
     RecaptureNavigationPath(NavigationPath),
-    UpdateNavigationPath,
     UpdateCharacter,
-    UpdateSettings,
     RedetectMinimap,
     GameStateReceiver(broadcast::Receiver<GameState>),
     KeyReceiver(broadcast::Receiver<KeyBinding>),
@@ -155,11 +151,7 @@ pub(crate) trait RequestHandler {
 
     fn on_recapture_navigation_path(&self, path: NavigationPath) -> NavigationPath;
 
-    fn on_update_navigation_path(&mut self);
-
     fn on_update_character(&mut self, character: Option<Character>);
-
-    fn on_update_settings(&mut self, settings: Settings);
 
     fn on_redetect_minimap(&mut self);
 
@@ -221,6 +213,7 @@ pub enum GameOperation {
     RunUntil(Instant),
 }
 
+/// Starts or stops rotating the actions.
 pub async fn rotate_actions(halting: bool) {
     expect_unit_variant!(
         request(Request::RotateActions(halting)).await,
@@ -233,10 +226,12 @@ pub async fn query_settings() -> Settings {
     spawn_blocking(database::query_settings).await.unwrap()
 }
 
-/// Upserts settings to the database.
+/// Upserts `settings` to the database.
+///
+/// Returns the updated [`Settings`] or original if fails.
 pub async fn upsert_settings(mut settings: Settings) -> Settings {
     spawn_blocking(move || {
-        database::upsert_settings(&mut settings).expect("failed to upsert settings");
+        let _ = database::upsert_settings(&mut settings);
         settings
     })
     .await
@@ -258,16 +253,17 @@ pub async fn create_minimap(name: String) -> Option<Minimap> {
     )
 }
 
-/// Upserts minimap to the database.
+/// Upserts `minimap` to the database.
 ///
 /// If `minimap` does not previously exist, a new one will be created and its `id` will
 /// be updated.
 ///
-/// Returns the updated [`Minimap`].
-pub async fn upsert_minimap(mut minimap: Minimap) -> Minimap {
+/// Returns the updated [`Minimap`] on success.
+pub async fn upsert_minimap(mut minimap: Minimap) -> Option<Minimap> {
     spawn_blocking(move || {
-        database::upsert_minimap(&mut minimap).expect("failed to upsert minimap");
-        minimap
+        database::upsert_minimap(&mut minimap)
+            .is_ok()
+            .then_some(minimap)
     })
     .await
     .unwrap()
@@ -282,12 +278,12 @@ pub async fn update_minimap(preset: Option<String>, minimap: Option<Minimap>) {
 }
 
 /// Deletes `minimap` from the database.
-pub async fn delete_minimap(minimap: Minimap) {
-    spawn_blocking(move || {
-        database::delete_minimap(&minimap).expect("failed to delete minimap");
-    })
-    .await
-    .unwrap();
+///
+/// Returns `true` if the minimap was deleted.
+pub async fn delete_minimap(minimap: Minimap) -> bool {
+    spawn_blocking(move || database::delete_minimap(&minimap).is_ok())
+        .await
+        .unwrap()
 }
 
 /// Queries navigation paths from the database.
@@ -308,15 +304,25 @@ pub async fn create_navigation_path() -> Option<NavigationPath> {
     )
 }
 
-pub async fn upsert_navigation_path(mut path: NavigationPath) -> NavigationPath {
+/// Upserts `path` to the database.
+///
+/// Returns the updated [`NavigationPath`] on success.
+pub async fn upsert_navigation_path(mut path: NavigationPath) -> Option<NavigationPath> {
     spawn_blocking(move || {
-        database::upsert_navigation_path(&mut path).expect("failed to upsert path");
-        path
+        database::upsert_navigation_path(&mut path)
+            .is_ok()
+            .then_some(path)
     })
     .await
     .unwrap()
 }
 
+/// Recaptures snapshots for the provided `path`.
+///
+/// Snapshots include name and minimap will be recaptured and re-assigned to the given `path` if
+/// the minimap is currently detected.
+///
+/// Returns the updated [`NavigationPath`] or original if minimap is currently not detectable.
 pub async fn recapture_navigation_path(path: NavigationPath) -> NavigationPath {
     expect_value_variant!(
         request(Request::RecaptureNavigationPath(path)).await,
@@ -324,19 +330,13 @@ pub async fn recapture_navigation_path(path: NavigationPath) -> NavigationPath {
     )
 }
 
-pub async fn update_navigation_path() {
-    expect_unit_variant!(
-        request(Request::UpdateNavigationPath).await,
-        Response::UpdateNavigationPath
-    )
-}
-
-pub async fn delete_navigation_path(path: NavigationPath) {
-    spawn_blocking(move || {
-        database::delete_navigation_path(&path).expect("failed to delete path");
-    })
-    .await
-    .unwrap();
+/// Deletes `path` from the database.
+///
+/// Returns `true` if `path` was deleted.
+pub async fn delete_navigation_path(path: NavigationPath) -> bool {
+    spawn_blocking(move || database::delete_navigation_path(&path).is_ok())
+        .await
+        .unwrap()
 }
 
 /// Queries characters from the database.
@@ -347,16 +347,17 @@ pub async fn query_characters() -> Option<Vec<Character>> {
         .ok()
 }
 
-/// Upserts character to the database.
+/// Upserts `character` to the database.
 ///
 /// If `character` does not previously exist, a new one will be created and its `id` will
 /// be updated.
 ///
-/// Returns the updated [`Character`].
-pub async fn upsert_character(mut character: Character) -> Character {
+/// Returns the updated [`Character`] on success.
+pub async fn upsert_character(mut character: Character) -> Option<Character> {
     spawn_blocking(move || {
-        database::upsert_character(&mut character).expect("failed to upsert character");
-        character
+        database::upsert_character(&mut character)
+            .is_ok()
+            .then_some(character)
     })
     .await
     .unwrap()
@@ -371,19 +372,12 @@ pub async fn update_character(character: Option<Character>) {
 }
 
 /// Deletes `character` from the database.
-pub async fn delete_character(character: Character) {
-    spawn_blocking(move || {
-        database::delete_character(&character).expect("failed to delete character");
-    })
-    .await
-    .unwrap();
-}
-
-pub async fn update_settings(settings: Settings) {
-    expect_unit_variant!(
-        request(Request::UpdateSettings(settings)).await,
-        Response::UpdateSettings
-    )
+///
+/// Returns `true` if the `character` was deleted.
+pub async fn delete_character(character: Character) -> bool {
+    spawn_blocking(move || database::delete_character(&character).is_ok())
+        .await
+        .unwrap()
 }
 
 pub async fn redetect_minimap() {
@@ -469,17 +463,9 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::RecaptureNavigationPath(path) => {
                 Response::RecaptureNavigationPath(handler.on_recapture_navigation_path(path))
             }
-            Request::UpdateNavigationPath => {
-                handler.on_update_navigation_path();
-                Response::UpdateNavigationPath
-            }
             Request::UpdateCharacter(character) => {
                 handler.on_update_character(character);
                 Response::UpdateCharacter
-            }
-            Request::UpdateSettings(settings) => {
-                handler.on_update_settings(settings);
-                Response::UpdateSettings
             }
             Request::RedetectMinimap => {
                 handler.on_redetect_minimap();

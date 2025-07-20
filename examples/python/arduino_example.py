@@ -60,31 +60,39 @@ class KeyInput(KeyInputServicer):
     def Send(self, request: KeyRequest, context):
         key = self.keys_map[request.key]
         key_down = request.down_ms / 1000.0
-        timer = self.timers_map.get(key)
+        # timer = self.timers_map.get(key)
 
-        if timer is None or not timer.is_alive():
-            self.serial.write(bytes([KEY_DOWN, key]))
-            timer = Timer(key_down, lambda: self.serial.write(
-                bytes([KEY_UP, key])))
-            timer.start()
-            self.timers_map[key] = timer
+        # if timer is None or not timer.is_alive():
+        #     self.serial.write(bytes([KEY_DOWN, key]))
+        #     self.serial.write(bytes([KEY_UP, key]))
+        #     timer = Timer(key_down, lambda: self.serial.write(
+        #         bytes([KEY_UP, key])))
+        #     timer.start()
+        #     self.timers_map[key] = timer
+
+        self.serial.write(bytes([KEY_DOWN, key]))
+        time.sleep(key_down)
+        self.serial.write(bytes([KEY_UP, key]))
 
         return KeyResponse()
 
     def SendUp(self, request: KeyUpRequest, context):
         key = request.key
-        timer = self.timers_map.get(key)
+        # timer = self.timers_map.get(key)
 
-        if timer is None or not timer.is_alive():
-            self.serial.write(bytes([KEY_UP, self.keys_map[key]]))
+        # if timer is None or not timer.is_alive():
+        # self.serial.write(bytes([KEY_UP, self.keys_map[key]]))
+
+        self.serial.write(bytes([KEY_UP, self.keys_map[key]]))
         return KeyUpResponse()
 
     def SendDown(self, request: KeyDownRequest, context):
         key = request.key
-        timer = self.timers_map.get(key)
+        # timer = self.timers_map.get(key)
 
-        if timer is None or not timer.is_alive():
-            self.serial.write(bytes([KEY_DOWN, self.keys_map[key]]))
+        # if timer is None or not timer.is_alive():
+        # self.serial.write(bytes([KEY_DOWN, self.keys_map[key]]))
+        self.serial.write(bytes([KEY_DOWN, self.keys_map[key]]))
         return KeyDownResponse()
 
 

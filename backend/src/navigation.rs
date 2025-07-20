@@ -263,22 +263,18 @@ impl Navigator {
     }
 
     #[inline]
-    pub fn reset(&mut self) {
-        self.base_path = None;
-        self.current_path = None;
-        self.mark_dirty();
-    }
-
-    #[inline]
-    fn mark_dirty(&mut self) {
+    pub fn mark_dirty(&mut self) {
+        // Do not reset `base_path` and `current_path` here so that
+        // `update_current_path_from_current_location` will try to reuse that when looking up.
         self.path_dirty = true;
         self.path_dirty_retry_count = 0;
+        self.last_point_state = None;
     }
 
     #[inline]
-    pub fn update_destination_path(&mut self, path_id: Option<i64>) {
+    pub fn mark_dirty_with_destination(&mut self, path_id: Option<i64>) {
         self.destination_path_id = path_id;
-        self.last_point_state = None;
+        self.mark_dirty();
     }
 
     #[inline]
