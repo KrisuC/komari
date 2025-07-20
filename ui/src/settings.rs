@@ -3,7 +3,7 @@ use std::{fmt::Display, fs::File, io::BufReader};
 use backend::{
     CaptureMode, FamiliarRarity, Familiars, InputMethod, IntoEnumIterator, KeyBinding,
     KeyBindingConfiguration, Notifications, Settings as SettingsData, SwappableFamiliars,
-    query_capture_handles, query_settings, select_capture_handle, update_settings, upsert_settings,
+    query_capture_handles, query_settings, select_capture_handle, upsert_settings,
 };
 use dioxus::prelude::*;
 use futures_util::StreamExt;
@@ -18,7 +18,6 @@ use crate::{
 
 #[derive(Debug)]
 enum SettingsUpdate {
-    Set,
     Update(SettingsData),
 }
 
@@ -32,9 +31,6 @@ pub fn Settings() -> Element {
         move |mut rx: UnboundedReceiver<SettingsUpdate>| async move {
             while let Some(message) = rx.next().await {
                 match message {
-                    SettingsUpdate::Set => {
-                        update_settings(settings().expect("has value")).await;
-                    }
                     SettingsUpdate::Update(new_settings) => {
                         settings.set(Some(upsert_settings(new_settings).await));
                     }
@@ -49,7 +45,6 @@ pub fn Settings() -> Element {
     use_future(move || async move {
         if settings.peek().is_none() {
             settings.set(Some(query_settings().await));
-            coroutine.send(SettingsUpdate::Set);
         }
     });
 

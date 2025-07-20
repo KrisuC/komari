@@ -192,7 +192,7 @@ fn update_loop() {
     let mut minimap_preset = None; // Override by UI
     let mut character = None; // Override by UI
     let mut buffs = vec![];
-    let settings = query_settings(); // Override by UI
+    let settings = query_settings();
     let seeds = query_seeds(); // Fixed, unchanged
     let rng = Rng::new(seeds.seed); // Create one for Context
 

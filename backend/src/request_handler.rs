@@ -230,6 +230,72 @@ impl DefaultRequestHandler<'_> {
             }
         }
     }
+
+    fn update_settings(&mut self, settings: Settings) {
+        let mut handle_or_default = self.selected_capture_handle.unwrap_or(self.context.handle);
+
+        if settings.capture_mode != self.settings.capture_mode {
+            self.image_capture
+                .set_mode(handle_or_default, settings.capture_mode);
+        }
+
+        if settings.input_method != self.settings.input_method
+            || settings.input_method_rpc_server_url != self.settings.input_method_rpc_server_url
+        {
+            if let ImageCaptureKind::BitBltArea(capture) = self.image_capture.kind() {
+                handle_or_default = capture.handle();
+                *self.key_receiver = KeyReceiver::new(handle_or_default, KeyInputKind::Foreground);
+            }
+            match settings.input_method {
+                InputMethod::Default => {
+                    let kind = if matches!(settings.capture_mode, CaptureMode::BitBltArea) {
+                        KeyInputKind::Foreground
+                    } else {
+                        KeyInputKind::Fixed
+                    };
+                    self.context
+                        .keys
+                        .set_method(KeySenderMethod::Default(handle_or_default, kind));
+                }
+                InputMethod::Rpc => {
+                    self.context.keys.set_method(KeySenderMethod::Rpc(
+                        handle_or_default,
+                        settings.input_method_rpc_server_url.clone(),
+                    ));
+                }
+            }
+        }
+        self.context.operation = match self.context.operation {
+            Operation::HaltUntil(_) => {
+                if settings.cycle_run_stop {
+                    Operation::HaltUntil(
+                        Instant::now() + Duration::from_millis(settings.cycle_stop_duration_millis),
+                    )
+                } else {
+                    Operation::Halting
+                }
+            }
+            Operation::Halting => Operation::Halting,
+            Operation::Running | Operation::RunUntil(_) => {
+                if settings.cycle_run_stop {
+                    Operation::RunUntil(
+                        Instant::now() + Duration::from_millis(settings.cycle_run_duration_millis),
+                    )
+                } else {
+                    Operation::Running
+                }
+            }
+        };
+        *self.settings = settings;
+
+        let Some(character) = self.character else {
+            return;
+        };
+        self.buff_states.iter_mut().for_each(|state| {
+            state.update_enabled_state(character, self.settings);
+        });
+        self.update_rotator_actions();
+    }
 }
 
 impl RequestHandler for DefaultRequestHandler<'_> {
@@ -343,72 +409,6 @@ impl RequestHandler for DefaultRequestHandler<'_> {
                 (_, PotionMode::Percentage(percent)) => Some(percent / 100.0),
             };
         self.player.config.update_health_millis = Some(character.health_update_millis);
-        self.buff_states.iter_mut().for_each(|state| {
-            state.update_enabled_state(character, self.settings);
-        });
-        self.update_rotator_actions();
-    }
-
-    fn on_update_settings(&mut self, settings: Settings) {
-        let mut handle_or_default = self.selected_capture_handle.unwrap_or(self.context.handle);
-
-        if settings.capture_mode != self.settings.capture_mode {
-            self.image_capture
-                .set_mode(handle_or_default, settings.capture_mode);
-        }
-
-        if settings.input_method != self.settings.input_method
-            || settings.input_method_rpc_server_url != self.settings.input_method_rpc_server_url
-        {
-            if let ImageCaptureKind::BitBltArea(capture) = self.image_capture.kind() {
-                handle_or_default = capture.handle();
-                *self.key_receiver = KeyReceiver::new(handle_or_default, KeyInputKind::Foreground);
-            }
-            match settings.input_method {
-                InputMethod::Default => {
-                    let kind = if matches!(settings.capture_mode, CaptureMode::BitBltArea) {
-                        KeyInputKind::Foreground
-                    } else {
-                        KeyInputKind::Fixed
-                    };
-                    self.context
-                        .keys
-                        .set_method(KeySenderMethod::Default(handle_or_default, kind));
-                }
-                InputMethod::Rpc => {
-                    self.context.keys.set_method(KeySenderMethod::Rpc(
-                        handle_or_default,
-                        settings.input_method_rpc_server_url.clone(),
-                    ));
-                }
-            }
-        }
-        self.context.operation = match self.context.operation {
-            Operation::HaltUntil(_) => {
-                if settings.cycle_run_stop {
-                    Operation::HaltUntil(
-                        Instant::now() + Duration::from_millis(settings.cycle_stop_duration_millis),
-                    )
-                } else {
-                    Operation::Halting
-                }
-            }
-            Operation::Halting => Operation::Halting,
-            Operation::Running | Operation::RunUntil(_) => {
-                if settings.cycle_run_stop {
-                    Operation::RunUntil(
-                        Instant::now() + Duration::from_millis(settings.cycle_run_duration_millis),
-                    )
-                } else {
-                    Operation::Running
-                }
-            }
-        };
-        *self.settings = settings;
-
-        let Some(character) = self.character else {
-            return;
-        };
         self.buff_states.iter_mut().for_each(|state| {
             state.update_enabled_state(character, self.settings);
         });
@@ -591,7 +591,7 @@ fn poll_database_event(handler: &mut DefaultRequestHandler) {
         DatabaseEvent::NavigationPathUpdated | DatabaseEvent::NavigationPathDeleted => {
             handler.navigator.mark_dirty();
         }
-        DatabaseEvent::SettingsUpdated(settings) => handler.on_update_settings(settings),
+        DatabaseEvent::SettingsUpdated(settings) => handler.update_settings(settings),
         DatabaseEvent::CharacterUpdated(character) => {
             let updated_id = character
                 .id

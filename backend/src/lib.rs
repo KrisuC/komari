@@ -93,7 +93,6 @@ enum Request {
     CreateNavigationPath,
     RecaptureNavigationPath(NavigationPath),
     UpdateCharacter(Option<Character>),
-    UpdateSettings(Settings),
     RedetectMinimap,
     GameStateReceiver,
     KeyReceiver,
@@ -123,7 +122,6 @@ enum Response {
     CreateNavigationPath(Option<NavigationPath>),
     RecaptureNavigationPath(NavigationPath),
     UpdateCharacter,
-    UpdateSettings,
     RedetectMinimap,
     GameStateReceiver(broadcast::Receiver<GameState>),
     KeyReceiver(broadcast::Receiver<KeyBinding>),
@@ -154,8 +152,6 @@ pub(crate) trait RequestHandler {
     fn on_recapture_navigation_path(&self, path: NavigationPath) -> NavigationPath;
 
     fn on_update_character(&mut self, character: Option<Character>);
-
-    fn on_update_settings(&mut self, settings: Settings);
 
     fn on_redetect_minimap(&mut self);
 
@@ -228,13 +224,6 @@ pub async fn rotate_actions(halting: bool) {
 /// Queries settings from the database.
 pub async fn query_settings() -> Settings {
     spawn_blocking(database::query_settings).await.unwrap()
-}
-
-pub async fn update_settings(settings: Settings) {
-    expect_unit_variant!(
-        request(Request::UpdateSettings(settings)).await,
-        Response::UpdateSettings
-    )
 }
 
 /// Upserts `settings` to the database.
@@ -477,10 +466,6 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::UpdateCharacter(character) => {
                 handler.on_update_character(character);
                 Response::UpdateCharacter
-            }
-            Request::UpdateSettings(settings) => {
-                handler.on_update_settings(settings);
-                Response::UpdateSettings
             }
             Request::RedetectMinimap => {
                 handler.on_redetect_minimap();
