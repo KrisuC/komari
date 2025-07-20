@@ -37,7 +37,6 @@ pub fn Settings() -> Element {
                     }
                     SettingsUpdate::Update(new_settings) => {
                         settings.set(Some(upsert_settings(new_settings).await));
-                        update_settings(settings().expect("has value")).await;
                     }
                 }
             }
@@ -494,7 +493,7 @@ fn SectionRunStopCycle(
     save_settings: EventHandler<SettingsData>,
 ) -> Element {
     rsx! {
-        Section { name: "Others",
+        Section { name: "Run/stop cycle",
             div { class: "grid grid-cols-3 gap-3",
                 MillisInput {
                     label: "Run duration",

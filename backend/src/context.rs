@@ -189,6 +189,7 @@ fn update_loop() {
     let mut navigator = Navigator::default();
     let mut actions = Vec::<Action>::new();
     let mut minimap = None; // Override by UI
+    let mut minimap_preset = None; // Override by UI
     let mut character = None; // Override by UI
     let mut buffs = vec![];
     let settings = query_settings(); // Override by UI
@@ -343,6 +344,7 @@ fn update_loop() {
             player: &mut player_state,
             minimap: &mut minimap_state,
             minimap_data: &mut minimap,
+            minimap_data_preset: &mut minimap_preset,
             key_sender: &key_sender,
             key_receiver: &mut key_receiver,
             image_capture: &mut image_capture,

@@ -63,9 +63,10 @@ pub fn Characters() -> Element {
     let coroutine = use_coroutine(
         move |mut rx: UnboundedReceiver<CharacterUpdate>| async move {
             let mut save_character = async move |new_character: Character| {
-                character.set(Some(upsert_character(new_character).await));
-                characters.restart();
-                update_character(character()).await;
+                if let Some(new_character) = upsert_character(new_character).await {
+                    character.set(Some(new_character));
+                    characters.restart();
+                }
             };
 
             while let Some(message) = rx.next().await {
@@ -82,12 +83,14 @@ pub fn Characters() -> Element {
                             ..Character::default()
                         })
                         .await;
+                        update_character(character()).await;
                     }
                     CharacterUpdate::Delete => {
-                        if let Some(character) = character.take() {
-                            delete_character(character).await;
-                            update_character(None).await;
+                        if let Some(current_character) = character()
+                            && delete_character(current_character).await
+                        {
                             characters.restart();
+                            character.set(None);
                         }
                     }
                 }

@@ -65,6 +65,7 @@ pub struct DefaultRequestHandler<'a> {
     pub player: &'a mut PlayerState,
     pub minimap: &'a mut MinimapState,
     pub minimap_data: &'a mut Option<MinimapData>,
+    pub minimap_data_preset: &'a mut Option<String>,
     pub key_sender: &'a broadcast::Sender<KeyBinding>,
     pub key_receiver: &'a mut KeyReceiver,
     pub image_capture: &'a mut ImageCapture,
@@ -251,6 +252,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
 
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: Option<MinimapData>) {
         *self.minimap_data = minimap;
+        *self.minimap_data_preset = preset.clone();
         self.minimap.set_platforms(
             self.minimap_data
                 .as_ref()
@@ -281,7 +283,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         *self.actions = preset
             .and_then(|preset| minimap.actions.get(&preset).cloned())
             .unwrap_or_default();
-        self.navigator.update_destination_path(minimap.path_id);
+        self.navigator.mark_dirty_with_destination(minimap.path_id);
         self.update_rotator_actions();
     }
 
@@ -313,10 +315,6 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         }
 
         path
-    }
-
-    fn on_update_navigation_path(&mut self) {
-        self.navigator.reset();
     }
 
     fn on_update_character(&mut self, character: Option<Character>) {
@@ -582,13 +580,16 @@ fn poll_database_event(handler: &mut DefaultRequestHandler) {
                 .id
                 .expect("valid minimap id if updated from database");
             if Some(id) == handler.minimap_data.as_ref().and_then(|minimap| minimap.id) {
-                todo!()
+                handler.on_update_minimap(handler.minimap_data_preset.clone(), Some(minimap));
             }
         }
         DatabaseEvent::MinimapDeleted(deleted_id) => {
             if Some(deleted_id) == handler.minimap_data.as_ref().and_then(|minimap| minimap.id) {
                 handler.on_update_minimap(None, None);
             }
+        }
+        DatabaseEvent::NavigationPathUpdated | DatabaseEvent::NavigationPathDeleted => {
+            handler.navigator.mark_dirty();
         }
         DatabaseEvent::SettingsUpdated(settings) => handler.on_update_settings(settings),
         DatabaseEvent::CharacterUpdated(character) => {

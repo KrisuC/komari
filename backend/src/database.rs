@@ -62,6 +62,8 @@ static EVENT: LazyLock<Sender<DatabaseEvent>> = LazyLock::new(|| channel(10).0);
 pub enum DatabaseEvent {
     MinimapUpdated(Minimap),
     MinimapDeleted(i64),
+    NavigationPathUpdated,
+    NavigationPathDeleted,
     SettingsUpdated(Settings),
     CharacterUpdated(Character),
     CharacterDeleted(i64),
@@ -1101,11 +1103,15 @@ pub fn query_navigation_paths() -> Result<Vec<NavigationPath>> {
 }
 
 pub fn upsert_navigation_path(path: &mut NavigationPath) -> Result<()> {
-    upsert_to_table(NAVIGATION_PATHS, path)
+    upsert_to_table(NAVIGATION_PATHS, path).inspect(|_| {
+        let _ = EVENT.send(DatabaseEvent::NavigationPathUpdated);
+    })
 }
 
 pub fn delete_navigation_path(path: &NavigationPath) -> Result<()> {
-    delete_from_table(NAVIGATION_PATHS, path)
+    delete_from_table(NAVIGATION_PATHS, path).inspect(|_| {
+        let _ = EVENT.send(DatabaseEvent::NavigationPathDeleted);
+    })
 }
 
 fn map_data<T>(mut stmt: Statement<'_>, params: impl Params) -> Result<Vec<T>>

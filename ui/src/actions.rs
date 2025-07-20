@@ -14,6 +14,7 @@ use backend::{
 use dioxus::prelude::*;
 use futures_util::StreamExt;
 use rand::distr::{Alphanumeric, SampleString};
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
     AppState,
@@ -128,6 +129,7 @@ pub fn Actions() -> Element {
                     if let Some(current_minimap) = upsert_minimap(current_minimap).await {
                         minimap_preset.set(current_minimap.actions.keys().next().cloned());
                         minimap.set(Some(current_minimap));
+                        update_minimap(minimap_preset(), minimap()).await;
                     }
                 }
                 ActionUpdate::Update(actions) => {
@@ -490,8 +492,10 @@ fn SectionPlatforms(
         let mut platform = Platform::default();
         let mut key_receiver = key_receiver().await;
         loop {
-            let Ok(key) = key_receiver.recv().await else {
-                continue;
+            let key = match key_receiver.recv().await {
+                Ok(value) => value,
+                Err(RecvError::Closed) => break,
+                Err(RecvError::Lagged(_)) => continue,
             };
             let Some(settings) = &*settings.peek() else {
                 continue;

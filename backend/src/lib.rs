@@ -92,7 +92,6 @@ enum Request {
     UpdateMinimap(Option<String>, Option<Minimap>),
     CreateNavigationPath,
     RecaptureNavigationPath(NavigationPath),
-    UpdateNavigationPath,
     UpdateCharacter(Option<Character>),
     UpdateSettings(Settings),
     RedetectMinimap,
@@ -123,7 +122,6 @@ enum Response {
     UpdateMinimap,
     CreateNavigationPath(Option<NavigationPath>),
     RecaptureNavigationPath(NavigationPath),
-    UpdateNavigationPath,
     UpdateCharacter,
     UpdateSettings,
     RedetectMinimap,
@@ -154,8 +152,6 @@ pub(crate) trait RequestHandler {
     fn on_create_navigation_path(&self) -> Option<NavigationPath>;
 
     fn on_recapture_navigation_path(&self, path: NavigationPath) -> NavigationPath;
-
-    fn on_update_navigation_path(&mut self);
 
     fn on_update_character(&mut self, character: Option<Character>);
 
@@ -221,6 +217,7 @@ pub enum GameOperation {
     RunUntil(Instant),
 }
 
+/// Starts or stops rotating the actions.
 pub async fn rotate_actions(halting: bool) {
     expect_unit_variant!(
         request(Request::RotateActions(halting)).await,
@@ -233,7 +230,16 @@ pub async fn query_settings() -> Settings {
     spawn_blocking(database::query_settings).await.unwrap()
 }
 
+pub async fn update_settings(settings: Settings) {
+    expect_unit_variant!(
+        request(Request::UpdateSettings(settings)).await,
+        Response::UpdateSettings
+    )
+}
+
 /// Upserts settings to the database.
+///
+/// Returns the updated [`Settings`] or original if fails.
 pub async fn upsert_settings(mut settings: Settings) -> Settings {
     spawn_blocking(move || {
         let _ = database::upsert_settings(&mut settings);
@@ -309,15 +315,25 @@ pub async fn create_navigation_path() -> Option<NavigationPath> {
     )
 }
 
-pub async fn upsert_navigation_path(mut path: NavigationPath) -> NavigationPath {
+/// Upserts `path` to the database.
+///
+/// Returns the updated [`NavigationPath`] on success.
+pub async fn upsert_navigation_path(mut path: NavigationPath) -> Option<NavigationPath> {
     spawn_blocking(move || {
-        let _ = database::upsert_navigation_path(&mut path);
-        path
+        database::upsert_navigation_path(&mut path)
+            .is_ok()
+            .then_some(path)
     })
     .await
     .unwrap()
 }
 
+/// Recaptures snapshots for the provided `path`.
+///
+/// Snapshots include name and minimap will be recaptured and re-assigned to the given `path` if
+/// the minimap is currently detected.
+///
+/// Returns the updated [`NavigationPath`] or original if minimap is currently not detectable.
 pub async fn recapture_navigation_path(path: NavigationPath) -> NavigationPath {
     expect_value_variant!(
         request(Request::RecaptureNavigationPath(path)).await,
@@ -325,19 +341,13 @@ pub async fn recapture_navigation_path(path: NavigationPath) -> NavigationPath {
     )
 }
 
-pub async fn update_navigation_path() {
-    expect_unit_variant!(
-        request(Request::UpdateNavigationPath).await,
-        Response::UpdateNavigationPath
-    )
-}
-
-pub async fn delete_navigation_path(path: NavigationPath) {
-    spawn_blocking(move || {
-        let _ = database::delete_navigation_path(&path);
-    })
-    .await
-    .unwrap();
+/// Deletes `path` from the database.
+///
+/// Returns `true` if `path` was deleted.
+pub async fn delete_navigation_path(path: NavigationPath) -> bool {
+    spawn_blocking(move || database::delete_navigation_path(&path).is_ok())
+        .await
+        .unwrap()
 }
 
 /// Queries characters from the database.
@@ -348,16 +358,17 @@ pub async fn query_characters() -> Option<Vec<Character>> {
         .ok()
 }
 
-/// Upserts character to the database.
+/// Upserts `character` to the database.
 ///
 /// If `character` does not previously exist, a new one will be created and its `id` will
 /// be updated.
 ///
-/// Returns the updated [`Character`] or original if fails.
-pub async fn upsert_character(mut character: Character) -> Character {
+/// Returns the updated [`Character`] on success.
+pub async fn upsert_character(mut character: Character) -> Option<Character> {
     spawn_blocking(move || {
-        let _ = database::upsert_character(&mut character);
-        character
+        database::upsert_character(&mut character)
+            .is_ok()
+            .then_some(character)
     })
     .await
     .unwrap()
@@ -372,19 +383,12 @@ pub async fn update_character(character: Option<Character>) {
 }
 
 /// Deletes `character` from the database.
-pub async fn delete_character(character: Character) {
-    spawn_blocking(move || {
-        let _ = database::delete_character(&character);
-    })
-    .await
-    .unwrap();
-}
-
-pub async fn update_settings(settings: Settings) {
-    expect_unit_variant!(
-        request(Request::UpdateSettings(settings)).await,
-        Response::UpdateSettings
-    )
+///
+/// Returns `true` if the `character` was deleted.
+pub async fn delete_character(character: Character) -> bool {
+    spawn_blocking(move || database::delete_character(&character).is_ok())
+        .await
+        .unwrap()
 }
 
 pub async fn redetect_minimap() {
@@ -469,10 +473,6 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             }
             Request::RecaptureNavigationPath(path) => {
                 Response::RecaptureNavigationPath(handler.on_recapture_navigation_path(path))
-            }
-            Request::UpdateNavigationPath => {
-                handler.on_update_navigation_path();
-                Response::UpdateNavigationPath
             }
             Request::UpdateCharacter(character) => {
                 handler.on_update_character(character);
