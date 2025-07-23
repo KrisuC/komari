@@ -206,7 +206,10 @@ used for auto-mobbing as it can help auto-mobbing as documented in [Auto-mobbing
 (Added in v0.19)
 
 Navigation is a feature to help the player moves to a designated map automatically. The current system only supports
-navigating through map with a visible minimap. There are two main concepts:
+navigating through map(s) using portal(s). There are two main concepts:
+- Paths group: 
+  - Represents a collection of paths
+  - Helps organizing related paths into one groups (e.g. all paths inside Hotel Arcus)
 - Path:
   - Represents a snapshot of a minimap that contains minimap and its name images
   - Contains point(s) (e.g. portal coordinates) that will transition to another path upon moving
@@ -215,25 +218,26 @@ navigating through map with a visible minimap. There are two main concepts:
 
 Navigation paths can be created following this procedure:
 1. Open `Navigation` tab
-2. Note down a list of maps you want to navigate (e.g. Esfera Base Camp -> Esfera Mirror-touched Sea 3)
-3. Go to each map and ensure the minimap is currently detectable
-4. Click `Add path`:
+2. Note down a list of maps you want to navigate (e.g. Esfera's Base Camp -> Esfera's Mirror-touched Sea 3)
+3. Create a paths group with a name (e.g. Esfera)
+4. Go to each map and ensure the minimap is currently detectable
+5. Click `Add path`:
     - Automatically capture the current minimap and its name images
     - Used for matching against other paths to know the player current location
-5. Go to a portal inside the map and click `Add point`:
+6. Go to a portal inside the map and click `Add point`:
     - Automatically record the portal coordinate to be used for navigating
-    - Can optionally select the next path this point will transition to
-6. Repeat from 3. until all paths are added
-7. Select a created map and attach a path to it through `Attached path`
+    - Can optionally select the next paths group and its index (e.g. Path 1, Path 2, ...) this point will transition to
+7. Repeat from 3. until all paths are added
+8. Select a created map and attach a path to it through `Attached paths group` and `Attached path`
 
 After following the above procedure, when clicking `Start`, the bot will try to navigate to the attached path first before 
 rotating the actual actions. Useful for:
 - Bot [run/stop Cycle](#run%2Fstop-cycle) that will stop, go town for a specified duration and start again
 - Navigate back to the original map if accidental map changing occurs
 
-This system is currently experimental and subject to changes. It has many limitations in that it cannot do interaction-based
-navigation (e.g. Maple Guide, teleport, ...) or minimap is not visible. But can serve as a foundation for implementing other 
-features that may require navigation.
+This system is currently experimental and subject to changes. Current limitations include:
+- Cannot do interaction-based navigation
+- Cannot navigate to portal coordinates that make the bot goes into unstucking state
 
 ![Navigation](https://github.com/sasanquaa/komari/blob/master/.github/images/navigation.png?raw=true)
 
