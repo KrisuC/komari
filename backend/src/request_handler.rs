@@ -53,6 +53,7 @@ static GAME_STATE: LazyLock<broadcast::Sender<GameState>> =
     LazyLock::new(|| broadcast::channel(1).0);
 
 // TODO: Add unit tests
+// TODO: Split into smaller handlers or functions first
 pub struct DefaultRequestHandler<'a> {
     pub context: &'a mut Context,
     pub character: &'a mut Option<Character>,
@@ -265,27 +266,11 @@ impl DefaultRequestHandler<'_> {
                 }
             }
         }
-        self.context.operation = match self.context.operation {
-            Operation::HaltUntil(_) => {
-                if settings.cycle_run_stop {
-                    Operation::HaltUntil(
-                        Instant::now() + Duration::from_millis(settings.cycle_stop_duration_millis),
-                    )
-                } else {
-                    Operation::Halting
-                }
-            }
-            Operation::Halting => Operation::Halting,
-            Operation::Running | Operation::RunUntil(_) => {
-                if settings.cycle_run_stop {
-                    Operation::RunUntil(
-                        Instant::now() + Duration::from_millis(settings.cycle_run_duration_millis),
-                    )
-                } else {
-                    Operation::Running
-                }
-            }
-        };
+        self.context.operation = self.context.operation.update_current(
+            settings.cycle_run_stop,
+            settings.cycle_run_duration_millis,
+            settings.cycle_stop_duration_millis,
+        );
         *self.settings = settings;
 
         let Some(character) = self.character else {

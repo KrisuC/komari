@@ -53,6 +53,9 @@ pub enum ControlFlow<T> {
 }
 
 /// Represents a contextual state.
+///
+/// TODO: Apply a minimal ECS where each Contextual can be a system. Components are the
+/// TODO: persistent state and the contextual state itself.
 pub trait Contextual {
     /// The inner state that is persistent through each [`Contextual::update`] tick.
     type Persistent = ();
@@ -136,7 +139,7 @@ impl Context {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Operation {
     HaltUntil(Instant),
     Halting,
@@ -148,6 +151,58 @@ impl Operation {
     #[inline]
     pub fn halting(&self) -> bool {
         matches!(self, Operation::Halting | Operation::HaltUntil(_))
+    }
+
+    pub fn update_current(
+        self,
+        cycle_run_stop: bool,
+        run_duration_millis: u64,
+        stop_duration_millis: u64,
+    ) -> Operation {
+        match self {
+            Operation::HaltUntil(_) => {
+                if cycle_run_stop {
+                    Operation::HaltUntil(
+                        Instant::now() + Duration::from_millis(stop_duration_millis),
+                    )
+                } else {
+                    Operation::Halting
+                }
+            }
+            Operation::Halting => Operation::Halting,
+            Operation::Running | Operation::RunUntil(_) => {
+                if cycle_run_stop {
+                    Operation::RunUntil(Instant::now() + Duration::from_millis(run_duration_millis))
+                } else {
+                    Operation::Running
+                }
+            }
+        }
+    }
+
+    fn update(self, run_duration_millis: u64, stop_duration_millis: u64) -> Operation {
+        match self {
+            // Imply run/stop cycle enabled
+            Operation::HaltUntil(instant) => {
+                let now = Instant::now();
+                if now < instant {
+                    Operation::HaltUntil(instant)
+                } else {
+                    Operation::RunUntil(now + Duration::from_millis(run_duration_millis))
+                }
+            }
+            Operation::Halting => Operation::Halting,
+            Operation::Running => Operation::Running,
+            // Imply run/stop cycle enabled
+            Operation::RunUntil(instant) => {
+                let now = Instant::now();
+                if now < instant {
+                    Operation::RunUntil(instant)
+                } else {
+                    Operation::HaltUntil(now + Duration::from_millis(stop_duration_millis))
+                }
+            }
+        }
     }
 }
 
@@ -261,37 +316,14 @@ fn update_loop() {
         let mat = image_capture.grab().map(OwnedMat::new_from_frame);
         let was_player_alive = !player_state.is_dead();
         let was_player_navigating = navigator.was_last_point_available_or_completed();
-        let mut was_cycled_to_stop = false;
+        let was_running_cycle = matches!(context.operation, Operation::RunUntil(_));
         let detector = mat.map(CachedDetector::new);
 
         context.tick += 1;
-        context.operation = match context.operation {
-            // Imply run/stop cycle enabled
-            Operation::HaltUntil(instant) => {
-                let now = Instant::now();
-                if now < instant {
-                    Operation::HaltUntil(instant)
-                } else {
-                    Operation::RunUntil(
-                        now + Duration::from_millis(settings.borrow().cycle_run_duration_millis),
-                    )
-                }
-            }
-            Operation::Halting => Operation::Halting,
-            Operation::Running => Operation::Running,
-            // Imply run/stop cycle enabled
-            Operation::RunUntil(instant) => {
-                let now = Instant::now();
-                if now < instant {
-                    Operation::RunUntil(instant)
-                } else {
-                    was_cycled_to_stop = true;
-                    Operation::HaltUntil(
-                        now + Duration::from_millis(settings.borrow().cycle_stop_duration_millis),
-                    )
-                }
-            }
-        };
+        context.operation = context.operation.update(
+            settings.borrow().cycle_run_duration_millis,
+            settings.borrow().cycle_stop_duration_millis,
+        );
         if let Some(detector) = detector {
             let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
 
@@ -359,7 +391,7 @@ fn update_loop() {
         handler.poll_request();
 
         // Go to town on stop cycle
-        if was_cycled_to_stop {
+        if was_running_cycle && matches!(handler.context.operation, Operation::HaltUntil(_)) {
             handler.rotator.reset_queue();
             handler.player.clear_actions_aborted(false);
             handler.context.player = Player::Panicking(Panicking::new(PanicTo::Town));
