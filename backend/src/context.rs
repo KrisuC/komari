@@ -410,13 +410,17 @@ fn update_loop() {
             let mut pending_halt_reached = pending_halt.is_some_and(|instant| {
                 Instant::now().duration_since(instant).as_secs() >= PENDING_HALT_SECS
             });
-            if pending_halt_reached && was_player_navigating {
+            if handler.context.did_minimap_changed
+                || (pending_halt_reached && was_player_navigating)
+            {
                 pending_halt_reached = false;
                 pending_halt = None;
             }
 
-            let can_halt_or_notify =
-                pending_halt_reached || (handler.context.did_minimap_changed && !player_panicking);
+            let can_halt_or_notify = pending_halt_reached
+                || (pending_halt.is_none()
+                    && handler.context.did_minimap_changed
+                    && !player_panicking);
             match (
                 player_died,
                 can_halt_or_notify,
