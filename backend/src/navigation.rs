@@ -141,8 +141,12 @@ impl Navigator {
             return false;
         }
 
-        self.last_point_state = Some(self.compute_next_point());
-        match self.last_point_state.as_ref().expect("has value") {
+        let next_point_state = self.compute_next_point();
+        if !matches!(next_point_state, PointState::Dirty) {
+            self.last_point_state = Some(next_point_state.clone());
+        }
+
+        match next_point_state {
             PointState::Dirty => {
                 if context.did_minimap_changed {
                     player.take_priority_action();
@@ -155,8 +159,8 @@ impl Navigator {
                     NavigationTransition::Portal => {
                         if !player.has_priority_action() {
                             let position = Position {
-                                x: *x,
-                                y: *y,
+                                x,
+                                y,
                                 x_random_range: 0,
                                 allow_adjusting: true,
                             };
@@ -264,11 +268,10 @@ impl Navigator {
 
     #[inline]
     pub fn mark_dirty(&mut self) {
-        // Do not reset `base_path` and `current_path` here so that
+        // Do not reset `base_path`, `current_path` and `last_point_state` here so that
         // `update_current_path_from_current_location` will try to reuse that when looking up.
         self.path_dirty = true;
         self.path_dirty_retry_count = 0;
-        self.last_point_state = None;
     }
 
     #[inline]
