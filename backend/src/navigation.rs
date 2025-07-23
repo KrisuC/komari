@@ -30,7 +30,7 @@ use crate::{
 /// This is used for eagerly resolving all of a path's referenced ids.
 #[derive(Clone)]
 struct Path {
-    id: i64,
+    id: String,
     minimap_snapshot_base64: String,
     name_snapshot_base64: String,
     points: Vec<Point>,
@@ -110,7 +110,7 @@ pub struct Navigator {
     path_last_update: Instant,
     /// Cached next point navigation computation.
     last_point_state: Option<PointState>,
-    destination_path_id: Option<i64>,
+    destination_path_id: Option<String>,
 }
 
 impl Default for Navigator {
@@ -196,15 +196,16 @@ impl Navigator {
     }
 
     fn compute_next_point(&self) -> PointState {
-        fn search_point(from: Rc<RefCell<Path>>, to_id: i64) -> Option<Point> {
-            let from_id = from.borrow().id;
+        fn search_point(from: Rc<RefCell<Path>>, to_id: String) -> Option<Point> {
+            let from_id = from.borrow().id.clone();
             let mut visiting_paths = vec![(from, None, None)];
-            let mut came_from = HashMap::<i64, (Option<Rc<RefCell<Path>>>, Option<Point>)>::new();
+            let mut came_from =
+                HashMap::<String, (Option<Rc<RefCell<Path>>>, Option<Point>)>::new();
 
             while let Some((path, from_path, from_point)) = visiting_paths.pop() {
                 let path_borrow = path.borrow();
                 if came_from
-                    .try_insert(path_borrow.id, (from_path, from_point))
+                    .try_insert(path_borrow.id.clone(), (from_path, from_point))
                     .is_err()
                 {
                     continue;
@@ -212,12 +213,12 @@ impl Navigator {
 
                 // Trace back to start_path to find the first point to move
                 if path_borrow.id == to_id {
-                    let mut current = path_borrow.id;
+                    let mut current = path_borrow.id.clone();
                     while let Some((Some(from_path), Some(from_point))) = came_from.get(&current) {
                         if from_path.borrow().id == from_id {
                             return Some(from_point.clone());
                         }
-                        current = from_path.borrow().id;
+                        current = from_path.borrow().id.clone();
                     }
                 }
 
@@ -245,7 +246,7 @@ impl Navigator {
             return PointState::Completed;
         }
 
-        let path_id = self.destination_path_id.expect("has value");
+        let path_id = self.destination_path_id.clone().expect("has value");
         if self
             .current_path
             .as_ref()
@@ -369,10 +370,10 @@ impl Navigator {
         let mut visited_ids = HashSet::new();
 
         for path_id in paths.keys() {
-            if !visited_ids.insert(*path_id) {
+            if !visited_ids.insert(path_id.clone()) {
                 continue;
             }
-            let Ok((base_path, visited)) = build_base_path_from(&paths, *path_id) else {
+            let Ok((base_path, visited)) = build_base_path_from(&paths, path_id.clone()) else {
                 continue;
             };
             visited_ids.extend(visited);
@@ -397,21 +398,21 @@ impl Navigator {
 }
 
 fn build_base_path_from(
-    paths: &HashMap<i64, NavigationPath>,
-    path_id: i64,
-) -> Result<(Rc<RefCell<Path>>, HashSet<i64>)> {
+    paths: &HashMap<String, NavigationPath>,
+    path_id: String,
+) -> Result<(Rc<RefCell<Path>>, HashSet<String>)> {
     let mut visiting_paths = HashMap::new();
     let mut visited_path_ids = HashSet::new();
-    let mut visiting_path_ids = vec![path_id];
+    let mut visiting_path_ids = vec![path_id.clone()];
 
     while let Some(path_id) = visiting_path_ids.pop() {
-        if !visited_path_ids.insert(path_id) {
+        if !visited_path_ids.insert(path_id.clone()) {
             continue;
         }
 
         let path = paths.get(&path_id).expect("exists");
         let inner_path = visiting_paths
-            .entry(path_id)
+            .entry(path_id.clone())
             .or_insert_with(|| {
                 Rc::new(RefCell::new(Path {
                     id: path_id,
@@ -433,7 +434,7 @@ fn build_base_path_from(
                     let path_id = path_id_from_paths_id_index(id, index);
                     let path = paths.get(&path_id).expect("exists");
                     let inner_path = Rc::new(RefCell::new(Path {
-                        id: path_id,
+                        id: path_id.clone(),
                         minimap_snapshot_base64: path.minimap_snapshot_base64.clone(),
                         name_snapshot_base64: path.name_snapshot_base64.clone(),
                         points: vec![],
@@ -477,7 +478,7 @@ fn find_current_from_base_path(
 
     while let Some(path) = visiting_paths.pop() {
         let path_borrow = path.borrow();
-        if !visited_ids.insert(path_borrow.id) {
+        if !visited_ids.insert(path_borrow.id.clone()) {
             continue;
         }
         for point in &path_borrow.points {
@@ -515,8 +516,9 @@ fn decode_base64_to_mat(base64: &str, grayscale: bool) -> Result<Mat> {
     Ok(imdecode(&name_bytes, flag)?)
 }
 
-fn path_id_from_paths_id_index(path_id: i64, index: usize) -> i64 {
-    path_id + index as i64
+#[inline]
+fn path_id_from_paths_id_index(path_id: i64, index: usize) -> String {
+    format!("{path_id}_{index}")
 }
 
 #[cfg(test)]
@@ -588,15 +590,16 @@ mod tests {
         ]);
 
         let paths = HashMap::from_iter([
-            (path_a_id, path_a.clone()),
-            (path_b_id, path_b.clone()),
-            (path_c_id, path_c.clone()),
-            (path_d_id, path_d.clone()),
-            (path_e_id, path_e.clone()),
+            (path_id_from_paths_id_index(path_a_id, 0), path_a.clone()),
+            (path_id_from_paths_id_index(path_b_id, 0), path_b.clone()),
+            (path_id_from_paths_id_index(path_c_id, 0), path_c.clone()),
+            (path_id_from_paths_id_index(path_d_id, 0), path_d.clone()),
+            (path_id_from_paths_id_index(path_e_id, 0), path_e.clone()),
         ]);
 
         // Check structure
-        let (path, _) = build_base_path_from(&paths, path_a_id).expect("success");
+        let (path, _) = build_base_path_from(&paths, path_id_from_paths_id_index(path_a_id, 0))
+            .expect("success");
         let path = path.borrow();
         assert_eq!(path.points.len(), 2);
 
@@ -675,13 +678,13 @@ mod tests {
     fn compute_next_point_when_current_path_matches_destination() {
         let mut navigator = Navigator::default();
         let path = Path {
-            id: 42,
+            id: 42.to_string(),
             minimap_snapshot_base64: "".into(),
             name_snapshot_base64: "".into(),
             points: vec![],
         };
         navigator.current_path = Some(Rc::new(RefCell::new(path.clone())));
-        navigator.destination_path_id = Some(42);
+        navigator.destination_path_id = Some(42.to_string());
         navigator.path_dirty = false;
 
         let result = navigator.compute_next_point();
@@ -693,7 +696,7 @@ mod tests {
     fn compute_next_point_returns_next_point_from_current_path() {
         let mut navigator = Navigator::default();
         let target_path = Path {
-            id: 2,
+            id: 2.to_string(),
             minimap_snapshot_base64: "".into(),
             name_snapshot_base64: "".into(),
             points: vec![],
@@ -705,13 +708,13 @@ mod tests {
             next_path: Some(Rc::new(RefCell::new(target_path.clone()))),
         };
         let path = Path {
-            id: 1,
+            id: 1.to_string(),
             minimap_snapshot_base64: "".into(),
             name_snapshot_base64: "".into(),
             points: vec![point.clone()],
         };
         navigator.current_path = Some(Rc::new(RefCell::new(path.clone())));
-        navigator.destination_path_id = Some(2);
+        navigator.destination_path_id = Some(2.to_string());
         navigator.path_dirty = false;
 
         let result = navigator.compute_next_point();
@@ -721,7 +724,7 @@ mod tests {
                 assert_eq!(x, 100);
                 assert_eq!(y, 200);
                 assert_eq!(transition, NavigationTransition::Portal);
-                assert_eq!(next_path.borrow().id, 2);
+                assert_eq!(next_path.borrow().id, 2.to_string());
             }
             _ => panic!("Unexpected PointState: {result:?}"),
         }
@@ -731,14 +734,14 @@ mod tests {
     fn compute_next_point_unreachable_when_not_in_any_path() {
         let mut navigator = Navigator::default();
         let unrelated_path = Rc::new(RefCell::new(Path {
-            id: 1,
+            id: 1.to_string(),
             minimap_snapshot_base64: "".into(),
             name_snapshot_base64: "".into(),
             points: vec![],
         }));
         navigator.current_path = Some(unrelated_path.clone());
         navigator.base_path = Some(unrelated_path);
-        navigator.destination_path_id = Some(42); // Not present
+        navigator.destination_path_id = Some(42.to_string()); // Not present
         navigator.path_dirty = false;
 
         let result = navigator.compute_next_point();
