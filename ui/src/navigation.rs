@@ -1,7 +1,7 @@
 use backend::{
-    DatabaseEvent, NavigationPath, NavigationPoint, NavigationTransition, create_navigation_path,
-    database_event_receiver, delete_navigation_path, query_navigation_paths,
-    recapture_navigation_path, upsert_minimap, upsert_navigation_path,
+    DatabaseEvent, NavigationPath, NavigationPaths, NavigationPoint, NavigationTransition,
+    create_navigation_path, database_event_receiver, delete_navigation_paths,
+    query_navigation_paths, recapture_navigation_path, upsert_minimap, upsert_navigation_paths,
 };
 use dioxus::prelude::*;
 use futures_util::StreamExt;
@@ -13,13 +13,15 @@ use crate::{
     icons::{DetailsIcon, PositionIcon, XIcon},
     inputs::NumberInputI32,
     popup::Popup,
-    select::Select,
+    select::{Select, TextSelect},
 };
+
+type PathsIdIndex = Option<(i64, usize)>;
 
 #[derive(Debug, Clone, PartialEq)]
 enum NavigationPopup {
-    Snapshots(NavigationPath),
-    Point(NavigationPath, PopupPointValue),
+    Snapshots(NavigationPath, usize),
+    Point(NavigationPath, usize, PopupPointValue),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,11 +32,10 @@ enum PopupPointValue {
 
 #[derive(Debug)]
 enum NavigationUpdate {
-    Update(NavigationPath),
-    Create,
-    Delete(NavigationPath),
-    Recapture(NavigationPath),
-    Attach(Option<i64>),
+    Update(NavigationPaths),
+    Create(String),
+    Delete,
+    Attach(PathsIdIndex),
 }
 
 #[component]
@@ -163,19 +164,31 @@ fn PopupPoint(
 fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
     let position = use_context::<AppState>().position;
     let mut minimap = use_context::<AppState>().minimap;
+
     let mut paths = use_resource(async || query_navigation_paths().await.unwrap_or_default());
-    // TODO: How to better display paths_view that shows some form of grouping? Tarjan what?
     let paths_view = use_memo(move || paths().unwrap_or_default());
-    let path_ids_view = use_memo(move || {
+    let paths_names_view = use_memo(move || {
         paths_view()
             .into_iter()
-            .filter_map(|path| path.id.map(|id| format!("Path {id}")))
+            .map(|paths| paths.name)
             .collect::<Vec<_>>()
     });
-    let minimap_attached_path_index = use_memo(move || {
-        let minimap = minimap();
+
+    let mut selected_paths = use_signal(move || None);
+    let selected_paths_index = use_memo(move || {
+        selected_paths().and_then(|paths: NavigationPaths| {
+            paths_view()
+                .into_iter()
+                .enumerate()
+                .find_map(|(index, paths_view)| (paths_view.id == paths.id).then_some(index))
+        })
+    });
+
+    let minimap_paths_id_index =
+        use_memo(move || minimap().and_then(|minimap| minimap.paths_id_index));
+    let minimap_paths_index = use_memo(move || {
         let paths = paths_view();
-        minimap.and_then(|minimap| minimap.path_id).and_then(|id| {
+        minimap_paths_id_index().and_then(|(id, _)| {
             paths.into_iter().enumerate().find_map(|(index, path)| {
                 if path.id == Some(id) {
                     Some(index + 1) // + 1 for "None"
@@ -185,39 +198,52 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
             })
         })
     });
+    let minimap_paths_index_options = use_memo(move || {
+        minimap_paths_index()
+            .map(|index| index - 1)
+            .and_then(|index| {
+                paths_view
+                    .peek()
+                    .get(index)
+                    .map(|paths| 0..paths.paths.len())
+            })
+            .unwrap_or_default()
+            .map(|index| format!("Path {}", index + 1))
+            .collect::<Vec<_>>()
+    });
 
     let coroutine = use_coroutine(
         move |mut rx: UnboundedReceiver<NavigationUpdate>| async move {
             while let Some(message) = rx.next().await {
                 match message {
-                    NavigationUpdate::Update(path) => {
-                        let _ = upsert_navigation_path(path).await;
+                    NavigationUpdate::Update(paths) => {
+                        if let Some(paths) = upsert_navigation_paths(paths).await {
+                            selected_paths.set(Some(paths));
+                        };
                     }
-                    NavigationUpdate::Create => {
-                        let Some(path) = create_navigation_path().await else {
+                    NavigationUpdate::Create(name) => {
+                        let paths = NavigationPaths {
+                            name,
+                            ..NavigationPaths::default()
+                        };
+                        if let Some(paths) = upsert_navigation_paths(paths).await {
+                            selected_paths.set(Some(paths));
+                        };
+                    }
+                    NavigationUpdate::Delete => {
+                        let Some(paths) = selected_paths() else {
                             continue;
                         };
-                        let _ = upsert_navigation_path(path).await;
-                    }
-                    NavigationUpdate::Delete(path) => {
-                        delete_navigation_path(path).await;
-                    }
-                    NavigationUpdate::Recapture(path) => {
-                        let new_path = recapture_navigation_path(path).await;
-                        let new_path = upsert_navigation_path(new_path).await;
 
-                        if let Some(NavigationPopup::Snapshots(path)) = popup()
-                            && let Some(new_path) = new_path
-                            && path.id == new_path.id
-                        {
-                            popup.set(Some(NavigationPopup::Snapshots(new_path)));
+                        if delete_navigation_paths(paths).await {
+                            selected_paths.set(None);
                         }
                     }
-                    NavigationUpdate::Attach(path_id) => {
+                    NavigationUpdate::Attach(paths_id_index) => {
                         let Some(mut current_minimap) = minimap() else {
                             continue;
                         };
-                        current_minimap.path_id = path_id;
+                        current_minimap.paths_id_index = paths_id_index;
                         if let Some(current_minimap) = upsert_minimap(current_minimap).await {
                             minimap.set(Some(current_minimap));
                         }
@@ -226,32 +252,104 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
             }
         },
     );
-    let on_add_point = use_callback::<NavigationPath, _>(move |path| {
+    let on_add_point = use_callback::<(NavigationPath, usize), _>(move |(path, path_index)| {
         popup.set(Some(NavigationPopup::Point(
             path,
+            path_index,
             PopupPointValue::Add(NavigationPoint {
-                next_path_id: None,
+                next_paths_id_index: None,
                 x: position.peek().0,
                 y: position.peek().1,
                 transition: NavigationTransition::Portal,
             }),
         )));
     });
-    let on_delete_point = use_callback::<(NavigationPath, usize), _>(move |(mut path, index)| {
-        if path.points.get(index).is_some() {
-            path.points.remove(index);
-            coroutine.send(NavigationUpdate::Update(path));
-        }
+    let on_delete_point = use_callback::<(NavigationPath, usize, usize), _>(
+        move |(mut path, path_index, point_index)| {
+            let Some(mut paths) = selected_paths.peek().clone() else {
+                return;
+            };
+            if path.points.get(point_index).is_some() {
+                path.points.remove(point_index);
+            }
+            if let Some(path_mut) = paths.paths.get_mut(path_index) {
+                *path_mut = path;
+                coroutine.send(NavigationUpdate::Update(paths));
+            }
+        },
+    );
+    let on_create_path = use_callback(move |_| async move {
+        let Some(mut paths) = selected_paths() else {
+            return;
+        };
+        let Some(path) = create_navigation_path().await else {
+            return;
+        };
+
+        paths.paths.push(path);
+        coroutine.send(NavigationUpdate::Update(paths));
     });
-    let on_select_path = use_callback::<(NavigationPath, usize, Option<i64>), _>(
-        move |(mut path, point_index, next_path_id)| {
+    let on_delete_path = use_callback::<usize, _>(move |path_index| {
+        let Some(mut paths) = selected_paths.peek().clone() else {
+            return;
+        };
+        paths.paths.remove(path_index);
+        coroutine.send(NavigationUpdate::Update(paths));
+    });
+    let on_select_paths = use_callback::<(NavigationPath, usize, usize, PathsIdIndex), _>(
+        move |(mut path, path_index, point_index, next_paths_id_index)| {
+            let Some(mut paths) = selected_paths.peek().clone() else {
+                return;
+            };
             if let Some(point) = path.points.get_mut(point_index) {
-                point.next_path_id = next_path_id;
-                coroutine.send(NavigationUpdate::Update(path));
+                point.next_paths_id_index = next_paths_id_index;
+            }
+            if let Some(path_mut) = paths.paths.get_mut(path_index) {
+                *path_mut = path;
+                coroutine.send(NavigationUpdate::Update(paths));
             }
         },
     );
 
+    let on_popup_recapture = use_callback(move |(path, path_index)| async move {
+        let Some(mut paths) = selected_paths() else {
+            return;
+        };
+        let new_path = recapture_navigation_path(path).await;
+        if let Some(path_mut) = paths.paths.get_mut(path_index) {
+            *path_mut = new_path.clone();
+        }
+        popup.set(Some(NavigationPopup::Snapshots(new_path, path_index)));
+        coroutine.send(NavigationUpdate::Update(paths));
+    });
+    let on_popup_point = use_callback::<(NavigationPath, usize, PopupPointValue), _>(
+        move |(mut path, path_index, point_value)| {
+            let Some(mut paths) = selected_paths.peek().clone() else {
+                return;
+            };
+            match point_value {
+                PopupPointValue::Add(point) => {
+                    path.points.push(point);
+                }
+                PopupPointValue::Edit(new_point, index) => {
+                    if let Some(point) = path.points.get_mut(index) {
+                        *point = new_point;
+                    }
+                }
+            }
+            if let Some(path_mut) = paths.paths.get_mut(path_index) {
+                *path_mut = path;
+                coroutine.send(NavigationUpdate::Update(paths));
+            }
+        },
+    );
+
+    use_effect(move || {
+        let paths = paths_view();
+        if !paths.is_empty() && selected_paths.peek().is_none() {
+            selected_paths.set(paths.into_iter().next());
+        }
+    });
     use_future(move || async move {
         let mut rx = database_event_receiver();
         loop {
@@ -262,7 +360,7 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
             };
             if matches!(
                 event,
-                DatabaseEvent::NavigationPathUpdated | DatabaseEvent::NavigationPathDeleted
+                DatabaseEvent::NavigationPathsUpdated | DatabaseEvent::NavigationPathsDeleted
             ) {
                 paths.restart();
             }
@@ -273,98 +371,129 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
         Section { name: "Selected map",
             div { class: "grid grid-cols-2",
                 Select {
-                    label: "Attached path",
+                    label: "Attached paths group",
                     disabled: minimap().is_none(),
-                    options: [vec!["None".to_string()], path_ids_view()].concat(),
-                    on_select: move |(path_index, _)| {
-                        let path_id = if path_index == 0 {
+                    options: [vec!["None".to_string()], paths_names_view()].concat(),
+                    on_select: move |(paths_index, _)| {
+                        let next_paths_id = if paths_index == 0 {
                             None
                         } else {
-                            let index = path_index - 1;
+                            let index = paths_index - 1;
                             let paths = paths_view.peek();
-                            paths.get(index).and_then(|path: &NavigationPath| path.id)
+                            paths.get(index).and_then(|path: &NavigationPaths| path.id)
                         };
-                        coroutine.send(NavigationUpdate::Attach(path_id));
+                        let next_paths_id_index = next_paths_id.map(|id| (id, 0));
+                        coroutine.send(NavigationUpdate::Attach(next_paths_id_index));
                     },
-                    selected: minimap_attached_path_index().unwrap_or_default(),
+                    selected: minimap_paths_index().unwrap_or_default(),
                 }
+            }
+            Select::<String> {
+                label: "Attached path",
+                placeholder: "None",
+                disabled: minimap_paths_index().is_none(),
+                options: minimap_paths_index_options(),
+                on_select: move |(path_index, _)| {
+                    let Some((id, _)) = *minimap_paths_id_index.peek() else {
+                        return;
+                    };
+                    coroutine.send(NavigationUpdate::Attach(Some((id, path_index))));
+                },
+                selected: minimap_paths_id_index().map(|(_, index)| index).unwrap_or_default(),
             }
         }
         Section { name: "Paths",
-            div { class: "flex flex-col gap-3",
-                for path in paths_view() {
-                    NavigationPathItem {
-                        path,
-                        paths_view,
-                        on_add_point: move |path| {
-                            on_add_point(path);
-                        },
-                        on_delete_point: move |args| {
-                            on_delete_point(args);
-                        },
-                        on_edit_point: move |(path, point, index)| {
-                            let edit = PopupPointValue::Edit(point, index);
-                            let point = NavigationPopup::Point(path, edit);
-                            popup.set(Some(point));
-                        },
-                        on_select_path: move |args| {
-                            on_select_path(args);
-                        },
-                        on_delete: move |path| {
-                            coroutine.send(NavigationUpdate::Delete(path));
-                        },
-                        on_details: move |path: NavigationPath| {
-                            popup.set(Some(NavigationPopup::Snapshots(path)));
-                        },
+            TextSelect {
+                class: "w-full",
+                options: paths_names_view(),
+                disabled: false,
+                placeholder: "Create a paths group...",
+                on_create: move |name| {
+                    coroutine.send(NavigationUpdate::Create(name));
+                },
+                on_delete: move |_| {
+                    coroutine.send(NavigationUpdate::Delete);
+                },
+                on_select: move |(index, _)| {
+                    let selected: NavigationPaths = paths_view.peek().get(index).cloned().unwrap();
+                    selected_paths.set(Some(selected));
+                },
+                selected: selected_paths_index(),
+            }
+            if let Some(paths) = selected_paths() {
+                div { class: "flex flex-col gap-3",
+                    for (path_index , path) in paths.paths.into_iter().enumerate() {
+                        NavigationPathItem {
+                            path,
+                            path_index,
+                            paths_view,
+                            paths_names_view,
+                            on_add_point: move |path| {
+                                on_add_point((path, path_index));
+                            },
+                            on_delete_point: move |(path, point_index)| {
+                                on_delete_point((path, path_index, point_index));
+                            },
+                            on_edit_point: move |(path, point, index)| {
+                                let edit = PopupPointValue::Edit(point, index);
+                                let point = NavigationPopup::Point(path, path_index, edit);
+                                popup.set(Some(point));
+                            },
+                            on_select_paths: move |(path, point_index, path_ids_index)| {
+                                on_select_paths((path, path_index, point_index, path_ids_index));
+                            },
+                            on_delete_path: move |_| {
+                                on_delete_path(path_index);
+                            },
+                            on_path_details: move |path: NavigationPath| {
+                                popup.set(Some(NavigationPopup::Snapshots(path, path_index)));
+                            },
+                        }
                     }
                 }
-            }
-            Button {
-                text: "Add path",
-                kind: ButtonKind::Secondary,
-                on_click: move |_| {
-                    coroutine.send(NavigationUpdate::Create);
-                },
-                class: "label mt-4",
+                Button {
+                    text: "Add path",
+                    kind: ButtonKind::Secondary,
+                    on_click: move |_| async move {
+                        on_create_path(()).await;
+                    },
+                    class: "label mt-4",
+                }
             }
         }
         if let Some(kind) = popup() {
             match kind {
-                NavigationPopup::Snapshots(path) => rsx! {
-                    PopupSnapshots {
-                        name_base64: path.name_snapshot_base64.clone(),
-                        minimap_base64: path.minimap_snapshot_base64.clone(),
-                        on_recapture: move |_| {
-                            coroutine.send(NavigationUpdate::Recapture(path.clone()));
-                        },
-                        on_cancel: move |_| {
-                            popup.set(None);
-                        },
-                    }
-                },
-                NavigationPopup::Point(path, value) => rsx! {
-                    PopupPoint {
-                        value,
-                        on_save: move |value| {
-                            let mut path = path.clone();
-                            match value {
-                                PopupPointValue::Add(point) => {
-                                    path.points.push(point);
+                NavigationPopup::Snapshots(path, path_index) => {
+                    rsx! {
+                        PopupSnapshots {
+                            name_base64: path.name_snapshot_base64.clone(),
+                            minimap_base64: path.minimap_snapshot_base64.clone(),
+                            on_recapture: move |_| {
+                                let path = path.clone();
+                                async move {
+                                    on_popup_recapture((path, path_index)).await;
                                 }
-                                PopupPointValue::Edit(new_point, index) => {
-                                    if let Some(point) = path.points.get_mut(index) {
-                                        *point = new_point;
-                                    }
-                                }
-                            }
-                            coroutine.send(NavigationUpdate::Update(path));
-                            popup.set(None);
-                        },
-                        on_close: move |_| {
-                            popup.set(None);
-                        },
+                            },
+                            on_cancel: move |_| {
+                                popup.set(None);
+                            },
+                        }
                     }
-                },
+                }
+                NavigationPopup::Point(path, path_index, value) => {
+                    rsx! {
+                        PopupPoint {
+                            value,
+                            on_save: move |value| {
+                                on_popup_point((path.clone(), path_index, value));
+                                popup.set(None);
+                            },
+                            on_close: move |_| {
+                                popup.set(None);
+                            },
+                        }
+                    }
+                }
             }
         }
     }
@@ -375,13 +504,15 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
 #[component]
 fn NavigationPathItem(
     path: NavigationPath,
-    paths_view: Memo<Vec<NavigationPath>>,
+    path_index: usize,
+    paths_view: Memo<Vec<NavigationPaths>>,
+    paths_names_view: Memo<Vec<String>>,
     on_add_point: EventHandler<NavigationPath>,
     on_edit_point: EventHandler<(NavigationPath, NavigationPoint, usize)>,
     on_delete_point: EventHandler<(NavigationPath, usize)>,
-    on_select_path: EventHandler<(NavigationPath, usize, Option<i64>)>,
-    on_delete: EventHandler<NavigationPath>,
-    on_details: EventHandler<NavigationPath>,
+    on_select_paths: EventHandler<(NavigationPath, usize, PathsIdIndex)>,
+    on_delete_path: EventHandler,
+    on_path_details: EventHandler<NavigationPath>,
 ) -> Element {
     #[component]
     fn Icons(on_details: Option<EventHandler>, on_delete: EventHandler) -> Element {
@@ -414,22 +545,43 @@ fn NavigationPathItem(
     }
 
     let path = use_memo(use_reactive!(|path| path));
-    let paths_view = use_memo(move || {
-        let path_id = path().id;
+    let get_point_paths_index = use_callback(move |paths_id| {
         paths_view()
-            .into_iter()
-            .filter(|path| path.id != path_id)
-            .collect::<Vec<_>>()
+            .iter()
+            .enumerate()
+            .find_map(|(index, paths)| {
+                if paths.id == Some(paths_id) {
+                    Some(index + 1)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
     });
-    let path_ids_view = use_memo(move || {
+    let get_point_paths = use_callback(move |paths_id| {
         paths_view()
             .into_iter()
-            .filter_map(|path| path.id.map(|id| format!("Path {id}")))
-            .collect::<Vec<_>>()
+            .find_map(|paths| {
+                if paths.id == Some(paths_id) {
+                    Some(paths.paths)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
+    });
+    let get_point_path_options = use_callback(move |paths_id| {
+        (0..get_point_paths(paths_id).len())
+            .map(|index| format!("Path {}", index + 1))
+            .collect::<Vec<String>>()
+    });
+    // For avoiding too long line
+    let get_point_path_index = use_callback(move |paths_id_index: PathsIdIndex| {
+        paths_id_index.map(|(_, index)| index).unwrap_or_default()
     });
 
     rsx! {
-        div {
+        div { class: "mt-3",
             div { class: "grid grid-cols-2 gap-x-3 group",
                 div { class: "border-b border-gray-600 p-1",
                     img {
@@ -438,16 +590,16 @@ fn NavigationPathItem(
                         src: format!("data:image/png;base64,{}", path().name_snapshot_base64),
                     }
                 }
-                div { class: "grid grid-cols-2 gap-x-2 group",
-                    p { class: "paragraph-xs flex items-center border-b border-gray-600",
-                        {format!("Path {}", path().id.unwrap_or_default())}
+                div { class: "grid grid-cols-3 gap-x-2 group",
+                    p { class: "col-span-2 paragraph-xs flex items-center border-b border-gray-600",
+                        {format!("Path {}", path_index + 1)}
                     }
                     Icons {
                         on_details: move |_| {
-                            on_details(path.peek().clone());
+                            on_path_details(path.peek().clone());
                         },
                         on_delete: move |_| {
-                            on_delete(path.peek().clone());
+                            on_delete_path(());
                         },
                     }
                 }
@@ -466,27 +618,40 @@ fn NavigationPathItem(
                         }
                     }
 
-                    div { class: "grid grid-cols-2 gap-x-2",
+                    div { class: "grid grid-cols-3 gap-x-2",
                         Select::<String> {
                             div_class: "!gap-0",
-                            options: [vec!["None".to_string()], path_ids_view()].concat(),
-                            on_select: move |(path_index, _)| {
-                                let next_path_id = if path_index == 0 {
+                            options: [vec!["None".to_string()], paths_names_view()].concat(),
+                            on_select: move |(paths_index, _)| {
+                                let next_paths_id = if paths_index == 0 {
                                     None
                                 } else {
-                                    let index = path_index - 1;
+                                    let index = paths_index - 1;
                                     let paths = paths_view.peek();
-                                    paths.get(index).and_then(|path: &NavigationPath| path.id)
+                                    paths.get(index).and_then(|path: &NavigationPaths| path.id)
                                 };
-                                on_select_path((path.peek().clone(), index, next_path_id));
+                                let next_paths_id_index = next_paths_id.map(|id| (id, 0));
+                                on_select_paths((path.peek().clone(), index, next_paths_id_index));
                             },
-                            selected: if let Some(id) = point.next_path_id { paths_view()
-                                .iter()
-                                .enumerate()
-                                .find_map(|(index, path)| {
-                                    if path.id == Some(id) { Some(index + 1) } else { None }
-                                })
-                                .unwrap_or_default() } else { 0 },
+                            selected: point
+                                .next_paths_id_index
+                                .map(|(id, _)| get_point_paths_index(id))
+                                .unwrap_or_default(),
+                        }
+                        Select::<String> {
+                            div_class: "!gap-0",
+                            placeholder: "None",
+                            options: point
+                                .next_paths_id_index
+                                .map(|(id, _)| get_point_path_options(id))
+                                .unwrap_or_default(),
+                            on_select: move |(path_index, _)| {
+                                let next_paths_id_index = point
+                                    .next_paths_id_index
+                                    .map(|(id, _)| (id, path_index));
+                                on_select_paths((path.peek().clone(), index, next_paths_id_index));
+                            },
+                            selected: get_point_path_index(point.next_paths_id_index),
                         }
                         Icons {
                             on_delete: move |_| {

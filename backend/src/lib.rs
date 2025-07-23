@@ -48,8 +48,8 @@ pub use {
         ActionKeyDirection, ActionKeyWith, ActionMove, Bound, CaptureMode, Character, Class,
         DatabaseEvent, EliteBossBehavior, FamiliarRarity, Familiars, InputMethod, KeyBinding,
         KeyBindingConfiguration, LinkKeyBinding, Minimap, MobbingKey, NavigationPath,
-        NavigationPoint, NavigationTransition, Notifications, Platform, Position, PotionMode,
-        RotationMode, Settings, SwappableFamiliars, database_event_receiver,
+        NavigationPaths, NavigationPoint, NavigationTransition, Notifications, Platform, Position,
+        PotionMode, RotationMode, Settings, SwappableFamiliars, database_event_receiver,
     },
     pathing::MAX_PLATFORMS_COUNT,
     rotator::RotatorMode,
@@ -287,7 +287,7 @@ pub async fn delete_minimap(minimap: Minimap) -> bool {
 }
 
 /// Queries navigation paths from the database.
-pub async fn query_navigation_paths() -> Option<Vec<NavigationPath>> {
+pub async fn query_navigation_paths() -> Option<Vec<NavigationPaths>> {
     spawn_blocking(database::query_navigation_paths)
         .await
         .unwrap()
@@ -295,8 +295,6 @@ pub async fn query_navigation_paths() -> Option<Vec<NavigationPath>> {
 }
 
 /// Creates a navigation path from currently detected minimap.
-///
-/// This function does not insert the created path into the database.
 pub async fn create_navigation_path() -> Option<NavigationPath> {
     expect_value_variant!(
         request(Request::CreateNavigationPath).await,
@@ -304,14 +302,14 @@ pub async fn create_navigation_path() -> Option<NavigationPath> {
     )
 }
 
-/// Upserts `path` to the database.
+/// Upserts `paths` to the database.
 ///
-/// Returns the updated [`NavigationPath`] on success.
-pub async fn upsert_navigation_path(mut path: NavigationPath) -> Option<NavigationPath> {
+/// Returns the updated [`NavigationPaths`] on success.
+pub async fn upsert_navigation_paths(mut paths: NavigationPaths) -> Option<NavigationPaths> {
     spawn_blocking(move || {
-        database::upsert_navigation_path(&mut path)
+        database::upsert_navigation_paths(&mut paths)
             .is_ok()
-            .then_some(path)
+            .then_some(paths)
     })
     .await
     .unwrap()
@@ -330,11 +328,11 @@ pub async fn recapture_navigation_path(path: NavigationPath) -> NavigationPath {
     )
 }
 
-/// Deletes `path` from the database.
+/// Deletes `paths` from the database.
 ///
-/// Returns `true` if `path` was deleted.
-pub async fn delete_navigation_path(path: NavigationPath) -> bool {
-    spawn_blocking(move || database::delete_navigation_path(&path).is_ok())
+/// Returns `true` if `paths` was deleted.
+pub async fn delete_navigation_paths(paths: NavigationPaths) -> bool {
+    spawn_blocking(move || database::delete_navigation_paths(&paths).is_ok())
         .await
         .unwrap()
 }

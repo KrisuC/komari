@@ -349,7 +349,8 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         *self.actions = preset
             .and_then(|preset| minimap.actions.get(&preset).cloned())
             .unwrap_or_default();
-        self.navigator.mark_dirty_with_destination(minimap.path_id);
+        self.navigator
+            .mark_dirty_with_destination(minimap.paths_id_index);
         self.update_rotator_actions();
     }
 
@@ -358,7 +359,6 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             extract_minimap_and_name_base64(self.context)
         {
             Some(NavigationPath {
-                id: None,
                 minimap_snapshot_base64: minimap_base64,
                 name_snapshot_base64: name_base64,
                 name_snapshot_width: name_bbox.width,
@@ -588,7 +588,7 @@ fn poll_database_event(handler: &mut DefaultRequestHandler) {
                 handler.on_update_minimap(None, None);
             }
         }
-        DatabaseEvent::NavigationPathUpdated | DatabaseEvent::NavigationPathDeleted => {
+        DatabaseEvent::NavigationPathsUpdated | DatabaseEvent::NavigationPathsDeleted => {
             handler.navigator.mark_dirty();
         }
         DatabaseEvent::SettingsUpdated(settings) => handler.update_settings(settings),

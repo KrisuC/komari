@@ -62,8 +62,8 @@ static EVENT: LazyLock<Sender<DatabaseEvent>> = LazyLock::new(|| channel(10).0);
 pub enum DatabaseEvent {
     MinimapUpdated(Minimap),
     MinimapDeleted(i64),
-    NavigationPathUpdated,
-    NavigationPathDeleted,
+    NavigationPathsUpdated,
+    NavigationPathsDeleted,
     SettingsUpdated(Settings),
     CharacterUpdated(Character),
     CharacterDeleted(i64),
@@ -580,16 +580,25 @@ pub struct Minimap {
     pub auto_mob_platforms_bound: bool,
     pub actions_any_reset_on_erda_condition: bool,
     pub actions: HashMap<String, Vec<Action>>,
+    // Not FK, loose coupling to another navigation paths and its index
     #[serde(default)]
-    pub path_id: Option<i64>, // Not FK, loose coupling to another path
+    pub paths_id_index: Option<(i64, usize)>,
 }
 
 impl_identifiable!(Minimap);
 
 #[derive(PartialEq, Clone, Debug, Default, Serialize, Deserialize)]
-pub struct NavigationPath {
+pub struct NavigationPaths {
     #[serde(skip_serializing, default)]
     pub id: Option<i64>,
+    pub name: String,
+    pub paths: Vec<NavigationPath>,
+}
+
+impl_identifiable!(NavigationPaths);
+
+#[derive(PartialEq, Clone, Debug, Default, Serialize, Deserialize)]
+pub struct NavigationPath {
     pub minimap_snapshot_base64: String,
     pub name_snapshot_base64: String,
     pub name_snapshot_width: i32,
@@ -597,11 +606,10 @@ pub struct NavigationPath {
     pub points: Vec<NavigationPoint>,
 }
 
-impl_identifiable!(NavigationPath);
-
 #[derive(PartialEq, Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct NavigationPoint {
-    pub next_path_id: Option<i64>, // Not FK, loose coupling to another navigation path
+    // Not FK, loose coupling to another navigation paths and its index
+    pub next_paths_id_index: Option<(i64, usize)>,
     pub x: i32,
     pub y: i32,
     pub transition: NavigationTransition,
@@ -1098,19 +1106,19 @@ pub fn delete_minimap(minimap: &Minimap) -> Result<()> {
     })
 }
 
-pub fn query_navigation_paths() -> Result<Vec<NavigationPath>> {
+pub fn query_navigation_paths() -> Result<Vec<NavigationPaths>> {
     query_from_table(NAVIGATION_PATHS)
 }
 
-pub fn upsert_navigation_path(path: &mut NavigationPath) -> Result<()> {
-    upsert_to_table(NAVIGATION_PATHS, path).inspect(|_| {
-        let _ = EVENT.send(DatabaseEvent::NavigationPathUpdated);
+pub fn upsert_navigation_paths(paths: &mut NavigationPaths) -> Result<()> {
+    upsert_to_table(NAVIGATION_PATHS, paths).inspect(|_| {
+        let _ = EVENT.send(DatabaseEvent::NavigationPathsUpdated);
     })
 }
 
-pub fn delete_navigation_path(path: &NavigationPath) -> Result<()> {
-    delete_from_table(NAVIGATION_PATHS, path).inspect(|_| {
-        let _ = EVENT.send(DatabaseEvent::NavigationPathDeleted);
+pub fn delete_navigation_paths(paths: &NavigationPaths) -> Result<()> {
+    delete_from_table(NAVIGATION_PATHS, paths).inspect(|_| {
+        let _ = EVENT.send(DatabaseEvent::NavigationPathsDeleted);
     })
 }
 

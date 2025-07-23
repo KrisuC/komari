@@ -17,7 +17,7 @@ use opencv::{
 };
 
 use crate::{
-    ActionKeyDirection, ActionKeyWith, KeyBinding, Position,
+    ActionKeyDirection, ActionKeyWith, KeyBinding, NavigationPaths, Position,
     context::Context,
     database::{NavigationPath, NavigationTransition, query_navigation_paths},
     detect::Detector,
@@ -77,14 +77,14 @@ enum UpdateState {
 /// This helps abstracting out database and useful for tests.
 #[cfg_attr(test, automock)]
 pub trait NavigatorDataSource: Debug + 'static {
-    fn query_paths(&self) -> Result<Vec<NavigationPath>>;
+    fn query_paths(&self) -> Result<Vec<NavigationPaths>>;
 }
 
 #[derive(Debug)]
 struct DefaultNavigatorDataSource;
 
 impl NavigatorDataSource for DefaultNavigatorDataSource {
-    fn query_paths(&self) -> Result<Vec<NavigationPath>> {
+    fn query_paths(&self) -> Result<Vec<NavigationPaths>> {
         query_navigation_paths()
     }
 }
@@ -93,7 +93,7 @@ impl NavigatorDataSource for DefaultNavigatorDataSource {
 #[derive(Debug)]
 pub struct Navigator {
     // TODO: Cache mat?
-    /// Data source for querying [`NavigationPath`]s.
+    /// Data source for querying [`NavigationPaths`]s.
     source: Box<dyn NavigatorDataSource>,
     /// Base path to search for navigation points.
     base_path: Option<Rc<RefCell<Path>>>,
@@ -272,8 +272,9 @@ impl Navigator {
     }
 
     #[inline]
-    pub fn mark_dirty_with_destination(&mut self, path_id: Option<i64>) {
-        self.destination_path_id = path_id;
+    pub fn mark_dirty_with_destination(&mut self, paths_id_index: Option<(i64, usize)>) {
+        self.destination_path_id =
+            paths_id_index.map(|(id, index)| path_id_from_paths_id_index(id, index));
         self.mark_dirty();
     }
 
@@ -353,7 +354,14 @@ impl Navigator {
             .query_paths()
             .unwrap_or_default()
             .into_iter()
-            .map(|path| (path.id.expect("valid id"), path))
+            .flat_map(|paths| {
+                let paths_id = paths.id.expect("valid id");
+                paths
+                    .paths
+                    .into_iter()
+                    .enumerate()
+                    .map(move |(index, path)| (path_id_from_paths_id_index(paths_id, index), path))
+            })
             .collect::<HashMap<_, _>>();
         let mut visited_ids = HashSet::new();
 
@@ -413,11 +421,13 @@ fn build_base_path_from(
 
         for point in path.points.iter().copied() {
             let next_path = point
-                .next_path_id
+                .next_paths_id_index
+                .map(|(id, index)| path_id_from_paths_id_index(id, index))
                 .as_ref()
                 .and_then(|path_id| visiting_paths.get(path_id).cloned())
                 .or_else(|| {
-                    let path_id = point.next_path_id?;
+                    let (id, index) = point.next_paths_id_index?;
+                    let path_id = path_id_from_paths_id_index(id, index);
                     let path = paths.get(&path_id).expect("exists");
                     let inner_path = Rc::new(RefCell::new(Path {
                         id: path_id,
@@ -437,7 +447,10 @@ fn build_base_path_from(
                 transition: point.transition,
             });
 
-            if let Some(id) = point.next_path_id {
+            if let Some(id) = point
+                .next_paths_id_index
+                .map(|(id, index)| path_id_from_paths_id_index(id, index))
+            {
                 visiting_path_ids.push(id);
             }
         }
@@ -499,6 +512,10 @@ fn decode_base64_to_mat(base64: &str, grayscale: bool) -> Result<Mat> {
     Ok(imdecode(&name_bytes, flag)?)
 }
 
+fn path_id_from_paths_id_index(path_id: i64, index: usize) -> i64 {
+    path_id + index as i64
+}
+
 #[cfg(test)]
 mod tests {
     use std::assert_matches::assert_matches;
@@ -506,9 +523,8 @@ mod tests {
     use super::*;
     use crate::{database::NavigationPoint, detect::MockDetector, minimap::MinimapIdle};
 
-    fn mock_navigation_path(id: Option<i64>, points: Vec<NavigationPoint>) -> NavigationPath {
+    fn mock_navigation_path(points: Vec<NavigationPoint>) -> NavigationPath {
         NavigationPath {
-            id,
             minimap_snapshot_base64: "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAb0lEQVR4nGKZpBfKAANX6s3hbO6+y3D2GsV5cDYTA4mA9hoYDx3LgHP4LynD2UckjOHsp3c/0NFJJGtg2eR5B865XhcBZ7deQMRP0Y0ndHQS6fGgxGsL5+xSXAxnv+tYBGfnBryjo5NI1gAIAAD//9O1GVeWUw0pAAAAAElFTkSuQmCC".to_string(),
             name_snapshot_base64: "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAb0lEQVR4nGKZpBfKAANX6s3hbO6+y3D2GsV5cDYTA4mA9hoYDx3LgHP4LynD2UckjOHsp3c/0NFJJGtg2eR5B865XhcBZ7deQMRP0Y0ndHQS6fGgxGsL5+xSXAxnv+tYBGfnBryjo5NI1gAIAAD//9O1GVeWUw0pAAAAAElFTkSuQmCC".to_string(),
             name_snapshot_width: 2,
@@ -520,62 +536,53 @@ mod tests {
     #[test]
     fn build_base_path_from_valid_navigation_tree() {
         let path_d_id = 4;
-        let path_d = mock_navigation_path(Some(path_d_id), vec![]);
+        let path_d = mock_navigation_path(vec![]);
 
         let path_e_id = 5;
-        let path_e = mock_navigation_path(Some(path_e_id), vec![]);
+        let path_e = mock_navigation_path(vec![]);
 
         // Path C → E
         let path_c_id = 3;
-        let path_c = mock_navigation_path(
-            Some(path_c_id),
-            vec![NavigationPoint {
-                next_path_id: Some(path_e_id),
-                x: 30,
-                y: 30,
-                transition: NavigationTransition::Portal,
-            }],
-        );
+        let path_c = mock_navigation_path(vec![NavigationPoint {
+            next_paths_id_index: Some((path_e_id, 0)),
+            x: 30,
+            y: 30,
+            transition: NavigationTransition::Portal,
+        }]);
 
         let path_a_id = 1;
         // Path B → A, C
         let path_b_id = 2;
-        let path_b = mock_navigation_path(
-            Some(path_b_id),
-            vec![
-                NavigationPoint {
-                    next_path_id: Some(path_c_id),
-                    x: 20,
-                    y: 20,
-                    transition: NavigationTransition::Portal,
-                },
-                NavigationPoint {
-                    next_path_id: Some(path_a_id),
-                    x: 10,
-                    y: 10,
-                    transition: NavigationTransition::Portal,
-                },
-            ],
-        );
+        let path_b = mock_navigation_path(vec![
+            NavigationPoint {
+                next_paths_id_index: Some((path_c_id, 0)),
+                x: 20,
+                y: 20,
+                transition: NavigationTransition::Portal,
+            },
+            NavigationPoint {
+                next_paths_id_index: Some((path_a_id, 0)),
+                x: 10,
+                y: 10,
+                transition: NavigationTransition::Portal,
+            },
+        ]);
 
         // Path A → B, D
-        let path_a = mock_navigation_path(
-            Some(path_a_id),
-            vec![
-                NavigationPoint {
-                    next_path_id: Some(path_d_id),
-                    x: 11,
-                    y: 10,
-                    transition: NavigationTransition::Portal,
-                },
-                NavigationPoint {
-                    next_path_id: Some(path_b_id),
-                    x: 10,
-                    y: 10,
-                    transition: NavigationTransition::Portal,
-                },
-            ],
-        );
+        let path_a = mock_navigation_path(vec![
+            NavigationPoint {
+                next_paths_id_index: Some((path_d_id, 0)),
+                x: 11,
+                y: 10,
+                transition: NavigationTransition::Portal,
+            },
+            NavigationPoint {
+                next_paths_id_index: Some((path_b_id, 0)),
+                x: 10,
+                y: 10,
+                transition: NavigationTransition::Portal,
+            },
+        ]);
 
         let paths = HashMap::from_iter([
             (path_a_id, path_a.clone()),
@@ -754,18 +761,23 @@ mod tests {
         context.minimap = Minimap::Idle(minimap);
 
         let point = NavigationPoint {
-            next_path_id: None,
+            next_paths_id_index: None,
             x: 5,
             y: 5,
             transition: NavigationTransition::Portal,
         };
 
-        let mock_path = mock_navigation_path(Some(1), vec![point]);
+        let mock_path = mock_navigation_path(vec![point]);
+        let mock_paths = NavigationPaths {
+            id: Some(5),
+            name: "Name".to_string(),
+            paths: vec![mock_path],
+        };
 
         let mut mock_source = MockNavigatorDataSource::new();
         mock_source
             .expect_query_paths()
-            .returning(move || Ok(vec![mock_path.clone()]));
+            .returning(move || Ok(vec![mock_paths.clone()]));
 
         let mut navigator = Navigator::new(mock_source);
 
