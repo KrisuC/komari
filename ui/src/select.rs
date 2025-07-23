@@ -11,7 +11,7 @@ use crate::{
 // Pre-styled
 const INPUT_LABEL_CLASS: &str = "label";
 const INPUT_DIV_CLASS: &str = "flex flex-col gap-1";
-const INPUT_SELECT_CLASS: &str = "items-center picker:scroll-bar paragraph-xs outline-none px-1 border border-gray-600 disabled:text-gray-600 disabled:cursor-not-allowed";
+const INPUT_SELECT_CLASS: &str = "items-center picker:scroll-bar paragraph-xs outline-none px-1 border border-gray-600 disabled:text-gray-600 disabled:cursor-not-allowed whitespace-nowrap text-ellipsis";
 const INPUT_OPTION_CLASS: &str = "bg-gray-900 paragraph-xs pl-1 pr-2 hover:bg-gray-800";
 
 #[derive(PartialEq, Props, Clone)]
@@ -122,7 +122,7 @@ pub fn TextSelect(
                 } else {
                     Select {
                         div_class: "relative h-full",
-                        select_class: "absolute inset-0 whitespace-nowrap text-ellipsis px-1 w-full h-full border border-gray-600 paragraph-xs outline-none items-center",
+                        select_class: "absolute inset-0 px-1 w-full h-full border border-gray-600 paragraph-xs outline-none items-center",
                         option_class: "paragraph-xs bg-gray-900 px-2 hover:bg-gray-800",
                         disabled: select_or_delete_disabled,
                         placeholder,

@@ -369,7 +369,7 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
 
     rsx! {
         Section { name: "Selected map",
-            div { class: "grid grid-cols-2",
+            div { class: "grid grid-cols-2 gap-3",
                 Select {
                     label: "Attached paths group",
                     disabled: minimap().is_none(),
@@ -387,19 +387,19 @@ fn SectionPaths(popup: Signal<Option<NavigationPopup>>) -> Element {
                     },
                     selected: minimap_paths_index().unwrap_or_default(),
                 }
-            }
-            Select::<String> {
-                label: "Attached path",
-                placeholder: "None",
-                disabled: minimap_paths_index().is_none(),
-                options: minimap_paths_index_options(),
-                on_select: move |(path_index, _)| {
-                    let Some((id, _)) = *minimap_paths_id_index.peek() else {
-                        return;
-                    };
-                    coroutine.send(NavigationUpdate::Attach(Some((id, path_index))));
-                },
-                selected: minimap_paths_id_index().map(|(_, index)| index).unwrap_or_default(),
+                Select::<String> {
+                    label: "Attached path",
+                    placeholder: "None",
+                    disabled: minimap_paths_index().is_none(),
+                    options: minimap_paths_index_options(),
+                    on_select: move |(path_index, _)| {
+                        let Some((id, _)) = *minimap_paths_id_index.peek() else {
+                            return;
+                        };
+                        coroutine.send(NavigationUpdate::Attach(Some((id, path_index))));
+                    },
+                    selected: minimap_paths_id_index().map(|(_, index)| index).unwrap_or_default(),
+                }
             }
         }
         Section { name: "Paths",
