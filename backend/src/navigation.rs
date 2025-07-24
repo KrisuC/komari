@@ -148,7 +148,7 @@ impl Navigator {
 
         match next_point_state {
             PointState::Dirty => {
-                if context.did_minimap_changed {
+                if context.tick_changed_minimap {
                     player.take_priority_action();
                 }
                 false
@@ -286,7 +286,7 @@ impl Navigator {
     pub fn update(&mut self, context: &Context) {
         const UPDATE_RETRY_MAX_COUNT: u32 = 3;
 
-        if context.did_minimap_changed {
+        if context.tick_changed_minimap {
             self.mark_dirty();
         }
         if self.path_dirty {

@@ -34,10 +34,10 @@ mod navigation;
 mod network;
 mod pathing;
 mod player;
-mod request_handler;
 mod rng;
 mod rotator;
 mod rpc;
+mod services;
 mod skill;
 mod task;
 
@@ -96,6 +96,7 @@ enum Request {
     RedetectMinimap,
     GameStateReceiver,
     KeyReceiver,
+    RefreshCaptureHandles,
     QueryCaptureHandles,
     SelectCaptureHandle(Option<usize>),
     #[cfg(debug_assertions)]
@@ -125,6 +126,7 @@ enum Response {
     RedetectMinimap,
     GameStateReceiver(broadcast::Receiver<GameState>),
     KeyReceiver(broadcast::Receiver<KeyBinding>),
+    RefreshCaptureHandles,
     QueryCaptureHandles((Vec<String>, Option<usize>)),
     SelectCaptureHandle,
     #[cfg(debug_assertions)]
@@ -159,7 +161,9 @@ pub(crate) trait RequestHandler {
 
     fn on_key_receiver(&self) -> broadcast::Receiver<KeyBinding>;
 
-    fn on_query_capture_handles(&mut self) -> (Vec<String>, Option<usize>);
+    fn on_refresh_capture_handles(&mut self);
+
+    fn on_query_capture_handles(&self) -> (Vec<String>, Option<usize>);
 
     fn on_select_capture_handle(&mut self, index: Option<usize>);
 
@@ -167,13 +171,13 @@ pub(crate) trait RequestHandler {
     fn on_capture_image(&self, is_grayscale: bool);
 
     #[cfg(debug_assertions)]
-    fn on_infer_rune(&mut self);
+    fn on_infer_rune(&self);
 
     #[cfg(debug_assertions)]
     fn on_infer_minimap(&self);
 
     #[cfg(debug_assertions)]
-    fn on_record_images(&mut self, start: bool);
+    fn on_record_images(&self, start: bool);
 
     #[cfg(debug_assertions)]
     fn on_test_spin_rune(&self);
@@ -473,6 +477,10 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
                 Response::GameStateReceiver(handler.on_game_state_receiver())
             }
             Request::KeyReceiver => Response::KeyReceiver(handler.on_key_receiver()),
+            Request::RefreshCaptureHandles => {
+                handler.on_refresh_capture_handles();
+                Response::RefreshCaptureHandles
+            }
             Request::QueryCaptureHandles => {
                 Response::QueryCaptureHandles(handler.on_query_capture_handles())
             }
@@ -512,10 +520,6 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
 
 async fn request(request: Request) -> Response {
     let (tx, rx) = oneshot::channel();
-    LazyLock::force(&REQUESTS)
-        .0
-        .send((request, tx))
-        .await
-        .unwrap();
+    REQUESTS.0.send((request, tx)).await.unwrap();
     rx.await.unwrap()
 }

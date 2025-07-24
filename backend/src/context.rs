@@ -14,29 +14,26 @@ use opencv::{
     core::{Vector, VectorToVec},
     imgcodecs::imencode_def,
 };
-use platforms::windows::{self, Handle, KeyInputKind, KeyReceiver};
+use platforms::windows::{self};
 use strum::IntoEnumIterator;
-use tokio::sync::broadcast;
 
+#[cfg(test)]
+use crate::{Settings, bridge::MockKeySender, detect::MockDetector};
 use crate::{
-    Action,
-    bridge::{DefaultKeySender, ImageCapture, ImageCaptureKind, KeySender, KeySenderMethod},
+    bridge::{DefaultKeySender, KeySender},
     buff::{Buff, BuffKind, BuffState},
-    database::{CaptureMode, InputMethod, KeyBinding, query_seeds, query_settings},
-    database_event_receiver,
+    database::{query_seeds, query_settings},
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
     navigation::Navigator,
     network::{DiscordNotification, NotificationKind},
     player::{PanicTo, Panicking, Player, PlayerState},
-    request_handler::DefaultRequestHandler,
     rng::Rng,
     rotator::Rotator,
+    services::{DefaultService, PollArgs},
     skill::{Skill, SkillKind, SkillState},
 };
-#[cfg(test)]
-use crate::{Settings, bridge::MockKeySender, detect::MockDetector};
 
 const FPS: u32 = 30;
 const PENDING_HALT_SECS: u64 = 12;
@@ -75,12 +72,9 @@ pub trait Contextual {
 /// A struct that stores the game information.
 #[derive(Debug)]
 pub struct Context {
-    /// The `MapleStory` class game handle.
-    ///
-    /// This is always the default game handle (e.g. MapleStoryClass).
-    pub handle: Handle,
     /// A struct to send key inputs.
     pub keys: Box<dyn KeySender>,
+    /// A struct for generating random values.
     pub rng: Rng,
     /// A struct for sending notifications through web hook.
     pub notification: DiscordNotification,
@@ -103,14 +97,13 @@ pub struct Context {
     /// This is increased on each update tick.
     pub tick: u64,
     /// Whether minimap changed to detecting on the current tick.
-    pub did_minimap_changed: bool,
+    pub tick_changed_minimap: bool,
 }
 
 impl Context {
     #[cfg(test)]
     pub fn new(keys: Option<MockKeySender>, detector: Option<MockDetector>) -> Self {
         Context {
-            handle: Handle::new(""),
             keys: Box::new(keys.unwrap_or_default()),
             rng: Rng::new(rand::random()),
             notification: DiscordNotification::new(Rc::new(RefCell::new(Settings::default()))),
@@ -121,7 +114,7 @@ impl Context {
             buffs: [Buff::No; BuffKind::COUNT],
             operation: Operation::Running,
             tick: 0,
-            did_minimap_changed: false,
+            tick_changed_minimap: false,
         }
     }
 
@@ -236,51 +229,15 @@ pub fn init() {
 
 #[inline]
 fn update_loop() {
-    // MapleStoryClass <- GMS
-    // MapleStoryClassSG <- MSEA
-    // MapleStoryClassTW <- TMS
-    let handle = Handle::new("MapleStoryClass");
-    let mut rotator = Rotator::default();
-    let mut navigator = Navigator::default();
-    let mut actions = Vec::<Action>::new();
-    let mut minimap = None; // Override by UI
-    let mut minimap_preset = None; // Override by UI
-    let mut character = None; // Override by UI
-    let mut buffs = vec![];
-    let settings = query_settings();
+    let settings = Rc::new(RefCell::new(query_settings()));
     let seeds = query_seeds(); // Fixed, unchanged
     let rng = Rng::new(seeds.seed); // Create one for Context
+    let (mut service, keys, mut capture) = DefaultService::new(seeds, settings.clone());
 
-    let key_sender_method = if let InputMethod::Rpc = settings.input_method {
-        KeySenderMethod::Rpc(handle, settings.input_method_rpc_server_url.clone())
-    } else {
-        match settings.capture_mode {
-            CaptureMode::BitBlt | CaptureMode::WindowsGraphicsCapture => {
-                KeySenderMethod::Default(handle, KeyInputKind::Fixed)
-            }
-            // This shouldn't matter because we have to get the Handle from the box capture anyway
-            CaptureMode::BitBltArea => KeySenderMethod::Default(handle, KeyInputKind::Foreground),
-        }
-    };
-    let mut keys = DefaultKeySender::new(key_sender_method, seeds);
-    let key_sender = broadcast::channel::<KeyBinding>(1).0; // Callback to UI
-    let mut key_receiver = KeyReceiver::new(handle, KeyInputKind::Fixed);
-
-    let mut capture_handles = Vec::<(String, Handle)>::new();
-    let mut selected_capture_handle = None;
-    let mut image_capture = ImageCapture::new(handle, settings.capture_mode);
-    if let ImageCaptureKind::BitBltArea(capture) = image_capture.kind() {
-        key_receiver = KeyReceiver::new(capture.handle(), KeyInputKind::Foreground);
-        keys.set_method(KeySenderMethod::Default(
-            capture.handle(),
-            KeyInputKind::Foreground,
-        ));
-    }
-
-    let settings = Rc::new(RefCell::new(settings));
+    let mut rotator = Rotator::default();
+    let mut navigator = Navigator::default();
     let mut context = Context {
-        handle,
-        keys: Box::new(keys),
+        keys,
         rng,
         notification: DiscordNotification::new(settings.clone()),
         detector: None,
@@ -290,7 +247,7 @@ fn update_loop() {
         buffs: [Buff::No; BuffKind::COUNT],
         operation: Operation::Halting,
         tick: 0,
-        did_minimap_changed: false,
+        tick_changed_minimap: false,
     };
     let mut player_state = PlayerState::default();
     let mut minimap_state = MinimapState::default();
@@ -305,15 +262,9 @@ fn update_loop() {
     // specified threshold to pass before determining panicking is needed. This can be beneficial
     // when navigator falsely navigates to a wrong unknown location.
     let mut pending_halt = None;
-    let mut database_event_receiver = database_event_receiver();
-
-    #[cfg(debug_assertions)]
-    let mut recording_images_id = None;
-    #[cfg(debug_assertions)]
-    let mut infering_rune = None;
 
     loop_with_fps(FPS, || {
-        let mat = image_capture.grab().map(OwnedMat::new_from_frame);
+        let mat = capture.grab().map(OwnedMat::new_from_frame);
         let was_player_alive = !player_state.is_dead();
         let was_player_navigating = navigator.was_last_point_available_or_completed();
         let was_running_cycle = matches!(context.operation, Operation::RunUntil(_));
@@ -329,7 +280,7 @@ fn update_loop() {
 
             context.detector = Some(Box::new(detector));
             context.minimap = fold_context(&context, context.minimap, &mut minimap_state);
-            context.did_minimap_changed =
+            context.tick_changed_minimap =
                 was_minimap_idle && matches!(context.minimap, Minimap::Detecting);
             context.player = fold_context(&context, context.player, &mut player_state);
             for (i, state) in skill_states
@@ -362,46 +313,28 @@ fn update_loop() {
         });
 
         // Poll requests, keys and update scheduled notifications frames
-        let mut settings_borrow_mut = settings.borrow_mut();
-        // I know what you are thinking...
-        let mut handler = DefaultRequestHandler {
+        service.poll(PollArgs {
             context: &mut context,
-            character: &mut character,
-            settings: &mut settings_borrow_mut,
-            buffs: &mut buffs,
-            buff_states: &mut buff_states,
-            actions: &mut actions,
-            rotator: &mut rotator,
-            navigator: &mut navigator,
             player: &mut player_state,
             minimap: &mut minimap_state,
-            minimap_data: &mut minimap,
-            minimap_data_preset: &mut minimap_preset,
-            key_sender: &key_sender,
-            key_receiver: &mut key_receiver,
-            image_capture: &mut image_capture,
-            capture_handles: &mut capture_handles,
-            selected_capture_handle: &mut selected_capture_handle,
-            database_event_receiver: &mut database_event_receiver,
-            #[cfg(debug_assertions)]
-            recording_images_id: &mut recording_images_id,
-            #[cfg(debug_assertions)]
-            infering_rune: &mut infering_rune,
-        };
-        handler.poll_request();
+            buffs: &mut buff_states,
+            rotator: &mut rotator,
+            navigator: &mut navigator,
+            capture: &mut capture,
+        });
 
         // Go to town on stop cycle
-        if was_running_cycle && matches!(handler.context.operation, Operation::HaltUntil(_)) {
-            handler.rotator.reset_queue();
-            handler.player.clear_actions_aborted(false);
-            handler.context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+        if was_running_cycle && matches!(context.operation, Operation::HaltUntil(_)) {
+            rotator.reset_queue();
+            player_state.clear_actions_aborted(false);
+            context.player = Player::Panicking(Panicking::new(PanicTo::Town));
         }
         // Upon accidental or white roomed causing map to change,
         // abort actions and send notification
-        if handler.minimap_data.is_some() && !handler.context.operation.halting() {
-            let player_died = was_player_alive && handler.player.is_dead();
+        if service.has_minimap_data() && !context.operation.halting() {
+            let player_died = was_player_alive && player_state.is_dead();
             let player_panicking = matches!(
-                handler.context.player,
+                context.player,
                 Player::Panicking(Panicking {
                     to: PanicTo::Channel,
                     ..
@@ -410,38 +343,34 @@ fn update_loop() {
             let mut pending_halt_reached = pending_halt.is_some_and(|instant| {
                 Instant::now().duration_since(instant).as_secs() >= PENDING_HALT_SECS
             });
-            if handler.context.did_minimap_changed
-                || (pending_halt_reached && was_player_navigating)
-            {
+            if context.tick_changed_minimap || (pending_halt_reached && was_player_navigating) {
                 pending_halt_reached = false;
                 pending_halt = None;
             }
 
+            let stop_on_fail_or_change_map = settings.borrow().stop_on_fail_or_change_map;
             let can_halt_or_notify = pending_halt_reached
-                || (pending_halt.is_none()
-                    && handler.context.did_minimap_changed
-                    && !player_panicking);
-            match (
-                player_died,
-                can_halt_or_notify,
-                handler.settings.stop_on_fail_or_change_map,
-            ) {
+                || (pending_halt.is_none() && context.tick_changed_minimap && !player_panicking);
+            match (player_died, can_halt_or_notify, stop_on_fail_or_change_map) {
                 (true, _, _) => {
-                    handler.update_context_halting(true, true);
+                    player_state.clear_actions_aborted(true);
+                    rotator.reset_queue();
+                    context.operation = Operation::Halting;
                 }
                 (_, true, true) => {
                     if pending_halt.is_none() {
                         pending_halt = Some(Instant::now());
                     } else {
                         pending_halt = None;
-                        handler.update_context_halting(true, false);
-                        handler.context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+                        player_state.clear_actions_aborted(false);
+                        rotator.reset_queue();
+                        context.operation = Operation::Halting;
+                        context.player = Player::Panicking(Panicking::new(PanicTo::Town));
                     }
                 }
                 _ => (),
             }
             if can_halt_or_notify && pending_halt.is_none() {
-                drop(settings_borrow_mut); // For notification to borrow immutably
                 let _ = context
                     .notification
                     .schedule_notification(NotificationKind::FailOrMapChange);
