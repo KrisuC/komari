@@ -400,6 +400,13 @@ pub async fn key_receiver() -> broadcast::Receiver<KeyBinding> {
     expect_value_variant!(request(Request::KeyReceiver).await, Response::KeyReceiver)
 }
 
+pub async fn refresh_capture_handles() {
+    expect_unit_variant!(
+        request(Request::RefreshCaptureHandles).await,
+        Response::RefreshCaptureHandles
+    )
+}
+
 pub async fn query_capture_handles() -> (Vec<String>, Option<usize>) {
     expect_value_variant!(
         request(Request::QueryCaptureHandles).await,
