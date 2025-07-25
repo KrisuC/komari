@@ -3,7 +3,8 @@ use std::{fmt::Display, fs::File, io::BufReader};
 use backend::{
     CaptureMode, FamiliarRarity, Familiars, InputMethod, IntoEnumIterator, KeyBinding,
     KeyBindingConfiguration, Notifications, Settings as SettingsData, SwappableFamiliars,
-    query_capture_handles, query_settings, select_capture_handle, upsert_settings,
+    query_capture_handles, query_settings, refresh_capture_handles, select_capture_handle,
+    upsert_settings,
 };
 use dioxus::prelude::*;
 use futures_util::StreamExt;
@@ -120,7 +121,8 @@ fn SectionCapture(
             Button {
                 text: "Refresh handles",
                 kind: ButtonKind::Secondary,
-                on_click: move |_| {
+                on_click: move |_| async move {
+                    refresh_capture_handles().await;
                     handle_names.restart();
                 },
                 class: "mt-2",
