@@ -41,12 +41,16 @@ use windows::{
     core::Owned,
 };
 
-use super::{HandleCell, error::Error, handle::Handle};
+use super::{HandleCell, handle::Handle};
+use crate::{
+    ConvertedCoordinates, Error, Result,
+    input::{InputKind, KeyKind, MouseKind},
+};
 
 static KEY_CHANNEL: LazyLock<Sender<KeyKind>> = LazyLock::new(|| broadcast::channel(1).0);
 static PROCESS_ID: LazyLock<u32> = LazyLock::new(|| unsafe { GetCurrentProcessId() });
 
-pub(crate) fn init() -> Owned<HHOOK> {
+pub fn init() -> Owned<HHOOK> {
     unsafe extern "system" fn keyboard_ll(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let msg = wparam.0 as u32;
         if code as u32 == HC_ACTION && (msg == WM_KEYUP || msg == WM_KEYDOWN) {
@@ -75,25 +79,17 @@ pub(crate) fn init() -> Owned<HHOOK> {
 }
 
 #[derive(Debug)]
-pub struct ConvertedCoordinates {
-    pub width: i32,
-    pub height: i32,
-    pub x: i32,
-    pub y: i32,
-}
-
-#[derive(Debug)]
-pub struct KeyReceiver {
+pub struct WindowsInputReceiver {
     handle: HandleCell,
-    key_input_kind: KeyInputKind,
+    input_kind: InputKind,
     rx: Receiver<KeyKind>,
 }
 
-impl KeyReceiver {
-    pub fn new(handle: Handle, key_input_kind: KeyInputKind) -> Self {
+impl WindowsInputReceiver {
+    pub fn new(handle: Handle, input_kind: InputKind) -> Self {
         Self {
             handle: HandleCell::new(handle),
-            key_input_kind,
+            input_kind,
             rx: KEY_CHANNEL.subscribe(),
         }
     }
@@ -103,16 +99,6 @@ impl KeyReceiver {
             .try_recv()
             .ok()
             .and_then(|key| self.can_process_key().then_some(key))
-    }
-
-    #[cfg(test)]
-    pub fn handle(&self) -> Handle {
-        self.handle.handle()
-    }
-
-    #[cfg(test)]
-    pub fn kind(&self) -> KeyInputKind {
-        self.key_input_kind
     }
 
     // TODO: Is this good?
@@ -126,126 +112,34 @@ impl KeyReceiver {
 
         self.handle
             .as_inner()
-            .map(|handle| is_foreground(handle, self.key_input_kind))
+            .map(|handle| is_foreground(handle, self.input_kind))
             .unwrap_or_default()
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum KeyInputKind {
-    /// Sends input only if [`Keys::handle`] is in the foreground and focused
-    Fixed,
-    ///
-    /// Sends input only if the foreground window is not [`Keys::handle`], on top of
-    /// [`Keys::handle`] window and is focused
-    Foreground,
-}
-
-#[derive(Debug, Clone)]
-pub struct Keys {
+#[derive(Debug)]
+pub struct WindowsInput {
     handle: HandleCell,
-    key_input_kind: KeyInputKind,
+    input_kind: InputKind,
     key_down: RefCell<BitVec>,
 }
 
-#[derive(Debug)]
-pub enum MouseAction {
-    Move,
-    Click,
-    Scroll,
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Default, Hash, Debug)]
-pub enum KeyKind {
-    #[default]
-    A,
-    B,
-    C,
-    D,
-    E,
-    F,
-    G,
-    H,
-    I,
-    J,
-    K,
-    L,
-    M,
-    N,
-    O,
-    P,
-    Q,
-    R,
-    S,
-    T,
-    U,
-    V,
-    W,
-    X,
-    Y,
-    Z,
-    Zero,
-    One,
-    Two,
-    Three,
-    Four,
-    Five,
-    Six,
-    Seven,
-    Eight,
-    Nine,
-    F1,
-    F2,
-    F3,
-    F4,
-    F5,
-    F6,
-    F7,
-    F8,
-    F9,
-    F10,
-    F11,
-    F12,
-    Up,
-    Down,
-    Left,
-    Right,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    Insert,
-    Delete,
-    Ctrl,
-    Enter,
-    Space,
-    Tilde,
-    Quote,
-    Semicolon,
-    Comma,
-    Period,
-    Slash,
-    Esc,
-    Shift,
-    Alt,
-}
-
-impl Keys {
-    pub fn new(handle: Handle, kind: KeyInputKind) -> Self {
+impl WindowsInput {
+    pub fn new(handle: Handle, kind: InputKind) -> Self {
         Self {
             handle: HandleCell::new(handle),
-            key_input_kind: kind,
+            input_kind: kind,
             key_down: RefCell::new(BitVec::from_elem(256, false)),
         }
     }
 
-    pub fn send(&self, kind: KeyKind) -> Result<(), Error> {
-        self.send_down(kind)?;
-        self.send_up(kind)?;
+    pub fn send_key(&self, kind: KeyKind) -> Result<()> {
+        self.send_key_down(kind)?;
+        self.send_key_up(kind)?;
         Ok(())
     }
 
-    pub fn send_mouse(&self, x: i32, y: i32, action: MouseAction) -> Result<(), Error> {
+    pub fn send_mouse(&self, x: i32, y: i32, kind: MouseKind) -> Result<()> {
         #[inline]
         fn mouse_input(dx: i32, dy: i32, flags: MOUSE_EVENT_FLAGS, data: i32) -> [INPUT; 1] {
             [INPUT {
@@ -263,42 +157,42 @@ impl Keys {
         }
 
         let mut handle = self.get_handle()?;
-        if !is_foreground(handle, self.key_input_kind) {
+        if !is_foreground(handle, self.input_kind) {
             return Err(Error::WindowNotFound);
         }
-        if matches!(self.key_input_kind, KeyInputKind::Foreground) {
+        if matches!(self.input_kind, InputKind::Foreground) {
             handle = unsafe { GetForegroundWindow() };
         }
 
         let (dx, dy) = client_to_absolute_coordinate_raw(handle, x, y)?;
         let base_flags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK;
 
-        match action {
-            MouseAction::Move => send_input(mouse_input(dx, dy, base_flags, 0)),
-            MouseAction::Click => {
+        match kind {
+            MouseKind::Move => send_input(mouse_input(dx, dy, base_flags, 0)),
+            MouseKind::Click => {
                 send_input(mouse_input(dx, dy, base_flags | MOUSEEVENTF_LEFTDOWN, 0))?;
                 // TODO: Hack or double-click won't work...
                 thread::sleep(Duration::from_millis(80));
                 send_input(mouse_input(dx, dy, base_flags | MOUSEEVENTF_LEFTUP, 0))
             }
-            MouseAction::Scroll => {
+            MouseKind::Scroll => {
                 send_input(mouse_input(dx, dy, base_flags | MOUSEEVENTF_WHEEL, -300))
             }
         }
     }
 
-    pub fn send_up(&self, kind: KeyKind) -> Result<(), Error> {
+    pub fn send_key_up(&self, kind: KeyKind) -> Result<()> {
         self.send_input(kind, false)
     }
 
-    pub fn send_down(&self, kind: KeyKind) -> Result<(), Error> {
+    pub fn send_key_down(&self, kind: KeyKind) -> Result<()> {
         self.send_input(kind, true)
     }
 
     #[inline]
-    fn send_input(&self, kind: KeyKind, is_down: bool) -> Result<(), Error> {
+    fn send_input(&self, kind: KeyKind, is_down: bool) -> Result<()> {
         let handle = self.get_handle()?;
-        if is_down && !is_foreground(handle, self.key_input_kind) {
+        if is_down && !is_foreground(handle, self.input_kind) {
             return Err(Error::KeyNotSent);
         }
         let key = kind.into();
@@ -317,7 +211,7 @@ impl Keys {
     }
 
     #[inline]
-    fn get_handle(&self) -> Result<HWND, Error> {
+    fn get_handle(&self) -> Result<HWND> {
         self.handle.as_inner().ok_or(Error::WindowNotFound)
     }
 }
@@ -325,7 +219,7 @@ impl Keys {
 impl TryFrom<VIRTUAL_KEY> for KeyKind {
     type Error = Error;
 
-    fn try_from(value: VIRTUAL_KEY) -> Result<Self, Error> {
+    fn try_from(value: VIRTUAL_KEY) -> Result<Self> {
         Ok(match value {
             VK_A => KeyKind::A,
             VK_B => KeyKind::B,
@@ -397,7 +291,7 @@ impl TryFrom<VIRTUAL_KEY> for KeyKind {
             VK_ESCAPE => KeyKind::Esc,
             VK_SHIFT => KeyKind::Shift,
             VK_MENU => KeyKind::Alt,
-            _ => return Err(crate::windows::Error::KeyNotFound),
+            _ => return Err(Error::KeyNotFound),
         })
     }
 }
@@ -484,8 +378,8 @@ pub fn client_to_monitor_or_frame(
     x: i32,
     y: i32,
     monitor_coordinate: bool,
-) -> Result<ConvertedCoordinates, Error> {
-    let handle = handle.query_handle().ok_or(Error::WindowNotFound)?;
+) -> Result<ConvertedCoordinates> {
+    let handle = handle.as_inner().ok_or(Error::WindowNotFound)?;
     let mut point = POINT { x, y };
     unsafe { ClientToScreen(handle, &raw mut point).ok()? };
 
@@ -531,7 +425,7 @@ pub fn client_to_monitor_or_frame(
     })
 }
 
-fn client_to_absolute_coordinate_raw(handle: HWND, x: i32, y: i32) -> Result<(i32, i32), Error> {
+fn client_to_absolute_coordinate_raw(handle: HWND, x: i32, y: i32) -> Result<(i32, i32)> {
     let mut point = POINT { x, y };
     unsafe { ClientToScreen(handle, &raw mut point).ok()? };
 
@@ -540,7 +434,7 @@ fn client_to_absolute_coordinate_raw(handle: HWND, x: i32, y: i32) -> Result<(i3
     let virtual_width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
     let virtual_height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
     if virtual_width == 0 || virtual_height == 0 {
-        return Err(Error::InvalidWindowSize);
+        return Err(Error::WindowInvalidSize);
     }
 
     let dx = (point.x - virtual_left) * 65536 / virtual_width;
@@ -550,14 +444,14 @@ fn client_to_absolute_coordinate_raw(handle: HWND, x: i32, y: i32) -> Result<(i3
 
 // TODO: Is this good?
 #[inline]
-fn is_foreground(handle: HWND, kind: KeyInputKind) -> bool {
+fn is_foreground(handle: HWND, kind: InputKind) -> bool {
     let handle_fg = unsafe { GetForegroundWindow() };
     if handle_fg.is_invalid() {
         return false;
     }
     match kind {
-        KeyInputKind::Fixed => handle_fg == handle,
-        KeyInputKind::Foreground => {
+        InputKind::Focused => handle_fg == handle,
+        InputKind::Foreground => {
             if handle_fg == handle {
                 return false;
             }
@@ -589,7 +483,7 @@ fn is_foreground(handle: HWND, kind: KeyInputKind) -> bool {
 }
 
 #[inline]
-fn send_input(input: [INPUT; 1]) -> Result<(), Error> {
+fn send_input(input: [INPUT; 1]) -> Result<()> {
     let result = unsafe { SendInput(&input, size_of::<INPUT>() as i32) };
     // could be UIPI
     if result == 0 {

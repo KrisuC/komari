@@ -6,7 +6,8 @@ use anyhow::Result;
 #[cfg(test)]
 use mockall::automock;
 use platforms::windows::{
-    self, BitBltCapture, Frame, Handle, KeyInputKind, KeyKind, Keys, WgcCapture, WindowBoxCapture,
+    self, BitBltCapture, Frame, Handle, KeyInputKind, KeyKind, WgcCapture, WindowBoxCapture,
+    WindowsInput,
 };
 
 use crate::context::MS_PER_TICK_F32;
@@ -43,7 +44,7 @@ pub enum KeySenderMethod {
 #[derive(Debug)]
 enum KeySenderKind {
     Rpc(Handle, Option<RefCell<KeysService>>),
-    Default(Keys),
+    Default(WindowsInput),
 }
 
 #[derive(Debug)]
@@ -359,7 +360,9 @@ fn to_key_sender_kind_from(method: KeySenderMethod, seed: &[u8]) -> KeySenderKin
             }
             KeySenderKind::Rpc(handle, service.ok().map(RefCell::new))
         }
-        KeySenderMethod::Default(handle, kind) => KeySenderKind::Default(Keys::new(handle, kind)),
+        KeySenderMethod::Default(handle, kind) => {
+            KeySenderKind::Default(WindowsInput::new(handle, kind))
+        }
     }
 }
 

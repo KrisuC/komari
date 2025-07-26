@@ -13,39 +13,33 @@ use windows::{
 };
 
 #[derive(Clone, Debug)]
-pub(crate) struct HandleCell {
-    handle: Handle,
-    inner: Cell<Option<HWND>>,
+pub struct HandleCell {
+    inner: Handle,
+    inner_cell: Cell<Option<HWND>>,
 }
 
 impl HandleCell {
     pub fn new(handle: Handle) -> Self {
         Self {
-            handle,
-            inner: Cell::new(None),
+            inner: handle,
+            inner_cell: Cell::new(None),
         }
-    }
-
-    #[cfg(test)]
-    pub fn handle(&self) -> Handle {
-        self.handle
     }
 
     #[inline]
     pub fn as_inner(&self) -> Option<HWND> {
-        match self.handle.kind {
-            HandleKind::Fixed(_) => self.handle.query_handle(),
+        match self.inner.kind {
+            HandleKind::Fixed(handle) => Some(handle),
             HandleKind::Dynamic(class) => {
-                if self.inner.get().is_none() {
-                    self.inner.set(self.handle.query_handle());
+                if self.inner_cell.get().is_none() {
+                    self.inner_cell.set(query_handle(class));
                 }
 
-                let handle_inner = self.inner.get()?;
-                let class_matched = is_class_matched(handle_inner, class);
-                if class_matched {
-                    Some(handle_inner)
+                let handle = self.inner_cell.get()?;
+                if is_class_matched(handle, class) {
+                    Some(handle)
                 } else {
-                    self.inner.set(None);
+                    self.inner_cell.set(None);
                     None
                 }
             }
@@ -53,62 +47,31 @@ impl HandleCell {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum HandleKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandleKind {
     Fixed(HWND),
     Dynamic(&'static str),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Handle {
     kind: HandleKind,
 }
 
 impl Handle {
-    pub fn new(class: &'static str) -> Self {
-        Self {
-            kind: HandleKind::Dynamic(class),
-        }
+    pub fn new(kind: HandleKind) -> Self {
+        Self { kind }
     }
 
-    pub(crate) fn new_fixed(handle: HWND) -> Self {
-        Self {
-            kind: HandleKind::Fixed(handle),
-        }
-    }
-
-    pub(crate) fn query_handle(&self) -> Option<HWND> {
+    pub fn as_inner(&self) -> Option<HWND> {
         match self.kind {
             HandleKind::Fixed(handle) => Some(handle),
-            HandleKind::Dynamic(class) => {
-                struct Params {
-                    class: &'static str,
-                    handle_out: *mut HWND,
-                }
-
-                unsafe extern "system" fn callback(handle: HWND, params: LPARAM) -> BOOL {
-                    let params = unsafe { ptr::read::<Params>(params.0 as *const _) };
-                    if is_class_matched(handle, params.class) {
-                        unsafe { ptr::write(params.handle_out, handle) };
-                        false.into()
-                    } else {
-                        true.into()
-                    }
-                }
-
-                let mut handle = HWND::default();
-                let params = Params {
-                    class,
-                    handle_out: &raw mut handle,
-                };
-                let _ = unsafe { EnumWindows(Some(callback), LPARAM(&raw const params as isize)) };
-                (!handle.is_invalid()).then_some(handle)
-            }
+            HandleKind::Dynamic(class) => query_handle(class),
         }
     }
 }
 
-pub fn query_capture_handles() -> Vec<(String, Handle)> {
+pub fn query_capture_name_handle_pairs() -> Vec<(String, Handle)> {
     unsafe extern "system" fn callback(handle: HWND, params: LPARAM) -> BOOL {
         if !unsafe { IsWindowVisible(handle) }.as_bool() {
             return true.into();
@@ -133,6 +96,7 @@ pub fn query_capture_handles() -> Vec<(String, Handle)> {
             return true.into();
         }
 
+        // TODO: Windows maximum title length is 256 but can this overflow?
         let mut buf = [0u16; 256];
         let count = unsafe { GetWindowTextW(handle, &mut buf) } as usize;
         if count == 0 {
@@ -141,7 +105,7 @@ pub fn query_capture_handles() -> Vec<(String, Handle)> {
 
         let vec = unsafe { &mut *(params.0 as *mut Vec<(String, Handle)>) };
         if let Some(name) = OsString::from_wide(&buf[..count]).to_str() {
-            vec.push((name.to_string(), Handle::new_fixed(handle)));
+            vec.push((name.to_string(), Handle::new(HandleKind::Fixed(handle))));
         }
         true.into()
     }
@@ -152,12 +116,45 @@ pub fn query_capture_handles() -> Vec<(String, Handle)> {
 }
 
 #[inline]
+fn query_handle(class: &'static str) -> Option<HWND> {
+    struct Params {
+        class: &'static str,
+        handle_out: *mut HWND,
+    }
+
+    unsafe extern "system" fn callback(handle: HWND, params: LPARAM) -> BOOL {
+        let params = unsafe { ptr::read::<Params>(params.0 as *const _) };
+        if is_class_matched(handle, params.class) {
+            unsafe { ptr::write(params.handle_out, handle) };
+            false.into()
+        } else {
+            true.into()
+        }
+    }
+
+    let mut handle = HWND::default();
+    let params = Params {
+        class,
+        handle_out: &raw mut handle,
+    };
+    let _ = unsafe { EnumWindows(Some(callback), LPARAM(&raw const params as isize)) };
+
+    if handle.is_invalid() {
+        None
+    } else {
+        Some(handle)
+    }
+}
+
+#[inline]
 fn is_class_matched(handle: HWND, class: &'static str) -> bool {
+    // TODO: Windows maximum title length is 256 but can this overflow?
     let mut buf = [0u16; 256];
     let count = unsafe { GetClassNameW(handle, &mut buf) as usize };
     if count == 0 {
         return false;
     }
+
     OsString::from_wide(&buf[..count])
         .to_str()
         .map(|s| s.starts_with(class))

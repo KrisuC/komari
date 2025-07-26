@@ -1,31 +1,16 @@
-use std::ffi::c_void;
-use std::mem;
-use std::ptr;
-use std::slice;
+use std::{ffi::c_void, mem, ptr, slice};
 
-use windows::Win32::Foundation::HWND;
-use windows::Win32::Foundation::RECT;
-use windows::Win32::Graphics::Gdi::BI_BITFIELDS;
-use windows::Win32::Graphics::Gdi::BITMAPV4HEADER;
-use windows::Win32::Graphics::Gdi::BitBlt;
-use windows::Win32::Graphics::Gdi::CreateDCW;
-use windows::Win32::Graphics::Gdi::GetMonitorInfoW;
-use windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONULL;
-use windows::Win32::Graphics::Gdi::MONITORINFO;
-use windows::Win32::Graphics::Gdi::MONITORINFOEXW;
-use windows::Win32::Graphics::Gdi::MonitorFromWindow;
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, GetDC, HBITMAP, HDC, ReleaseDC,
-    SRCCOPY, SelectObject,
+    BI_BITFIELDS, BITMAPV4HEADER, BitBlt, CreateCompatibleDC, CreateDCW, CreateDIBSection,
+    DIB_RGB_COLORS, DeleteDC, GetDC, GetMonitorInfoW, HBITMAP, HDC, MONITOR_DEFAULTTONULL,
+    MONITORINFO, MONITORINFOEXW, MonitorFromWindow, ReleaseDC, SRCCOPY, SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
-use windows::core::Owned;
-use windows::core::PCWSTR;
+use windows::core::{Owned, PCWSTR};
 
-use super::Frame;
-use super::HandleCell;
-use super::error::Error;
-use super::handle::Handle;
+use super::{HandleCell, handle::Handle};
+use crate::{Error, Result, capture::Frame};
 
 #[derive(Debug)]
 struct DeviceContext {
@@ -64,7 +49,7 @@ pub struct BitBltCapture {
 }
 
 impl BitBltCapture {
-    /// Creates a new `BitBlt` capture
+    /// Creates a new `BitBlt` capture.
     ///
     /// When `overlap` is true, the capture uses the monitor where `handle` is in as the source and
     /// rectangle of `handle` as the area of the capture. So if another window is on top of
@@ -78,21 +63,21 @@ impl BitBltCapture {
     }
 
     #[inline]
-    pub fn grab(&mut self) -> Result<Frame, Error> {
+    pub fn grab(&mut self) -> Result<Frame> {
         self.grab_inner(None)
     }
 
-    pub(crate) fn grab_inner_offset(&mut self, offset: Option<(i32, i32)>) -> Result<Frame, Error> {
+    pub fn grab_inner_offset(&mut self, offset: Option<(i32, i32)>) -> Result<Frame> {
         self.grab_inner(offset)
     }
 
-    fn grab_inner(&mut self, mut offset: Option<(i32, i32)>) -> Result<Frame, Error> {
+    fn grab_inner(&mut self, mut offset: Option<(i32, i32)>) -> Result<Frame> {
         let handle = self.handle.as_inner().ok_or(Error::WindowNotFound)?;
         let rect = get_rect(handle)?;
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         if width == 0 || height == 0 {
-            return Err(Error::InvalidWindowSize);
+            return Err(Error::WindowInvalidSize);
         }
 
         let handle_dc = if self.overlap {
@@ -107,7 +92,7 @@ impl BitBltCapture {
         let bitmap = self.bitmap.as_ref().unwrap();
         if width != bitmap.width || height != bitmap.height {
             self.bitmap = None;
-            return Err(Error::InvalidWindowSize);
+            return Err(Error::WindowInvalidSize);
         }
 
         let bitmap_dc = &bitmap.dc;
@@ -145,7 +130,7 @@ impl BitBltCapture {
 }
 
 #[inline]
-fn get_rect(handle: HWND) -> Result<RECT, Error> {
+fn get_rect(handle: HWND) -> Result<RECT> {
     let mut rect = RECT::default();
     unsafe { GetClientRect(handle, &raw mut rect) }?;
     Ok(rect)
@@ -155,7 +140,7 @@ fn get_rect(handle: HWND) -> Result<RECT, Error> {
 fn get_device_context_from_monitor(
     handle: HWND,
     offset: &mut Option<(i32, i32)>,
-) -> Result<DeviceContext, Error> {
+) -> Result<DeviceContext> {
     let monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
     if monitor.is_invalid() {
         return Err(Error::WindowNotFound);
@@ -189,7 +174,7 @@ fn get_device_context_from_monitor(
 }
 
 #[inline]
-fn get_device_context(handle: HWND) -> Result<DeviceContext, Error> {
+fn get_device_context(handle: HWND) -> Result<DeviceContext> {
     let dc = unsafe { GetDC(handle.into()) };
     if dc.is_invalid() {
         return Err(Error::from_last_win_error());
@@ -202,7 +187,7 @@ fn get_device_context(handle: HWND) -> Result<DeviceContext, Error> {
 }
 
 #[inline]
-fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<Bitmap, Error> {
+fn create_bitmap(dc: HDC, width: i32, height: i32) -> Result<Bitmap> {
     let dc = unsafe { CreateCompatibleDC(Some(dc)) };
     if dc.is_invalid() {
         return Err(Error::from_last_win_error());
