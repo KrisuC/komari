@@ -26,6 +26,11 @@ impl HandleCell {
         }
     }
 
+    #[cfg(test)]
+    pub fn handle(&self) -> Handle {
+        self.handle
+    }
+
     #[inline]
     pub fn as_inner(&self) -> Option<HWND> {
         match self.handle.kind {

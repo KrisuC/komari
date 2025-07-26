@@ -105,6 +105,16 @@ impl KeyReceiver {
             .and_then(|key| self.can_process_key().then_some(key))
     }
 
+    #[cfg(test)]
+    pub fn handle(&self) -> Handle {
+        self.handle.handle()
+    }
+
+    #[cfg(test)]
+    pub fn kind(&self) -> KeyInputKind {
+        self.key_input_kind
+    }
+
     // TODO: Is this good?
     fn can_process_key(&self) -> bool {
         let fg = unsafe { GetForegroundWindow() };
@@ -113,6 +123,7 @@ impl KeyReceiver {
         if fg_pid == *PROCESS_ID {
             return true;
         }
+
         self.handle
             .as_inner()
             .map(|handle| is_foreground(handle, self.key_input_kind))
