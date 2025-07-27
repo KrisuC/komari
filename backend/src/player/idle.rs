@@ -1,6 +1,5 @@
 use log::debug;
 use opencv::core::Point;
-use platforms::windows::KeyKind;
 
 use super::{
     Player, PlayerAction, PlayerActionAutoMob, PlayerActionKey, PlayerActionMove, PlayerState,
@@ -12,7 +11,8 @@ use super::{
     use_key::UseKey,
 };
 use crate::{
-    ActionKeyDirection, ActionKeyWith, Position, context::Context, minimap::Minimap, rng::Rng,
+    ActionKeyDirection, ActionKeyWith, Position, bridge::KeyKind, context::Context,
+    minimap::Minimap, rng::Rng,
 };
 
 /// Updates [`Player::Idle`] contextual state.
@@ -23,10 +23,10 @@ pub fn update_idle_context(context: &Context, state: &mut PlayerState) -> Player
     state.last_destinations = None;
     state.last_movement = None;
     state.stalling_timeout_state = None;
-    let _ = context.keys.send_up(KeyKind::Up);
-    let _ = context.keys.send_up(KeyKind::Down);
-    let _ = context.keys.send_up(KeyKind::Left);
-    let _ = context.keys.send_up(KeyKind::Right);
+    let _ = context.input.send_key_up(KeyKind::Up);
+    let _ = context.input.send_key_up(KeyKind::Down);
+    let _ = context.input.send_key_up(KeyKind::Left);
+    let _ = context.input.send_key_up(KeyKind::Right);
 
     on_action_state_mut(
         state,

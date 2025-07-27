@@ -21,7 +21,8 @@ use tao::{
 use tokio::sync::oneshot::{self, Sender};
 use windows::Win32::Foundation::HWND;
 
-use super::{BitBltCapture, Error, Frame, Handle};
+use super::{BitBltCapture, Handle};
+use crate::{Result, capture::Frame, windows::HandleKind};
 
 #[derive(Debug)]
 pub struct WindowBoxCapture {
@@ -119,7 +120,7 @@ impl Default for WindowBoxCapture {
         });
         barrier.wait();
         let handle = HWND(handle.lock().unwrap().unwrap().get() as *mut c_void);
-        let handle = Handle::new_fixed(handle);
+        let handle = Handle::new(HandleKind::Fixed(handle));
         let capture = BitBltCapture::new(handle, true);
 
         Self {
@@ -136,7 +137,7 @@ impl WindowBoxCapture {
         self.handle
     }
 
-    pub fn grab(&mut self) -> Result<Frame, Error> {
+    pub fn grab(&mut self) -> Result<Frame> {
         self.capture.grab_inner_offset(self.position())
     }
 

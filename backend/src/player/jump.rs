@@ -21,7 +21,7 @@ pub fn update_jumping_context(
     ) {
         MovingLifecycle::Started(moving) => {
             state.last_movement = Some(LastMovement::Jumping);
-            let _ = context.keys.send(state.config.jump_key);
+            let _ = context.input.send_key(state.config.jump_key);
             Player::Jumping(moving)
         }
         MovingLifecycle::Ended(moving) => {

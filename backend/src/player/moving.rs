@@ -2,7 +2,6 @@ use std::ops::Range;
 
 use log::{debug, info};
 use opencv::core::Point;
-use platforms::windows::KeyKind;
 
 use super::{
     GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player, PlayerState,
@@ -15,6 +14,7 @@ use super::{
 use crate::{
     ActionKeyDirection, ActionKeyWith, MAX_PLATFORMS_COUNT,
     array::Array,
+    bridge::KeyKind,
     context::Context,
     pathing::{MovementHint, PlatformWithNeighbors, find_points_with},
     player::{
@@ -385,7 +385,7 @@ pub fn update_moving_context(
             } else {
                 KeyKind::Left
             };
-            let _ = context.keys.send_down(key);
+            let _ = context.input.send_key_down(key);
             return Player::Stalling(Timeout::default(), 3);
         }
 
@@ -537,7 +537,7 @@ mod tests {
     fn update_moving_to_grappling() {
         let context = Context::new(None, None);
         let mut state = PlayerState::default();
-        state.config.grappling_key = Some(KeyKind::default());
+        state.config.grappling_key = Some(KeyKind::A);
         state.last_known_pos = Some(Point::new(0, 0));
 
         let dest = Point::new(0, GRAPPLING_THRESHOLD + 10);

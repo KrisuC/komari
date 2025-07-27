@@ -1,19 +1,27 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::{any::Any, cell::RefCell};
+use std::{any::Any, cell::RefCell, collections::HashMap, fmt::Debug};
 
 use anyhow::Result;
 #[cfg(test)]
 use mockall::automock;
-use platforms::windows::{
-    self, BitBltCapture, Frame, Handle, KeyInputKind, KeyKind, Keys, WgcCapture, WindowBoxCapture,
+#[cfg(windows)]
+use platforms::capture::WindowsCaptureKind;
+use platforms::{
+    CoordinateRelative, Window,
+    capture::{Capture as PlatformCapture, Frame},
+    input::{
+        Input as PlatformInput, InputKind as PlatformInputKind,
+        InputReceiver as PlatformInputReceiver, KeyKind as PlatformKeyKind,
+        MouseKind as PlatformMouseKind,
+    },
 };
 
-use crate::context::MS_PER_TICK_F32;
-use crate::database::Seeds;
-use crate::rng::Rng;
-use crate::rpc;
-use crate::{CaptureMode, context::MS_PER_TICK, rpc::KeysService};
+use crate::{
+    CaptureMode, KeyBinding,
+    context::{MS_PER_TICK, MS_PER_TICK_F32},
+    database::Seeds,
+    rng::Rng,
+    rpc::{self, InputService, Key as RpcKeyKind, MouseAction as RpcMouseKind},
+};
 
 /// Base mean in milliseconds to generate a pair from.
 const BASE_MEAN_MS_DELAY: f32 = 100.0;
@@ -28,61 +36,473 @@ const MEAN_STD_REVERSION_RATE: f32 = 0.2;
 /// The rate at which generated mean will revert to the base [`BASE_MEAN_MS_DELAY`] over time.
 const MEAN_STD_VOLATILITY: f32 = 3.0;
 
-/// The input method to use for the key sender.
-///
-/// This is a bridge enum between platform-specific and gRPC input options.
-pub enum KeySenderMethod {
-    Rpc(Handle, String),
-    Default(Handle, KeyInputKind),
-}
-
-/// The inner kind of the key sender.
-///
-/// The above [`KeySenderMethod`] will be converted to this inner kind that contains the actual
-/// sending structure.
 #[derive(Debug)]
-enum KeySenderKind {
-    Rpc(Handle, Option<RefCell<KeysService>>),
-    Default(Keys),
-}
-
-#[derive(Debug)]
-pub enum MouseAction {
+pub enum MouseKind {
     Move,
     Click,
     Scroll,
 }
 
-/// A trait for sending keys.
-#[cfg_attr(test, automock)]
-pub trait KeySender: Debug {
-    fn set_method(&mut self, method: KeySenderMethod);
+impl From<MouseKind> for RpcMouseKind {
+    fn from(value: MouseKind) -> Self {
+        match value {
+            MouseKind::Move => RpcMouseKind::Move,
+            MouseKind::Click => RpcMouseKind::Click,
+            MouseKind::Scroll => RpcMouseKind::ScrollDown,
+        }
+    }
+}
 
-    fn send(&self, kind: KeyKind) -> Result<()>;
+impl From<MouseKind> for PlatformMouseKind {
+    fn from(value: MouseKind) -> Self {
+        match value {
+            MouseKind::Move => PlatformMouseKind::Move,
+            MouseKind::Click => PlatformMouseKind::Click,
+            MouseKind::Scroll => PlatformMouseKind::Scroll,
+        }
+    }
+}
 
-    /// Sends mouse to `(x, y)` relative to the client coordinate (e.g. capture area) and
-    /// perform an action.
-    ///
-    /// `(0, 0)` is top-left and `(width, height)` is bottom-right.
-    ///
-    /// TODO: Unfortunate name and location...
-    fn send_mouse(&self, x: i32, y: i32, action: MouseAction) -> Result<()>;
+// impl From<MouseKind> for Rpc
 
-    fn send_up(&self, kind: KeyKind) -> Result<()>;
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum KeyKind {
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
 
-    fn send_down(&self, kind: KeyKind) -> Result<()>;
+    Zero,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
 
-    fn all_keys_cleared(&self) -> bool;
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
 
-    fn as_any_mut(&mut self) -> &mut dyn Any;
+    Up,
+    Down,
+    Left,
+    Right,
+
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Insert,
+    Delete,
+    Ctrl,
+    Enter,
+    Space,
+    Tilde,
+    Quote,
+    Semicolon,
+    Comma,
+    Period,
+    Slash,
+    Esc,
+    Shift,
+    Alt,
+}
+
+impl From<KeyBinding> for KeyKind {
+    fn from(value: KeyBinding) -> Self {
+        match value {
+            KeyBinding::A => KeyKind::A,
+            KeyBinding::B => KeyKind::B,
+            KeyBinding::C => KeyKind::C,
+            KeyBinding::D => KeyKind::D,
+            KeyBinding::E => KeyKind::E,
+            KeyBinding::F => KeyKind::F,
+            KeyBinding::G => KeyKind::G,
+            KeyBinding::H => KeyKind::H,
+            KeyBinding::I => KeyKind::I,
+            KeyBinding::J => KeyKind::J,
+            KeyBinding::K => KeyKind::K,
+            KeyBinding::L => KeyKind::L,
+            KeyBinding::M => KeyKind::M,
+            KeyBinding::N => KeyKind::N,
+            KeyBinding::O => KeyKind::O,
+            KeyBinding::P => KeyKind::P,
+            KeyBinding::Q => KeyKind::Q,
+            KeyBinding::R => KeyKind::R,
+            KeyBinding::S => KeyKind::S,
+            KeyBinding::T => KeyKind::T,
+            KeyBinding::U => KeyKind::U,
+            KeyBinding::V => KeyKind::V,
+            KeyBinding::W => KeyKind::W,
+            KeyBinding::X => KeyKind::X,
+            KeyBinding::Y => KeyKind::Y,
+            KeyBinding::Z => KeyKind::Z,
+            KeyBinding::Zero => KeyKind::Zero,
+            KeyBinding::One => KeyKind::One,
+            KeyBinding::Two => KeyKind::Two,
+            KeyBinding::Three => KeyKind::Three,
+            KeyBinding::Four => KeyKind::Four,
+            KeyBinding::Five => KeyKind::Five,
+            KeyBinding::Six => KeyKind::Six,
+            KeyBinding::Seven => KeyKind::Seven,
+            KeyBinding::Eight => KeyKind::Eight,
+            KeyBinding::Nine => KeyKind::Nine,
+            KeyBinding::F1 => KeyKind::F1,
+            KeyBinding::F2 => KeyKind::F2,
+            KeyBinding::F3 => KeyKind::F3,
+            KeyBinding::F4 => KeyKind::F4,
+            KeyBinding::F5 => KeyKind::F5,
+            KeyBinding::F6 => KeyKind::F6,
+            KeyBinding::F7 => KeyKind::F7,
+            KeyBinding::F8 => KeyKind::F8,
+            KeyBinding::F9 => KeyKind::F9,
+            KeyBinding::F10 => KeyKind::F10,
+            KeyBinding::F11 => KeyKind::F11,
+            KeyBinding::F12 => KeyKind::F12,
+            KeyBinding::Up => KeyKind::Up,
+            KeyBinding::Down => KeyKind::Down,
+            KeyBinding::Left => KeyKind::Left,
+            KeyBinding::Right => KeyKind::Right,
+            KeyBinding::Home => KeyKind::Home,
+            KeyBinding::End => KeyKind::End,
+            KeyBinding::PageUp => KeyKind::PageUp,
+            KeyBinding::PageDown => KeyKind::PageDown,
+            KeyBinding::Insert => KeyKind::Insert,
+            KeyBinding::Delete => KeyKind::Delete,
+            KeyBinding::Enter => KeyKind::Enter,
+            KeyBinding::Space => KeyKind::Space,
+            KeyBinding::Tilde => KeyKind::Tilde,
+            KeyBinding::Quote => KeyKind::Quote,
+            KeyBinding::Semicolon => KeyKind::Semicolon,
+            KeyBinding::Comma => KeyKind::Comma,
+            KeyBinding::Period => KeyKind::Period,
+            KeyBinding::Slash => KeyKind::Slash,
+            KeyBinding::Esc => KeyKind::Esc,
+            KeyBinding::Shift => KeyKind::Shift,
+            KeyBinding::Ctrl => KeyKind::Ctrl,
+            KeyBinding::Alt => KeyKind::Alt,
+        }
+    }
+}
+
+impl From<PlatformKeyKind> for KeyKind {
+    fn from(value: PlatformKeyKind) -> Self {
+        match value {
+            PlatformKeyKind::A => KeyKind::A,
+            PlatformKeyKind::B => KeyKind::B,
+            PlatformKeyKind::C => KeyKind::C,
+            PlatformKeyKind::D => KeyKind::D,
+            PlatformKeyKind::E => KeyKind::E,
+            PlatformKeyKind::F => KeyKind::F,
+            PlatformKeyKind::G => KeyKind::G,
+            PlatformKeyKind::H => KeyKind::H,
+            PlatformKeyKind::I => KeyKind::I,
+            PlatformKeyKind::J => KeyKind::J,
+            PlatformKeyKind::K => KeyKind::K,
+            PlatformKeyKind::L => KeyKind::L,
+            PlatformKeyKind::M => KeyKind::M,
+            PlatformKeyKind::N => KeyKind::N,
+            PlatformKeyKind::O => KeyKind::O,
+            PlatformKeyKind::P => KeyKind::P,
+            PlatformKeyKind::Q => KeyKind::Q,
+            PlatformKeyKind::R => KeyKind::R,
+            PlatformKeyKind::S => KeyKind::S,
+            PlatformKeyKind::T => KeyKind::T,
+            PlatformKeyKind::U => KeyKind::U,
+            PlatformKeyKind::V => KeyKind::V,
+            PlatformKeyKind::W => KeyKind::W,
+            PlatformKeyKind::X => KeyKind::X,
+            PlatformKeyKind::Y => KeyKind::Y,
+            PlatformKeyKind::Z => KeyKind::Z,
+            PlatformKeyKind::Zero => KeyKind::Zero,
+            PlatformKeyKind::One => KeyKind::One,
+            PlatformKeyKind::Two => KeyKind::Two,
+            PlatformKeyKind::Three => KeyKind::Three,
+            PlatformKeyKind::Four => KeyKind::Four,
+            PlatformKeyKind::Five => KeyKind::Five,
+            PlatformKeyKind::Six => KeyKind::Six,
+            PlatformKeyKind::Seven => KeyKind::Seven,
+            PlatformKeyKind::Eight => KeyKind::Eight,
+            PlatformKeyKind::Nine => KeyKind::Nine,
+            PlatformKeyKind::F1 => KeyKind::F1,
+            PlatformKeyKind::F2 => KeyKind::F2,
+            PlatformKeyKind::F3 => KeyKind::F3,
+            PlatformKeyKind::F4 => KeyKind::F4,
+            PlatformKeyKind::F5 => KeyKind::F5,
+            PlatformKeyKind::F6 => KeyKind::F6,
+            PlatformKeyKind::F7 => KeyKind::F7,
+            PlatformKeyKind::F8 => KeyKind::F8,
+            PlatformKeyKind::F9 => KeyKind::F9,
+            PlatformKeyKind::F10 => KeyKind::F10,
+            PlatformKeyKind::F11 => KeyKind::F11,
+            PlatformKeyKind::F12 => KeyKind::F12,
+            PlatformKeyKind::Up => KeyKind::Up,
+            PlatformKeyKind::Down => KeyKind::Down,
+            PlatformKeyKind::Left => KeyKind::Left,
+            PlatformKeyKind::Right => KeyKind::Right,
+            PlatformKeyKind::Home => KeyKind::Home,
+            PlatformKeyKind::End => KeyKind::End,
+            PlatformKeyKind::PageUp => KeyKind::PageUp,
+            PlatformKeyKind::PageDown => KeyKind::PageDown,
+            PlatformKeyKind::Insert => KeyKind::Insert,
+            PlatformKeyKind::Delete => KeyKind::Delete,
+            PlatformKeyKind::Ctrl => KeyKind::Ctrl,
+            PlatformKeyKind::Enter => KeyKind::Enter,
+            PlatformKeyKind::Space => KeyKind::Space,
+            PlatformKeyKind::Tilde => KeyKind::Tilde,
+            PlatformKeyKind::Quote => KeyKind::Quote,
+            PlatformKeyKind::Semicolon => KeyKind::Semicolon,
+            PlatformKeyKind::Comma => KeyKind::Comma,
+            PlatformKeyKind::Period => KeyKind::Period,
+            PlatformKeyKind::Slash => KeyKind::Slash,
+            PlatformKeyKind::Esc => KeyKind::Esc,
+            PlatformKeyKind::Shift => KeyKind::Shift,
+            PlatformKeyKind::Alt => KeyKind::Alt,
+        }
+    }
+}
+
+impl From<KeyKind> for PlatformKeyKind {
+    fn from(value: KeyKind) -> Self {
+        match value {
+            KeyKind::A => PlatformKeyKind::A,
+            KeyKind::B => PlatformKeyKind::B,
+            KeyKind::C => PlatformKeyKind::C,
+            KeyKind::D => PlatformKeyKind::D,
+            KeyKind::E => PlatformKeyKind::E,
+            KeyKind::F => PlatformKeyKind::F,
+            KeyKind::G => PlatformKeyKind::G,
+            KeyKind::H => PlatformKeyKind::H,
+            KeyKind::I => PlatformKeyKind::I,
+            KeyKind::J => PlatformKeyKind::J,
+            KeyKind::K => PlatformKeyKind::K,
+            KeyKind::L => PlatformKeyKind::L,
+            KeyKind::M => PlatformKeyKind::M,
+            KeyKind::N => PlatformKeyKind::N,
+            KeyKind::O => PlatformKeyKind::O,
+            KeyKind::P => PlatformKeyKind::P,
+            KeyKind::Q => PlatformKeyKind::Q,
+            KeyKind::R => PlatformKeyKind::R,
+            KeyKind::S => PlatformKeyKind::S,
+            KeyKind::T => PlatformKeyKind::T,
+            KeyKind::U => PlatformKeyKind::U,
+            KeyKind::V => PlatformKeyKind::V,
+            KeyKind::W => PlatformKeyKind::W,
+            KeyKind::X => PlatformKeyKind::X,
+            KeyKind::Y => PlatformKeyKind::Y,
+            KeyKind::Z => PlatformKeyKind::Z,
+            KeyKind::Zero => PlatformKeyKind::Zero,
+            KeyKind::One => PlatformKeyKind::One,
+            KeyKind::Two => PlatformKeyKind::Two,
+            KeyKind::Three => PlatformKeyKind::Three,
+            KeyKind::Four => PlatformKeyKind::Four,
+            KeyKind::Five => PlatformKeyKind::Five,
+            KeyKind::Six => PlatformKeyKind::Six,
+            KeyKind::Seven => PlatformKeyKind::Seven,
+            KeyKind::Eight => PlatformKeyKind::Eight,
+            KeyKind::Nine => PlatformKeyKind::Nine,
+            KeyKind::F1 => PlatformKeyKind::F1,
+            KeyKind::F2 => PlatformKeyKind::F2,
+            KeyKind::F3 => PlatformKeyKind::F3,
+            KeyKind::F4 => PlatformKeyKind::F4,
+            KeyKind::F5 => PlatformKeyKind::F5,
+            KeyKind::F6 => PlatformKeyKind::F6,
+            KeyKind::F7 => PlatformKeyKind::F7,
+            KeyKind::F8 => PlatformKeyKind::F8,
+            KeyKind::F9 => PlatformKeyKind::F9,
+            KeyKind::F10 => PlatformKeyKind::F10,
+            KeyKind::F11 => PlatformKeyKind::F11,
+            KeyKind::F12 => PlatformKeyKind::F12,
+            KeyKind::Up => PlatformKeyKind::Up,
+            KeyKind::Down => PlatformKeyKind::Down,
+            KeyKind::Left => PlatformKeyKind::Left,
+            KeyKind::Right => PlatformKeyKind::Right,
+            KeyKind::Home => PlatformKeyKind::Home,
+            KeyKind::End => PlatformKeyKind::End,
+            KeyKind::PageUp => PlatformKeyKind::PageUp,
+            KeyKind::PageDown => PlatformKeyKind::PageDown,
+            KeyKind::Insert => PlatformKeyKind::Insert,
+            KeyKind::Delete => PlatformKeyKind::Delete,
+            KeyKind::Ctrl => PlatformKeyKind::Ctrl,
+            KeyKind::Enter => PlatformKeyKind::Enter,
+            KeyKind::Space => PlatformKeyKind::Space,
+            KeyKind::Tilde => PlatformKeyKind::Tilde,
+            KeyKind::Quote => PlatformKeyKind::Quote,
+            KeyKind::Semicolon => PlatformKeyKind::Semicolon,
+            KeyKind::Comma => PlatformKeyKind::Comma,
+            KeyKind::Period => PlatformKeyKind::Period,
+            KeyKind::Slash => PlatformKeyKind::Slash,
+            KeyKind::Esc => PlatformKeyKind::Esc,
+            KeyKind::Shift => PlatformKeyKind::Shift,
+            KeyKind::Alt => PlatformKeyKind::Alt,
+        }
+    }
+}
+
+impl From<KeyKind> for RpcKeyKind {
+    fn from(value: KeyKind) -> Self {
+        match value {
+            KeyKind::A => RpcKeyKind::A,
+            KeyKind::B => RpcKeyKind::B,
+            KeyKind::C => RpcKeyKind::C,
+            KeyKind::D => RpcKeyKind::D,
+            KeyKind::E => RpcKeyKind::E,
+            KeyKind::F => RpcKeyKind::F,
+            KeyKind::G => RpcKeyKind::G,
+            KeyKind::H => RpcKeyKind::H,
+            KeyKind::I => RpcKeyKind::I,
+            KeyKind::J => RpcKeyKind::J,
+            KeyKind::K => RpcKeyKind::K,
+            KeyKind::L => RpcKeyKind::L,
+            KeyKind::M => RpcKeyKind::M,
+            KeyKind::N => RpcKeyKind::N,
+            KeyKind::O => RpcKeyKind::O,
+            KeyKind::P => RpcKeyKind::P,
+            KeyKind::Q => RpcKeyKind::Q,
+            KeyKind::R => RpcKeyKind::R,
+            KeyKind::S => RpcKeyKind::S,
+            KeyKind::T => RpcKeyKind::T,
+            KeyKind::U => RpcKeyKind::U,
+            KeyKind::V => RpcKeyKind::V,
+            KeyKind::W => RpcKeyKind::W,
+            KeyKind::X => RpcKeyKind::X,
+            KeyKind::Y => RpcKeyKind::Y,
+            KeyKind::Z => RpcKeyKind::Z,
+            KeyKind::Zero => RpcKeyKind::Zero,
+            KeyKind::One => RpcKeyKind::One,
+            KeyKind::Two => RpcKeyKind::Two,
+            KeyKind::Three => RpcKeyKind::Three,
+            KeyKind::Four => RpcKeyKind::Four,
+            KeyKind::Five => RpcKeyKind::Five,
+            KeyKind::Six => RpcKeyKind::Six,
+            KeyKind::Seven => RpcKeyKind::Seven,
+            KeyKind::Eight => RpcKeyKind::Eight,
+            KeyKind::Nine => RpcKeyKind::Nine,
+            KeyKind::F1 => RpcKeyKind::F1,
+            KeyKind::F2 => RpcKeyKind::F2,
+            KeyKind::F3 => RpcKeyKind::F3,
+            KeyKind::F4 => RpcKeyKind::F4,
+            KeyKind::F5 => RpcKeyKind::F5,
+            KeyKind::F6 => RpcKeyKind::F6,
+            KeyKind::F7 => RpcKeyKind::F7,
+            KeyKind::F8 => RpcKeyKind::F8,
+            KeyKind::F9 => RpcKeyKind::F9,
+            KeyKind::F10 => RpcKeyKind::F10,
+            KeyKind::F11 => RpcKeyKind::F11,
+            KeyKind::F12 => RpcKeyKind::F12,
+            KeyKind::Up => RpcKeyKind::Up,
+            KeyKind::Down => RpcKeyKind::Down,
+            KeyKind::Left => RpcKeyKind::Left,
+            KeyKind::Right => RpcKeyKind::Right,
+            KeyKind::Home => RpcKeyKind::Home,
+            KeyKind::End => RpcKeyKind::End,
+            KeyKind::PageUp => RpcKeyKind::PageUp,
+            KeyKind::PageDown => RpcKeyKind::PageDown,
+            KeyKind::Insert => RpcKeyKind::Insert,
+            KeyKind::Delete => RpcKeyKind::Delete,
+            KeyKind::Ctrl => RpcKeyKind::Ctrl,
+            KeyKind::Enter => RpcKeyKind::Enter,
+            KeyKind::Space => RpcKeyKind::Space,
+            KeyKind::Tilde => RpcKeyKind::Tilde,
+            KeyKind::Quote => RpcKeyKind::Quote,
+            KeyKind::Semicolon => RpcKeyKind::Semicolon,
+            KeyKind::Comma => RpcKeyKind::Comma,
+            KeyKind::Period => RpcKeyKind::Period,
+            KeyKind::Slash => RpcKeyKind::Slash,
+            KeyKind::Esc => RpcKeyKind::Esc,
+            KeyKind::Shift => RpcKeyKind::Shift,
+            KeyKind::Alt => RpcKeyKind::Alt,
+        }
+    }
 }
 
 #[derive(Debug)]
-pub struct DefaultKeySender {
-    kind: KeySenderKind,
-    delay_rng: Rng,
-    delay_mean_std_pair: (f32, f32),
-    delay_map: RefCell<HashMap<KeyKind, u32>>,
+pub struct InputReceiver {
+    inner: PlatformInputReceiver,
+    #[cfg(test)]
+    window: Window,
+    #[cfg(test)]
+    kind: PlatformInputKind,
+}
+
+impl InputReceiver {
+    pub fn new(window: Window, kind: PlatformInputKind) -> Self {
+        Self {
+            inner: PlatformInputReceiver::new(window, kind).expect("supported platform"),
+            #[cfg(test)]
+            window,
+            #[cfg(test)]
+            kind,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn window(&self) -> Window {
+        self.window
+    }
+
+    #[cfg(test)]
+    pub fn kind(&self) -> PlatformInputKind {
+        self.kind
+    }
+
+    #[inline]
+    pub fn try_recv(&mut self) -> Result<KeyKind> {
+        Ok(self.inner.try_recv()?.into())
+    }
+}
+
+/// Input method to use.
+///
+/// This is a bridge enum between platform-specific and gRPC input options.
+pub enum InputMethod {
+    Rpc(Window, String),
+    Default(Window, PlatformInputKind),
+}
+
+/// Inner kind of [`InputMethod`].
+///
+/// The above [`InputMethod`] will be converted to this inner kind that contains the actual
+/// sending structure.
+#[derive(Debug)]
+enum InputMethodInner {
+    Rpc(Window, Option<RefCell<InputService>>),
+    Default(PlatformInput),
 }
 
 #[derive(Debug)]
@@ -92,10 +512,39 @@ enum InputDelay {
     AlreadyTracked,
 }
 
-impl DefaultKeySender {
-    pub fn new(method: KeySenderMethod, seeds: Seeds) -> Self {
+/// A trait for sending inputs.
+#[cfg_attr(test, automock)]
+pub trait Input: Debug {
+    fn set_method(&mut self, method: InputMethod);
+
+    /// Sends mouse `kind` to `(x, y)` relative to the client coordinate (e.g. capture area).
+    ///
+    /// `(0, 0)` is top-left and `(width, height)` is bottom-right.
+    fn send_mouse(&self, x: i32, y: i32, kind: MouseKind) -> Result<()>;
+
+    fn send_key(&self, kind: KeyKind) -> Result<()>;
+
+    fn send_key_up(&self, kind: KeyKind) -> Result<()>;
+
+    fn send_key_down(&self, kind: KeyKind) -> Result<()>;
+
+    fn all_keys_cleared(&self) -> bool;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+#[derive(Debug)]
+pub struct DefaultInput {
+    kind: InputMethodInner,
+    delay_rng: Rng,
+    delay_mean_std_pair: (f32, f32),
+    delay_map: RefCell<HashMap<KeyKind, u32>>,
+}
+
+impl DefaultInput {
+    pub fn new(method: InputMethod, seeds: Seeds) -> Self {
         Self {
-            kind: to_key_sender_kind_from(method, &seeds.seed),
+            kind: input_method_inner_from(method, &seeds.seed),
             delay_rng: Rng::new(seeds.seed),
             delay_mean_std_pair: (BASE_MEAN_MS_DELAY, BASE_STD_MS_DELAY),
             delay_map: RefCell::new(HashMap::new()),
@@ -103,60 +552,58 @@ impl DefaultKeySender {
     }
 
     #[inline]
-    fn send_inner(&self, kind: KeyKind) -> Result<()> {
+    fn send_key_inner(&self, kind: KeyKind) -> Result<()> {
         match &self.kind {
-            KeySenderKind::Rpc(_, service) => {
+            InputMethodInner::Rpc(_, service) => {
                 if let Some(cell) = service {
                     cell.borrow_mut()
-                        .send(kind, self.random_input_delay_tick_count().0)?;
+                        .send_key(kind.into(), self.random_input_delay_tick_count().0)?;
                 }
-                Ok(())
             }
-            KeySenderKind::Default(keys) => {
-                match self.track_input_delay(kind) {
-                    InputDelay::Untracked => keys.send(kind)?,
-                    InputDelay::Tracked => keys.send_down(kind)?,
-                    InputDelay::AlreadyTracked => (),
-                }
-                Ok(())
-            }
+            InputMethodInner::Default(input) => match self.track_input_delay(kind) {
+                InputDelay::Untracked => input.send_key(kind.into())?,
+                InputDelay::Tracked => input.send_key_down(kind.into())?,
+                InputDelay::AlreadyTracked => (),
+            },
         }
+
+        Ok(())
     }
 
     #[inline]
-    fn send_up_inner(&self, kind: KeyKind, forced: bool) -> Result<()> {
+    fn send_key_up_inner(&self, kind: KeyKind, forced: bool) -> Result<()> {
         match &self.kind {
-            KeySenderKind::Rpc(_, service) => {
+            InputMethodInner::Rpc(_, service) => {
                 if let Some(cell) = service {
-                    cell.borrow_mut().send_up(kind)?;
+                    cell.borrow_mut().send_key_up(kind.into())?;
                 }
-                Ok(())
             }
-            KeySenderKind::Default(keys) => {
+            InputMethodInner::Default(input) => {
                 if forced || !self.has_input_delay(kind) {
-                    keys.send_up(kind)?;
+                    input.send_key_up(kind.into())?;
                 }
-                Ok(())
             }
         }
+
+        Ok(())
     }
 
     #[inline]
-    fn send_down_inner(&self, kind: KeyKind) -> Result<()> {
+    fn send_key_down_inner(&self, kind: KeyKind) -> Result<()> {
         match &self.kind {
-            KeySenderKind::Rpc(_, service) => {
+            InputMethodInner::Rpc(_, service) => {
                 if let Some(cell) = service {
-                    cell.borrow_mut().send_down(kind)?;
+                    cell.borrow_mut().send_key_down(kind.into())?;
                 }
-                Ok(())
             }
-            KeySenderKind::Default(keys) => {
+            InputMethodInner::Default(input) => {
                 if !self.has_input_delay(kind) {
-                    keys.send_down(kind)?;
+                    input.send_key_down(kind.into())?;
                 }
-                Ok(())
             }
         }
+
+        Ok(())
     }
 
     #[inline]
@@ -171,7 +618,7 @@ impl DefaultKeySender {
     /// timed out. If [`InputDelay::Untracked`] is returned, it is expected that both down and up
     /// key strokes are sent.
     ///
-    /// This function should only be used for [`Self::send`] as the other two should be handled
+    /// This function should only be used for [`Self::send_key`] as the other two should be handled
     /// by the external caller.
     fn track_input_delay(&self, kind: KeyKind) -> InputDelay {
         let mut map = self.delay_map.borrow_mut();
@@ -212,7 +659,7 @@ impl DefaultKeySender {
         map.retain(|kind, delay| {
             *delay = delay.saturating_sub(1);
             if *delay == 0 {
-                let _ = self.send_up_inner(*kind, true);
+                let _ = self.send_key_up_inner(*kind, true);
             }
             *delay != 0
         });
@@ -225,77 +672,54 @@ impl DefaultKeySender {
     }
 }
 
-impl KeySender for DefaultKeySender {
-    fn set_method(&mut self, method: KeySenderMethod) {
-        match &method {
-            KeySenderMethod::Rpc(handle, url) => {
-                if let KeySenderKind::Rpc(ref cur_handle, ref option) = self.kind {
-                    let service = option.as_ref();
-                    let service_borrow = service.map(|service| service.borrow_mut());
-                    if let Some(mut borrow) = service_borrow
-                        && borrow.url() == url
-                        && handle == cur_handle
-                    {
-                        let _ = borrow.init(self.delay_rng.seed());
-                        borrow.reset();
-                        return;
-                    }
-                }
-            }
-            KeySenderMethod::Default(_, _) => (),
-        }
-        self.kind = to_key_sender_kind_from(method, self.delay_rng.seed());
+impl Input for DefaultInput {
+    fn set_method(&mut self, method: InputMethod) {
+        self.kind = input_method_inner_from(method, self.delay_rng.seed());
     }
 
-    fn send(&self, kind: KeyKind) -> Result<()> {
-        self.send_inner(kind)
-    }
-
-    fn send_mouse(&self, x: i32, y: i32, action: MouseAction) -> Result<()> {
+    fn send_mouse(&self, x: i32, y: i32, kind: MouseKind) -> Result<()> {
         match &self.kind {
-            KeySenderKind::Rpc(handle, service) => {
+            InputMethodInner::Rpc(window, service) => {
                 if let Some(cell) = service {
                     let mut borrow = cell.borrow_mut();
-                    let coordinates = windows::client_to_monitor_or_frame(
-                        *handle,
-                        x,
-                        y,
-                        matches!(borrow.mouse_coordinate(), rpc::Coordinate::Screen),
-                    )?;
-                    let action = match action {
-                        MouseAction::Move => rpc::MouseAction::Move,
-                        MouseAction::Click => rpc::MouseAction::Click,
-                        MouseAction::Scroll => rpc::MouseAction::ScrollDown,
+                    let relative = match borrow.mouse_coordinate() {
+                        rpc::Coordinate::Screen => CoordinateRelative::Monitor,
+                        rpc::Coordinate::Relative => CoordinateRelative::Window,
                     };
+                    let coordinates = window.convert_coordinate(x, y, relative)?;
 
                     borrow.send_mouse(
                         coordinates.width,
                         coordinates.height,
                         coordinates.x,
                         coordinates.y,
-                        action,
+                        kind.into(),
                     )?;
                 }
-                Ok(())
             }
-            KeySenderKind::Default(keys) => {
-                let action = match action {
-                    MouseAction::Move => windows::MouseAction::Move,
-                    MouseAction::Click => windows::MouseAction::Click,
-                    MouseAction::Scroll => windows::MouseAction::Scroll,
+            InputMethodInner::Default(keys) => {
+                let kind = match kind {
+                    MouseKind::Move => PlatformMouseKind::Move,
+                    MouseKind::Click => PlatformMouseKind::Click,
+                    MouseKind::Scroll => PlatformMouseKind::Scroll,
                 };
-                keys.send_mouse(x, y, action)?;
-                Ok(())
+                keys.send_mouse(x, y, kind)?;
             }
         }
+
+        Ok(())
     }
 
-    fn send_up(&self, kind: KeyKind) -> Result<()> {
-        self.send_up_inner(kind, false)
+    fn send_key(&self, kind: KeyKind) -> Result<()> {
+        self.send_key_inner(kind)
     }
 
-    fn send_down(&self, kind: KeyKind) -> Result<()> {
-        self.send_down_inner(kind)
+    fn send_key_up(&self, kind: KeyKind) -> Result<()> {
+        self.send_key_up_inner(kind, false)
+    }
+
+    fn send_key_down(&self, kind: KeyKind) -> Result<()> {
+        self.send_key_down_inner(kind)
     }
 
     #[inline]
@@ -309,68 +733,71 @@ impl KeySender for DefaultKeySender {
     }
 }
 
-/// A bridge enum between platform-specific and database capture options.
-#[derive(Debug)]
-pub enum ImageCaptureKind {
-    BitBlt(BitBltCapture),
-    Wgc(Option<WgcCapture>),
-    BitBltArea(WindowBoxCapture),
-}
-
 /// A struct for managing different capture modes.
+///
+/// Bridge for platform and database.
 #[derive(Debug)]
-pub struct ImageCapture {
-    kind: ImageCaptureKind,
+pub struct Capture {
+    inner: PlatformCapture,
+    mode: CaptureMode,
 }
 
-impl ImageCapture {
-    pub fn new(handle: Handle, mode: CaptureMode) -> Self {
+impl Capture {
+    pub fn new(window: Window) -> Self {
         Self {
-            kind: to_image_capture_kind_from(handle, mode),
+            inner: PlatformCapture::new(window).expect("supported platform"),
+            mode: CaptureMode::BitBlt,
         }
     }
-
-    pub fn kind(&self) -> &ImageCaptureKind {
-        &self.kind
-    }
-
+    #[inline]
     pub fn grab(&mut self) -> Option<Frame> {
-        match &mut self.kind {
-            ImageCaptureKind::BitBlt(capture) => capture.grab().ok(),
-            ImageCaptureKind::Wgc(capture) => {
-                capture.as_mut().and_then(|capture| capture.grab().ok())
-            }
-            ImageCaptureKind::BitBltArea(capture) => capture.grab().ok(),
-        }
+        self.inner.grab().ok()
     }
 
-    pub fn set_mode(&mut self, handle: Handle, mode: CaptureMode) {
-        self.kind = to_image_capture_kind_from(handle, mode);
+    #[inline]
+    pub fn window(&self) -> Window {
+        self.inner.window().expect("supported platform")
+    }
+
+    #[inline]
+    pub fn set_window(&mut self, window: Window) {
+        self.inner.set_window(window).expect("supported platform");
+    }
+
+    #[inline]
+    pub fn mode(&self) -> CaptureMode {
+        self.mode
+    }
+
+    #[inline]
+    pub fn set_mode(&mut self, mode: CaptureMode) {
+        self.mode = mode;
+
+        if cfg!(windows) {
+            let kind = match mode {
+                CaptureMode::BitBlt => WindowsCaptureKind::BitBlt,
+                CaptureMode::WindowsGraphicsCapture => WindowsCaptureKind::Wgc(MS_PER_TICK),
+                CaptureMode::BitBltArea => WindowsCaptureKind::BitBltArea,
+            };
+            let _ = self.inner.windows_capture_kind(kind);
+        }
     }
 }
 
 #[inline]
-fn to_key_sender_kind_from(method: KeySenderMethod, seed: &[u8]) -> KeySenderKind {
+fn input_method_inner_from(method: InputMethod, seed: &[u8]) -> InputMethodInner {
     match method {
-        KeySenderMethod::Rpc(handle, url) => {
-            let mut service = KeysService::connect(url);
+        InputMethod::Rpc(handle, url) => {
+            let mut service = InputService::connect(url);
             if let Ok(ref mut service) = service {
                 let _ = service.init(seed);
             }
-            KeySenderKind::Rpc(handle, service.ok().map(RefCell::new))
-        }
-        KeySenderMethod::Default(handle, kind) => KeySenderKind::Default(Keys::new(handle, kind)),
-    }
-}
 
-#[inline]
-fn to_image_capture_kind_from(handle: Handle, mode: CaptureMode) -> ImageCaptureKind {
-    match mode {
-        CaptureMode::BitBlt => ImageCaptureKind::BitBlt(BitBltCapture::new(handle, false)),
-        CaptureMode::WindowsGraphicsCapture => {
-            ImageCaptureKind::Wgc(WgcCapture::new(handle, MS_PER_TICK).ok())
+            InputMethodInner::Rpc(handle, service.ok().map(RefCell::new))
         }
-        CaptureMode::BitBltArea => ImageCaptureKind::BitBltArea(WindowBoxCapture::default()),
+        InputMethod::Default(handle, kind) => {
+            InputMethodInner::Default(PlatformInput::new(handle, kind).expect("supported platform"))
+        }
     }
 }
 
@@ -385,13 +812,13 @@ mod tests {
         64, 44, 192, 172, 191, 191, 157, 107, 206, 193, 55, 115, 68,
     ];
 
-    fn test_key_sender() -> DefaultKeySender {
+    fn test_key_sender() -> DefaultInput {
         let seeds = Seeds {
             id: None,
             seed: SEED,
         };
-        DefaultKeySender::new(
-            KeySenderMethod::Default(Handle::new("Handle"), KeyInputKind::Fixed),
+        DefaultInput::new(
+            InputMethod::Default(Window::new("Handle"), PlatformInputKind::Focused),
             seeds,
         )
     }

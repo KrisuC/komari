@@ -4,7 +4,7 @@ use opencv::{
     boxed_ref::BoxedRef,
     core::{_InputArray, CV_8UC4, Mat, MatTraitConst, ToInputArray},
 };
-use platforms::windows::Frame;
+use platforms::capture::Frame;
 
 // A Mat that owns the external buffer.
 #[derive(Debug)]

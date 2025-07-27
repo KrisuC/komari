@@ -44,7 +44,8 @@ use windows::{
     core::{HSTRING, Interface, RuntimeName},
 };
 
-use super::{Error, Frame, Handle, HandleCell};
+use super::{Handle, HandleCell};
+use crate::{Error, Result, capture::Frame};
 
 const MAX_FRAME_FAILURE: u32 = 3;
 
@@ -68,7 +69,7 @@ struct WgcCaptureInner {
 }
 
 impl WgcCaptureInner {
-    fn grab_with_timeout(&mut self) -> Result<Frame, Error> {
+    fn grab_with_timeout(&mut self) -> Result<Frame> {
         let message = self
             .frame_rx
             .recv_timeout(Duration::from_millis(self.frame_timeout))
@@ -85,7 +86,7 @@ impl WgcCaptureInner {
                 if self.consecutive_failure >= MAX_FRAME_FAILURE {
                     Error::WindowNotFound
                 } else {
-                    Error::FrameNotAvailable
+                    Error::WindowFrameNotAvailable
                 }
             })?;
 
@@ -208,7 +209,7 @@ pub struct WgcCapture {
 }
 
 impl WgcCapture {
-    pub fn new(handle: Handle, frame_timeout: u64) -> Result<Self, Error> {
+    pub fn new(handle: Handle, frame_timeout: u64) -> Result<Self> {
         let (d3d11_device, d3d11_context) = create_d3d11_device()?;
         let d3d_device = create_d3d_device(&d3d11_device)?;
         Ok(Self {
@@ -221,7 +222,7 @@ impl WgcCapture {
         })
     }
 
-    pub fn grab(&mut self) -> Result<Frame, Error> {
+    pub fn grab(&mut self) -> Result<Frame> {
         if self.inner.is_none()
             && let Some(handle) = self.handle.as_inner()
         {
@@ -242,7 +243,7 @@ impl WgcCapture {
         let _ = self.inner.take();
     }
 
-    fn start_capture(&mut self, handle: HWND) -> Result<(), Error> {
+    fn start_capture(&mut self, handle: HWND) -> Result<()> {
         let (tx, rx) = mpsc::channel::<Message>();
         let frame_format = DirectXPixelFormat::B8G8R8A8UIntNormalized;
 
@@ -290,7 +291,7 @@ impl WgcCapture {
 }
 
 #[inline]
-fn get_client_rect(handle: HWND, width: u32, height: u32) -> Result<D3D11_BOX, Error> {
+fn get_client_rect(handle: HWND, width: u32, height: u32) -> Result<D3D11_BOX> {
     let mut window_rect = RECT::default();
     let mut client_rect = RECT::default();
     unsafe { GetClientRect(handle, &mut client_rect)? };
@@ -306,7 +307,7 @@ fn get_client_rect(handle: HWND, width: u32, height: u32) -> Result<D3D11_BOX, E
     let rect_width = (client_rect.right - client_rect.left) as u32;
     let rect_height = (client_rect.bottom - client_rect.top) as u32;
     if rect_width == 0 || rect_height == 0 {
-        return Err(Error::InvalidWindowSize);
+        return Err(Error::WindowInvalidSize);
     }
     let mut upper_left = POINT::default();
     unsafe { ClientToScreen(handle, &mut upper_left).ok()? };
@@ -346,7 +347,7 @@ fn create_texture_2d(
     width: u32,
     height: u32,
     format: DXGI_FORMAT,
-) -> Result<ID3D11Texture2D, Error> {
+) -> Result<ID3D11Texture2D> {
     let mut texture = None;
     let texture_desc = D3D11_TEXTURE2D_DESC {
         Width: width,
@@ -374,14 +375,14 @@ fn create_capture_session(
     device: &IDirect3DDevice,
     item: &GraphicsCaptureItem,
     format: DirectXPixelFormat,
-) -> Result<(GraphicsCaptureSession, Direct3D11CaptureFramePool), Error> {
+) -> Result<(GraphicsCaptureSession, Direct3D11CaptureFramePool)> {
     let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(device, format, 1, item.Size()?)?;
     let session = pool.CreateCaptureSession(item)?;
     Ok((session, pool))
 }
 
 #[inline]
-fn create_graphics_capture_item(handle: HWND) -> Result<GraphicsCaptureItem, Error> {
+fn create_graphics_capture_item(handle: HWND) -> Result<GraphicsCaptureItem> {
     let factory = unsafe {
         RoGetActivationFactory::<IGraphicsCaptureItemInterop>(&HSTRING::from(
             GraphicsCaptureItem::NAME,
@@ -391,7 +392,7 @@ fn create_graphics_capture_item(handle: HWND) -> Result<GraphicsCaptureItem, Err
 }
 
 #[inline]
-fn create_d3d11_device() -> Result<(ID3D11Device, ID3D11DeviceContext), Error> {
+fn create_d3d11_device() -> Result<(ID3D11Device, ID3D11DeviceContext)> {
     let feature_flags = [
         D3D_FEATURE_LEVEL_11_0,
         D3D_FEATURE_LEVEL_10_1,
@@ -417,7 +418,7 @@ fn create_d3d11_device() -> Result<(ID3D11Device, ID3D11DeviceContext), Error> {
 }
 
 #[inline]
-fn create_d3d_device(d3d11_device: &ID3D11Device) -> Result<IDirect3DDevice, Error> {
+fn create_d3d_device(d3d11_device: &ID3D11Device) -> Result<IDirect3DDevice> {
     let dxgi_device = d3d11_device.cast::<IDXGIDevice>()?;
     let inspectable = unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device)? };
     let d3d_device = inspectable.cast()?;

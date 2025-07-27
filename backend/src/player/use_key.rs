@@ -1,7 +1,6 @@
 use std::cmp::Ordering;
 
 use opencv::core::Point;
-use platforms::windows::KeyKind;
 
 use super::{
     PingPongDirection, PlayerActionAutoMob, PlayerState, Timeout,
@@ -13,6 +12,7 @@ use super::{
 };
 use crate::{
     ActionKeyDirection, ActionKeyWith, Class, KeyBinding, LinkKeyBinding, Position,
+    bridge::KeyKind,
     context::Context,
     player::{LastMovement, MOVE_TIMEOUT, Moving, Player, on_action_state_mut},
 };
@@ -214,14 +214,14 @@ pub fn update_use_key_context(
             };
             match next_timeout_lifecycle(timeout, CHANGE_DIRECTION_TIMEOUT) {
                 Lifecycle::Started(timeout) => {
-                    let _ = context.keys.send_down(key);
+                    let _ = context.input.send_key_down(key);
                     Player::UseKey(UseKey {
                         stage: UseKeyStage::ChangingDirection(timeout),
                         ..use_key
                     })
                 }
                 Lifecycle::Ended => {
-                    let _ = context.keys.send_up(key);
+                    let _ = context.input.send_key_up(key);
                     state.last_known_direction = use_key.direction;
                     Player::UseKey(UseKey {
                         stage: UseKeyStage::Precondition,
@@ -259,7 +259,7 @@ pub fn update_use_key_context(
             match use_key.link_key {
                 Some(LinkKeyBinding::After(_)) => {
                     if !timeout.started {
-                        let _ = context.keys.send(use_key.key.into());
+                        let _ = context.input.send_key(use_key.key.into());
                     }
                     if !completed {
                         return update_link_key(
@@ -273,8 +273,8 @@ pub fn update_use_key_context(
                     }
                 }
                 Some(LinkKeyBinding::AtTheSame(key)) => {
-                    let _ = context.keys.send(key.into());
-                    let _ = context.keys.send(use_key.key.into());
+                    let _ = context.input.send_key(key.into());
+                    let _ = context.input.send_key(use_key.key.into());
                 }
                 Some(LinkKeyBinding::Along(_)) => {
                     if !completed {
@@ -300,7 +300,7 @@ pub fn update_use_key_context(
                         );
                     }
                     debug_assert!(use_key.link_key.is_none() || completed);
-                    let _ = context.keys.send(use_key.key.into());
+                    let _ = context.input.send_key(use_key.key.into());
                 }
             }
             let next = Player::UseKey(UseKey {
@@ -416,9 +416,9 @@ fn update_link_key(
     match next_timeout_lifecycle(timeout, link_key_timeout) {
         Lifecycle::Started(timeout) => {
             if let LinkKeyBinding::Before(key) = link_key {
-                let _ = context.keys.send(key.into());
+                let _ = context.input.send_key(key.into());
             } else if let LinkKeyBinding::Along(key) = link_key {
-                let _ = context.keys.send_down(key.into());
+                let _ = context.input.send_key_down(key.into());
             }
             Player::UseKey(UseKey {
                 stage: UseKeyStage::Using(timeout, completed),
@@ -427,12 +427,12 @@ fn update_link_key(
         }
         Lifecycle::Ended => {
             if let LinkKeyBinding::After(key) = link_key {
-                let _ = context.keys.send(key.into());
+                let _ = context.input.send_key(key.into());
                 if matches!(class, Class::Blaster) && KeyKind::from(key) != jump_key {
-                    let _ = context.keys.send(jump_key);
+                    let _ = context.input.send_key(jump_key);
                 }
             } else if let LinkKeyBinding::Along(key) = link_key {
-                let _ = context.keys.send_up(key.into());
+                let _ = context.input.send_key_up(key.into());
             }
             Player::UseKey(UseKey {
                 stage: UseKeyStage::Using(timeout, true),
@@ -443,7 +443,7 @@ fn update_link_key(
             if matches!(link_key, LinkKeyBinding::Along(_))
                 && timeout.total == LINK_ALONG_PRESS_TICK
             {
-                let _ = context.keys.send(use_key.key.into());
+                let _ = context.input.send_key(use_key.key.into());
             }
             Player::UseKey(UseKey {
                 stage: UseKeyStage::Using(timeout, completed),
@@ -465,11 +465,9 @@ fn random_wait_ticks(wait_base_ticks: u32, wait_random_range: u32) -> u32 {
 mod tests {
     use std::assert_matches::assert_matches;
 
-    use platforms::windows::KeyKind;
-
     use crate::{
         ActionKeyDirection, ActionKeyWith, KeyBinding, LinkKeyBinding,
-        bridge::MockKeySender,
+        bridge::{KeyKind, MockInput},
         context::Context,
         player::{
             Player, PlayerState, Timeout, update_non_positional_context,
@@ -518,11 +516,11 @@ mod tests {
 
     #[test]
     fn use_key_change_direction() {
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
             .withf(|key| matches!(key, KeyKind::Left))
             .returning(|_| Ok(()));
-        keys.expect_send_up()
+        keys.expect_send_key_up()
             .withf(|key| matches!(key, KeyKind::Left))
             .returning(|_| Ok(()));
         let mut state = PlayerState::default();
@@ -584,8 +582,8 @@ mod tests {
 
     #[test]
     fn use_key_count() {
-        let mut keys = MockKeySender::new();
-        keys.expect_send()
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
             .times(100)
             .withf(|key| matches!(key, KeyKind::A))
             .returning(|_| Ok(()));
@@ -638,8 +636,8 @@ mod tests {
 
     #[test]
     fn use_key_stalling() {
-        let mut keys = MockKeySender::new();
-        keys.expect_send()
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
             .withf(|key| matches!(key, KeyKind::A))
             .return_once(|_| Ok(()));
         let mut state = PlayerState::default();
@@ -717,22 +715,22 @@ mod tests {
         };
 
         // Starts by holding down Alt key
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
             .withf(|key| matches!(key, KeyKind::Alt))
             .once()
             .return_once(|_| Ok(()));
-        context.keys = Box::new(keys);
+        context.input = Box::new(keys);
         update_use_key_context(&context, &mut state, use_key);
-        let _ = context.keys; // test check point by dropping
+        let _ = context.input; // test check point by dropping
 
         // Sends A at tick 2
-        let mut keys = MockKeySender::new();
-        keys.expect_send()
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
             .withf(|key| matches!(key, KeyKind::A))
             .once()
             .return_once(|_| Ok(()));
-        context.keys = Box::new(keys);
+        context.input = Box::new(keys);
         use_key.stage = UseKeyStage::Using(
             Timeout {
                 started: true,
@@ -755,15 +753,15 @@ mod tests {
                 ..
             })
         );
-        let _ = context.keys; // test check point by dropping
+        let _ = context.input; // test check point by dropping
 
         // Ends by releasing Alt
-        let mut keys = MockKeySender::new();
-        keys.expect_send_up()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_up()
             .withf(|key| matches!(key, KeyKind::Alt))
             .once()
             .return_once(|_| Ok(()));
-        context.keys = Box::new(keys);
+        context.input = Box::new(keys);
         use_key.stage = UseKeyStage::Using(
             Timeout {
                 started: true,

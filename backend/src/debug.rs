@@ -22,8 +22,9 @@ use opencv::{
     highgui::{imshow, wait_key},
     imgcodecs::imwrite_def,
 };
-use platforms::windows::KeyKind;
 use rand::distr::{Alphanumeric, SampleString};
+
+use crate::bridge::KeyKind;
 
 static DATASET_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
     let dir = env::current_exe()

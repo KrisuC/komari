@@ -1,5 +1,3 @@
-use platforms::windows::KeyKind;
-
 use super::{
     Player, PlayerActionKey, PlayerActionPingPong, PlayerState,
     actions::on_ping_pong_double_jump_action,
@@ -9,6 +7,7 @@ use super::{
 };
 use crate::{
     ActionKeyWith,
+    bridge::KeyKind,
     context::Context,
     minimap::Minimap,
     player::{
@@ -105,7 +104,7 @@ pub fn update_up_jumping_context(
 
             // Only send Up key when the key is not of a Demon Slayer
             if !matches!(up_jump_key, Some(KeyKind::Up)) {
-                let _ = context.keys.send_down(KeyKind::Up);
+                let _ = context.input.send_key_down(KeyKind::Up);
             }
             match (up_jump_key, has_teleport_key) {
                 // This is a generic class, a mage or a Demon Slayer
@@ -114,7 +113,7 @@ pub fn update_up_jumping_context(
                     // is less than `TELEPORT_UP_JUMP_THRESHOLD`, do not send jump key.
                     let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
                     if !can_mage_skip_jump_key(up_jump_key, has_teleport_key, y_distance) {
-                        let _ = context.keys.send(jump_key);
+                        let _ = context.input.send_key(jump_key);
                     }
                 }
                 _ => (),
@@ -128,7 +127,7 @@ pub fn update_up_jumping_context(
             )
         }
         MovingLifecycle::Ended(moving) => {
-            let _ = context.keys.send_up(KeyKind::Up);
+            let _ = context.input.send_key_up(KeyKind::Up);
             Player::Moving(moving.dest, moving.exact, moving.intermediates)
         }
         MovingLifecycle::Updated(mut moving) => {
@@ -144,9 +143,9 @@ pub fn update_up_jumping_context(
                         if moving.timeout.total >= up_jumping.spam_delay {
                             // This up jump key is Up for Demon Slayer
                             if let Some(key) = up_jump_key {
-                                let _ = context.keys.send(key);
+                                let _ = context.input.send_key(key);
                             } else {
-                                let _ = context.keys.send(jump_key);
+                                let _ = context.input.send_key(jump_key);
                             }
                         }
                     } else {
@@ -161,12 +160,12 @@ pub fn update_up_jumping_context(
                         || (y_distance <= TELEPORT_UP_JUMP_THRESHOLD
                             || moving.timeout.total >= SPAM_DELAY)
                     {
-                        let _ = context.keys.send(key);
+                        let _ = context.input.send_key(key);
                         moving = moving.completed(true);
                     }
                 }
                 (true, _, _) => {
-                    let _ = context.keys.send_up(KeyKind::Up);
+                    let _ = context.input.send_key_up(KeyKind::Up);
                 }
             }
 
@@ -178,7 +177,7 @@ pub fn update_up_jumping_context(
                             && moving.is_destination_intermediate()
                             && y_direction <= 0
                         {
-                            let _ = context.keys.send_up(KeyKind::Up);
+                            let _ = context.input.send_key_up(KeyKind::Up);
                             return Some((
                                 Player::Moving(moving.dest, moving.exact, moving.intermediates),
                                 false,
@@ -249,11 +248,10 @@ mod tests {
     use std::assert_matches::assert_matches;
 
     use opencv::core::Point;
-    use platforms::windows::KeyKind;
 
     use super::{Moving, PlayerState, UpJumping, update_up_jumping_context};
     use crate::{
-        bridge::MockKeySender,
+        bridge::{KeyKind, MockInput},
         context::Context,
         player::{Player, Timeout},
     };
@@ -272,49 +270,49 @@ mod tests {
         state.last_known_pos = Some(pos);
         state.is_stationary = true;
 
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
             .withf(|key| matches!(key, KeyKind::Up))
             .returning(|_| Ok(()))
             .once();
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| matches!(key, KeyKind::Space))
             .returning(|_| Ok(()))
             .once();
-        context.keys = Box::new(keys);
+        context.input = Box::new(keys);
         // Space + Up only
         update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
-        let _ = context.keys; // drop mock for validation
+        let _ = context.input; // drop mock for validation
 
         state.config.upjump_key = Some(KeyKind::C);
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
             .withf(|key| matches!(key, KeyKind::Up))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| matches!(key, KeyKind::Space))
             .never()
             .returning(|_| Ok(()));
-        context.keys = Box::new(keys);
+        context.input = Box::new(keys);
         // Up only
         update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
-        let _ = context.keys; // drop mock for validation
+        let _ = context.input; // drop mock for validation
 
         state.config.teleport_key = Some(KeyKind::Shift);
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
             .withf(|key| matches!(key, KeyKind::Up))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| matches!(key, KeyKind::Space))
             .once()
             .returning(|_| Ok(()));
-        context.keys = Box::new(keys);
+        context.input = Box::new(keys);
         // Space + Up
         update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
-        let _ = context.keys; // drop mock for validation
+        let _ = context.input; // drop mock for validation
     }
 
     #[test]
@@ -366,36 +364,36 @@ mod tests {
         state.last_known_pos = Some(pos);
         state.is_stationary = true;
 
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
             .withf(|key| *key == KeyKind::Up)
             .never();
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| *key == KeyKind::Space)
             .once()
             .returning(|_| Ok(()));
         let mut context = Context::new(None, None);
-        context.keys = Box::new(keys);
+        context.input = Box::new(keys);
 
         // Start by sending Space only
         update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
-        let _ = context.keys;
+        let _ = context.input;
 
         // Update by sending Up
-        let mut keys = MockKeySender::new();
+        let mut keys = MockInput::new();
         moving.timeout.total = 7; // SPAM_DELAY
         moving.timeout.started = true;
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| *key == KeyKind::Up)
             .times(2)
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| *key == KeyKind::Space)
             .never();
-        context.keys = Box::new(keys);
+        context.input = Box::new(keys);
         update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
         update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
-        let _ = context.keys;
+        let _ = context.input;
     }
 
     #[test]
@@ -416,30 +414,30 @@ mod tests {
         state.last_known_pos = Some(pos);
         state.is_stationary = true;
 
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
             .withf(|key| *key == KeyKind::Up)
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| *key == KeyKind::Space)
             .once()
             .returning(|_| Ok(()));
         let mut context = Context::new(None, None);
-        context.keys = Box::new(keys);
+        context.input = Box::new(keys);
 
         // Start by sending Up and Space
         update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
-        let _ = context.keys;
+        let _ = context.input;
 
         // Change to started
         moving.timeout.started = true;
 
         // Not sending any key before delay
-        let mut keys = MockKeySender::new();
+        let mut keys = MockInput::new();
         moving.timeout.total = 4; // Before SPAM_DELAY
-        keys.expect_send().never();
-        context.keys = Box::new(keys);
+        keys.expect_send_key().never();
+        context.input = Box::new(keys);
         assert_matches!(
             update_up_jumping_context(&context, &mut state, UpJumping::new(moving)),
             Player::UpJumping(UpJumping {
@@ -450,16 +448,16 @@ mod tests {
                 ..
             })
         );
-        let _ = context.keys;
+        let _ = context.input;
 
         // Send key after delay
-        let mut keys = MockKeySender::new();
+        let mut keys = MockInput::new();
         moving.timeout.total = 7; // At SPAM_DELAY
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| *key == KeyKind::Shift)
             .once()
             .returning(|_| Ok(()));
-        context.keys = Box::new(keys);
+        context.input = Box::new(keys);
         assert_matches!(
             update_up_jumping_context(&context, &mut state, UpJumping::new(moving)),
             Player::UpJumping(UpJumping {
@@ -470,6 +468,6 @@ mod tests {
                 ..
             })
         );
-        let _ = context.keys;
+        let _ = context.input;
     }
 }

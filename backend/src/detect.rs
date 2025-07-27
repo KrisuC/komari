@@ -42,8 +42,8 @@ use ort::{
     session::{Session, SessionInputValue, SessionOutputs},
     value::TensorRef,
 };
-use platforms::windows::KeyKind;
 
+use crate::bridge::KeyKind;
 #[cfg(debug_assertions)]
 use crate::debug::{debug_mat, debug_spinning_arrows};
 use crate::{array::Array, buff::BuffKind, mat::OwnedMat};

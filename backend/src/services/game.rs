@@ -2,7 +2,6 @@ use std::time::{Duration, Instant};
 
 use log::debug;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Rect, Vec4b};
-use platforms::windows::{KeyKind, KeyReceiver};
 use strum::IntoEnumIterator;
 use tokio::{
     spawn,
@@ -14,6 +13,7 @@ use crate::{
     DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration, Minimap,
     PotionMode, Settings,
     array::Array,
+    bridge::InputReceiver,
     buff::BuffKind,
     context::{Context, Operation},
     database_event_receiver, minimap,
@@ -34,7 +34,7 @@ pub enum GameEvent {
 /// A service to handle game-related incoming requests and event polling.
 #[derive(Debug)]
 pub struct GameService {
-    key_receiver: KeyReceiver,
+    input_receiver: InputReceiver,
     key_sender: Sender<KeyBinding>,
     database_event_receiver: Receiver<DatabaseEvent>,
     game_state_sender: Sender<GameState>,
@@ -43,9 +43,9 @@ pub struct GameService {
 }
 
 impl GameService {
-    pub fn new(key_receiver: KeyReceiver) -> Self {
+    pub fn new(input_receiver: InputReceiver) -> Self {
         Self {
-            key_receiver,
+            input_receiver,
             key_sender: broadcast::channel(1).0,
             database_event_receiver: database_event_receiver(),
             game_state_sender: broadcast::channel(1).0,
@@ -62,8 +62,8 @@ impl GameService {
         &self.game_buffs
     }
 
-    pub fn current_key_receiver_mut(&mut self) -> &mut KeyReceiver {
-        &mut self.key_receiver
+    pub fn current_input_receiver_mut(&mut self) -> &mut InputReceiver {
+        &mut self.input_receiver
     }
 
     pub fn broadcast_state(
@@ -357,11 +357,11 @@ fn actions_from(character: &Character) -> Vec<Action> {
 // TODO: should only handle a single matched key binding
 #[inline]
 fn poll_key(service: &mut GameService, settings: &Settings) -> Option<GameEvent> {
-    let received_key = service.key_receiver.try_recv()?;
+    let received_key = service.input_receiver.try_recv().ok()?;
     debug!(target: "event", "received key {received_key:?}");
 
     if let KeyBindingConfiguration { key, enabled: true } = settings.toggle_actions_key
-        && KeyKind::from(key) == received_key
+        && key == received_key.into()
     {
         return Some(GameEvent::ToggleOperation);
     }

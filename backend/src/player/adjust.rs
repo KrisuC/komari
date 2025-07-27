@@ -1,7 +1,5 @@
 use std::cmp::Ordering;
 
-use platforms::windows::KeyKind;
-
 use super::{
     PlayerAction, PlayerActionKey, PlayerState,
     moving::Moving,
@@ -10,6 +8,7 @@ use super::{
 };
 use crate::{
     ActionKeyDirection, ActionKeyWith,
+    bridge::KeyKind,
     context::Context,
     player::{
         Player,
@@ -54,8 +53,8 @@ impl Adjusting {
         self.adjust_timeout =
             match next_timeout_lifecycle(self.adjust_timeout, ADJUSTING_SHORT_TIMEOUT) {
                 Lifecycle::Started(timeout) => {
-                    let _ = context.keys.send_up(up_key);
-                    let _ = context.keys.send(down_key);
+                    let _ = context.input.send_key_up(up_key);
+                    let _ = context.input.send_key(down_key);
                     timeout
                 }
                 Lifecycle::Ended => Timeout::default(),
@@ -103,8 +102,8 @@ pub fn update_adjusting_context(
             Player::Adjusting(adjusting.moving(moving))
         }
         MovingLifecycle::Ended(moving) => {
-            let _ = context.keys.send_up(KeyKind::Right);
-            let _ = context.keys.send_up(KeyKind::Left);
+            let _ = context.input.send_key_up(KeyKind::Right);
+            let _ = context.input.send_key_up(KeyKind::Left);
 
             Player::Moving(moving.dest, moving.exact, moving.intermediates)
         }
@@ -139,8 +138,8 @@ pub fn update_adjusting_context(
 
                 match (should_adjust_medium, should_adjust_short, direction) {
                     (true, _, Some((down_key, up_key, dir))) => {
-                        let _ = context.keys.send_up(up_key);
-                        let _ = context.keys.send_down(down_key);
+                        let _ = context.input.send_key_up(up_key);
+                        let _ = context.input.send_key_down(down_key);
                         state.last_known_direction = dir;
                     }
                     (false, true, Some((down_key, up_key, dir))) => {
@@ -148,8 +147,8 @@ pub fn update_adjusting_context(
                         state.last_known_direction = dir;
                     }
                     _ => {
-                        let _ = context.keys.send_up(KeyKind::Left);
-                        let _ = context.keys.send_up(KeyKind::Right);
+                        let _ = context.input.send_key_up(KeyKind::Left);
+                        let _ = context.input.send_key_up(KeyKind::Right);
                         moving = moving.completed(true);
                     }
                 }
@@ -247,7 +246,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        bridge::MockKeySender,
+        bridge::MockInput,
         player::{Player, PlayerState},
     };
 
@@ -294,13 +293,13 @@ mod tests {
 
     #[test]
     fn update_adjusting_context_updated_performs_medium_adjustment_right() {
-        let mut keys = MockKeySender::default();
+        let mut keys = MockInput::default();
         // Expect right to be pressed down and left to be released
-        keys.expect_send_up()
+        keys.expect_send_key_up()
             .with(eq(KeyKind::Left))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send_down()
+        keys.expect_send_key_down()
             .with(eq(KeyKind::Right))
             .once()
             .returning(|_| Ok(()));
@@ -323,12 +322,12 @@ mod tests {
 
     #[test]
     fn update_adjusting_context_updated_performs_medium_adjustment_left() {
-        let mut keys = MockKeySender::default();
-        keys.expect_send_up()
+        let mut keys = MockInput::default();
+        keys.expect_send_key_up()
             .with(eq(KeyKind::Right))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send_down()
+        keys.expect_send_key_down()
             .with(eq(KeyKind::Left))
             .once()
             .returning(|_| Ok(()));
@@ -350,12 +349,12 @@ mod tests {
 
     #[test]
     fn update_adjusting_context_updated_completes_when_no_direction_and_no_adjustment() {
-        let mut keys = MockKeySender::default();
-        keys.expect_send_up()
+        let mut keys = MockInput::default();
+        keys.expect_send_key_up()
             .with(eq(KeyKind::Left))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send_up()
+        keys.expect_send_key_up()
             .with(eq(KeyKind::Right))
             .once()
             .returning(|_| Ok(()));
@@ -385,12 +384,12 @@ mod tests {
 
     #[test]
     fn update_adjusting_context_updated_short_adjustment_started() {
-        let mut keys = MockKeySender::default();
-        keys.expect_send_up()
+        let mut keys = MockInput::default();
+        keys.expect_send_key_up()
             .with(eq(KeyKind::Left))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .with(eq(KeyKind::Right))
             .once()
             .returning(|_| Ok(()));
