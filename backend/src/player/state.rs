@@ -3,7 +3,6 @@ use std::{collections::HashMap, range::Range};
 use anyhow::Result;
 use log::debug;
 use opencv::core::{Point, Rect};
-use platforms::windows::KeyKind;
 
 use super::{
     DOUBLE_JUMP_THRESHOLD, JUMP_THRESHOLD, MOVE_TIMEOUT, Player, PlayerAction,
@@ -14,7 +13,7 @@ use super::{
 use crate::{
     ActionKeyDirection, Class,
     array::Array,
-    bridge::MouseAction,
+    bridge::{KeyKind, MouseKind},
     buff::{Buff, BuffKind},
     context::Context,
     minimap::Minimap,
@@ -101,7 +100,7 @@ pub enum LastMovement {
     Jumping,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct PlayerConfiguration {
     /// The player class.
     ///
@@ -147,6 +146,32 @@ pub struct PlayerConfiguration {
     pub use_potion_below_percent: Option<f32>,
     /// Milliseconds interval to update current health.
     pub update_health_millis: Option<u64>,
+}
+
+impl Default for PlayerConfiguration {
+    fn default() -> Self {
+        Self {
+            class: Default::default(),
+            disable_adjusting: Default::default(),
+            rune_platforms_pathing: Default::default(),
+            rune_platforms_pathing_up_jump_only: Default::default(),
+            auto_mob_platforms_pathing: Default::default(),
+            auto_mob_platforms_pathing_up_jump_only: Default::default(),
+            auto_mob_platforms_bound: Default::default(),
+            interact_key: KeyKind::A,
+            grappling_key: Default::default(),
+            teleport_key: Default::default(),
+            jump_key: KeyKind::A,
+            upjump_key: Default::default(),
+            cash_shop_key: KeyKind::A,
+            familiar_key: KeyKind::A,
+            to_town_key: KeyKind::A,
+            change_channel_key: KeyKind::A,
+            potion_key: KeyKind::A,
+            use_potion_below_percent: Default::default(),
+            update_health_millis: Default::default(),
+        }
+    }
 }
 
 /// The player persistent states.
@@ -1124,7 +1149,7 @@ impl PlayerState {
 
         self.health = Some(health);
         if ratio <= percentage {
-            let _ = context.keys.send(self.config.potion_key);
+            let _ = context.input.send_key(self.config.potion_key);
         }
     }
 
@@ -1154,10 +1179,10 @@ impl PlayerState {
                 Update::Ok(bbox) => {
                     let x = bbox.x + bbox.width / 2;
                     let y = bbox.y + bbox.height / 2;
-                    let _ = context.keys.send_mouse(x, y, MouseAction::Click);
+                    let _ = context.input.send_mouse(x, y, MouseKind::Click);
                 }
                 Update::Err(_) => {
-                    let _ = context.keys.send_mouse(300, 100, MouseAction::Move);
+                    let _ = context.input.send_mouse(300, 100, MouseKind::Move);
                 }
                 Update::Pending => (),
             }

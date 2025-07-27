@@ -14,13 +14,12 @@ use opencv::{
     core::{Vector, VectorToVec},
     imgcodecs::imencode_def,
 };
-use platforms::windows::{self};
 use strum::IntoEnumIterator;
 
 #[cfg(test)]
-use crate::{Settings, bridge::MockKeySender, detect::MockDetector};
+use crate::{Settings, bridge::MockInput, detect::MockDetector};
 use crate::{
-    bridge::{DefaultKeySender, KeySender},
+    bridge::{DefaultInput, Input},
     buff::{Buff, BuffKind, BuffState},
     database::{query_seeds, query_settings},
     detect::{CachedDetector, Detector},
@@ -72,8 +71,8 @@ pub trait Contextual {
 /// A struct that stores the game information.
 #[derive(Debug)]
 pub struct Context {
-    /// A struct to send key inputs.
-    pub keys: Box<dyn KeySender>,
+    /// A struct to send inputs.
+    pub input: Box<dyn Input>,
     /// A struct for generating random values.
     pub rng: Rng,
     /// A struct for sending notifications through web hook.
@@ -102,9 +101,9 @@ pub struct Context {
 
 impl Context {
     #[cfg(test)]
-    pub fn new(keys: Option<MockKeySender>, detector: Option<MockDetector>) -> Self {
+    pub fn new(input: Option<MockInput>, detector: Option<MockDetector>) -> Self {
         Context {
-            keys: Box::new(keys.unwrap_or_default()),
+            input: Box::new(input.unwrap_or_default()),
             rng: Rng::new(rand::random()),
             notification: DiscordNotification::new(Rc::new(RefCell::new(Settings::default()))),
             detector: detector.map(|detector| Box::new(detector) as Box<dyn Detector>),
@@ -213,7 +212,7 @@ pub fn init() {
             .join("onnxruntime.dll");
 
         ort::init_from(dll.to_str().unwrap()).commit().unwrap();
-        windows::init();
+        platforms::init();
         thread::spawn(|| {
             let tokio_rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -237,7 +236,7 @@ fn update_loop() {
     let mut rotator = Rotator::default();
     let mut navigator = Navigator::default();
     let mut context = Context {
-        keys,
+        input: keys,
         rng,
         notification: DiscordNotification::new(settings.clone()),
         detector: None,
@@ -303,9 +302,9 @@ fn update_loop() {
         // TODO: Maybe should not downcast but really don't want to public update_input_delay
         // method
         context
-            .keys
+            .input
             .as_any_mut()
-            .downcast_mut::<DefaultKeySender>()
+            .downcast_mut::<DefaultInput>()
             .unwrap()
             .update_input_delay(context.tick);
         context.notification.update_scheduled_frames(|| {

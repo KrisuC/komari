@@ -1,5 +1,4 @@
 use opencv::core::{Point, Rect};
-use platforms::windows::KeyKind;
 use strum::Display;
 
 use super::{Player, PlayerState, use_key::UseKey};
@@ -7,6 +6,7 @@ use crate::{
     Action, ActionKey, ActionKeyDirection, ActionKeyWith, ActionMove, FamiliarRarity, KeyBinding,
     Position, SwappableFamiliars,
     array::Array,
+    bridge::KeyKind,
     context::{Context, MS_PER_TICK},
     database::LinkKeyBinding,
     minimap::Minimap,
@@ -211,10 +211,10 @@ pub fn on_ping_pong_double_jump_action(
         return (Player::Idle, true);
     }
 
-    let _ = context.keys.send_up(KeyKind::Down);
-    let _ = context.keys.send_up(KeyKind::Up);
-    let _ = context.keys.send_up(KeyKind::Left);
-    let _ = context.keys.send_up(KeyKind::Right);
+    let _ = context.input.send_key_up(KeyKind::Down);
+    let _ = context.input.send_key_up(KeyKind::Up);
+    let _ = context.input.send_key_up(KeyKind::Left);
+    let _ = context.input.send_key_up(KeyKind::Right);
     let minimap_width = match context.minimap {
         Minimap::Idle(idle) => idle.bbox.width,
         _ => unreachable!(),
@@ -239,10 +239,10 @@ pub fn on_auto_mob_use_key_action(
     y_distance: i32,
 ) -> Option<(Player, bool)> {
     if x_distance <= AUTO_MOB_USE_KEY_X_THRESHOLD && y_distance <= AUTO_MOB_USE_KEY_Y_THRESHOLD {
-        let _ = context.keys.send_up(KeyKind::Down);
-        let _ = context.keys.send_up(KeyKind::Up);
-        let _ = context.keys.send_up(KeyKind::Left);
-        let _ = context.keys.send_up(KeyKind::Right);
+        let _ = context.input.send_key_up(KeyKind::Down);
+        let _ = context.input.send_key_up(KeyKind::Up);
+        let _ = context.input.send_key_up(KeyKind::Left);
+        let _ = context.input.send_key_up(KeyKind::Right);
         Some((
             Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
             false,

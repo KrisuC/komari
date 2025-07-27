@@ -50,7 +50,7 @@ pub fn update_grappling_context(
     ) {
         MovingLifecycle::Started(moving) => {
             state.last_movement = Some(LastMovement::Grappling);
-            let _ = context.keys.send(key);
+            let _ = context.input.send_key(key);
             Player::Grappling(moving)
         }
         MovingLifecycle::Ended(moving) => {
@@ -67,7 +67,7 @@ pub fn update_grappling_context(
             }
             if !moving.completed {
                 if y_direction <= 0 || y_distance <= stopping_threshold(state.velocity.1) {
-                    let _ = context.keys.send(key);
+                    let _ = context.input.send_key(key);
                     moving = moving.completed(true);
                 }
             } else if moving.timeout.current >= STOPPING_TIMEOUT {
@@ -132,10 +132,9 @@ fn stopping_threshold(velocity: f32) -> i32 {
 mod tests {
     use mockall::predicate::eq;
     use opencv::core::Point;
-    use platforms::windows::KeyKind;
 
     use super::*;
-    use crate::bridge::MockKeySender;
+    use crate::bridge::{KeyKind, MockInput};
 
     const START_POS: Point = Point { x: 100, y: 100 };
     const END_POS: Point = Point { x: 100, y: 200 };
@@ -155,8 +154,8 @@ mod tests {
     fn update_grappling_context_started() {
         let mut state = mock_state_with_grapple(END_POS);
         let moving = mock_moving(START_POS);
-        let mut keys = MockKeySender::new();
-        keys.expect_send()
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
             .once()
             .with(eq(KeyKind::Space))
             .returning(|_| Ok(()));
@@ -194,8 +193,8 @@ mod tests {
 
     #[test]
     fn update_grappling_context_updated_auto_complete_on_stopping_threshold() {
-        let mut keys = MockKeySender::new();
-        keys.expect_send()
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
             .once()
             .with(eq(KeyKind::Space))
             .returning(|_| Ok(()));

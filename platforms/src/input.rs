@@ -2,16 +2,15 @@ use crate::{Error, Result, Window};
 #[cfg(windows)]
 use crate::{windows::WindowsInput, windows::WindowsInputReceiver};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum MouseKind {
     Move,
     Click,
     Scroll,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy)]
 pub enum KeyKind {
-    #[default]
     A,
     B,
     C,

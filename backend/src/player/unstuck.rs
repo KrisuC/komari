@@ -1,11 +1,11 @@
 use opencv::core::Point;
-use platforms::windows::KeyKind;
 
 use super::{
     PlayerState,
     timeout::{Lifecycle, Timeout, next_timeout_lifecycle},
 };
 use crate::{
+    bridge::KeyKind,
     context::Context,
     minimap::Minimap,
     player::{MOVE_TIMEOUT, Player},
@@ -60,7 +60,7 @@ pub fn update_unstucking_context(
                 None
             };
             if has_settings.unwrap_or_default() || (gamba_mode && context.rng.random_bool(0.5)) {
-                let _ = context.keys.send(KeyKind::Esc);
+                let _ = context.input.send_key(KeyKind::Esc);
             }
 
             let to_right = match (gamba_mode, pos) {
@@ -72,16 +72,16 @@ pub fn update_unstucking_context(
                 (_, None) => unreachable!(),
             };
             if to_right {
-                let _ = context.keys.send_down(KeyKind::Right);
+                let _ = context.input.send_key_down(KeyKind::Right);
             } else {
-                let _ = context.keys.send_down(KeyKind::Left);
+                let _ = context.input.send_key_up(KeyKind::Left);
             }
 
             Player::Unstucking(timeout, has_settings, gamba_mode)
         }
         Lifecycle::Ended => {
-            let _ = context.keys.send_up(KeyKind::Right);
-            let _ = context.keys.send_up(KeyKind::Left);
+            let _ = context.input.send_key_up(KeyKind::Right);
+            let _ = context.input.send_key_up(KeyKind::Left);
 
             Player::Detecting
         }
@@ -92,7 +92,7 @@ pub fn update_unstucking_context(
                 _ => false,
             };
             if send_space {
-                let _ = context.keys.send(state.config.jump_key);
+                let _ = context.input.send_key(state.config.jump_key);
             }
 
             Player::Unstucking(timeout, has_settings, gamba_mode)

@@ -2,7 +2,6 @@ use std::fmt::Display;
 
 use log::debug;
 use opencv::core::{Point, Rect};
-use platforms::windows::KeyKind;
 
 use super::{
     Player, PlayerState,
@@ -11,7 +10,7 @@ use super::{
 };
 use crate::{
     array::Array,
-    bridge::MouseAction,
+    bridge::{KeyKind, MouseKind},
     context::Context,
     database::{FamiliarRarity, SwappableFamiliars},
     detect::{FamiliarLevel, FamiliarRank},
@@ -217,11 +216,11 @@ fn update_open_menu(
     match next_timeout_lifecycle(timeout, 10) {
         Lifecycle::Started(timeout) => {
             let rest = swapping.mouse_rest;
-            let _ = context.keys.send_mouse(rest.x, rest.y, MouseAction::Move);
+            let _ = context.input.send_mouse(rest.x, rest.y, MouseKind::Move);
             if context.detector_unwrap().detect_familiar_menu_opened() {
                 swapping.stage_open_setup(Timeout::default(), 0)
             } else if retry_count < MAX_RETRY {
-                let _ = context.keys.send(key);
+                let _ = context.input.send_key(key);
                 swapping.stage_open_menu(timeout, retry_count + 1)
             } else {
                 swapping.stage_completing(Timeout::default(), false)
@@ -248,7 +247,7 @@ fn open_setup(
             // undetectable
             if let Ok(bbox) = context.detector_unwrap().detect_familiar_setup_button() {
                 let (x, y) = bbox_click_point(bbox);
-                let _ = context.keys.send_mouse(x, y, MouseAction::Click);
+                let _ = context.input.send_mouse(x, y, MouseKind::Click);
                 swapping.mouse_rest = Point::new(bbox.x, bbox.y - 100);
             }
 
@@ -269,7 +268,7 @@ fn open_setup(
                 // This could also indicate familiar menu already closed. If that is the case,
                 // find slots will handle it. And send to mouse rest position for detecting slots.
                 let rest = swapping.mouse_rest;
-                let _ = context.keys.send_mouse(rest.x, rest.y, MouseAction::Move);
+                let _ = context.input.send_mouse(rest.x, rest.y, MouseKind::Move);
                 swapping.stage(SwappingStage::FindSlots)
             }
         }
@@ -313,10 +312,10 @@ fn update_free_slots(
                 // Optionally sort the familiar cards first so that the lowest-level one are on top
                 // by clicking level button
                 let (x, y) = bbox_click_point(bbox);
-                let _ = context.keys.send_mouse(x, y, MouseAction::Click);
+                let _ = context.input.send_mouse(x, y, MouseKind::Click);
             } else {
                 let rest = swapping.mouse_rest;
-                let _ = context.keys.send_mouse(rest.x, rest.y, MouseAction::Move);
+                let _ = context.input.send_mouse(rest.x, rest.y, MouseKind::Move);
             }
             swapping.stage(SwappingStage::FindCards)
         } else {
@@ -369,7 +368,7 @@ fn update_free_slot(
             // On start, move mouse to hover over the familiar slot to check level
             let bbox = swapping.slots[index].0;
             let x = bbox.x + bbox.width / 2;
-            let _ = context.keys.send_mouse(x, bbox.y + 20, MouseAction::Move);
+            let _ = context.input.send_mouse(x, bbox.y + 20, MouseKind::Move);
             swapping.stage_free_slot(timeout, index)
         }
         Lifecycle::Ended => swapping.stage_free_slots(index, true),
@@ -384,10 +383,10 @@ fn update_free_slot(
                     match detector.detect_familiar_hover_level() {
                         Ok(FamiliarLevel::Level5) => {
                             // Double click to free
-                            let _ = context.keys.send_mouse(x, y, MouseAction::Click);
-                            let _ = context.keys.send_mouse(x, y, MouseAction::Click);
+                            let _ = context.input.send_mouse(x, y, MouseKind::Click);
+                            let _ = context.input.send_mouse(x, y, MouseKind::Click);
                             // Move mouse to rest position to check if it has been truely freed
-                            let _ = context.keys.send_mouse(x, bbox.y - 20, MouseAction::Move);
+                            let _ = context.input.send_mouse(x, bbox.y - 20, MouseKind::Move);
                         }
                         Ok(FamiliarLevel::LevelOther) => {
                             return if index > 0 {
@@ -397,7 +396,7 @@ fn update_free_slot(
                                 // If there is no more slot to check and any of them is free,
                                 // starts finding cards for swapping
                                 let rest = swapping.mouse_rest;
-                                let _ = context.keys.send_mouse(rest.x, rest.y, MouseAction::Move);
+                                let _ = context.input.send_mouse(rest.x, rest.y, MouseKind::Move);
                                 swapping.stage(SwappingStage::FindCards)
                             } else {
                                 // All of the slots are occupied and non-level-5
@@ -471,7 +470,7 @@ fn update_swapping(
     match next_timeout_lifecycle(timeout, SWAPPING_TIMEOUT) {
         Lifecycle::Started(timeout) => {
             let (x, y) = bbox_click_point(swapping.cards[index]);
-            let _ = context.keys.send_mouse(x, y, MouseAction::Move);
+            let _ = context.input.send_mouse(x, y, MouseKind::Move);
             swapping.stage_swapping(timeout, index)
         }
         Lifecycle::Ended => {
@@ -493,7 +492,7 @@ fn update_swapping(
             } else {
                 // Try scroll for more cards
                 let rest = swapping.mouse_rest;
-                let _ = context.keys.send_mouse(rest.x, rest.y, MouseAction::Move);
+                let _ = context.input.send_mouse(rest.x, rest.y, MouseKind::Move);
                 swapping.stage_scrolling(Timeout::default(), None, 0)
             }
         }
@@ -504,15 +503,15 @@ fn update_swapping(
                 match context.detector_unwrap().detect_familiar_hover_level() {
                     Ok(FamiliarLevel::Level5) => {
                         // Move to rest position and wait for timeout
-                        let _ = context.keys.send_mouse(rest.x, rest.y, MouseAction::Move);
+                        let _ = context.input.send_mouse(rest.x, rest.y, MouseKind::Move);
                     }
                     Ok(FamiliarLevel::LevelOther) => {
                         // Double click to select and then move to rest point
                         let bbox = swapping.cards[index];
                         let (x, y) = bbox_click_point(bbox);
-                        let _ = context.keys.send_mouse(x, y, MouseAction::Click);
-                        let _ = context.keys.send_mouse(x, y, MouseAction::Click);
-                        let _ = context.keys.send_mouse(rest.x, rest.y, MouseAction::Move);
+                        let _ = context.input.send_mouse(x, y, MouseKind::Click);
+                        let _ = context.input.send_mouse(x, y, MouseKind::Click);
+                        let _ = context.input.send_mouse(rest.x, rest.y, MouseKind::Move);
                     }
                     Err(_) => {
                         // Recoverable in an edge case where the mouse overlap with the level
@@ -553,7 +552,7 @@ fn update_scrolling(
             };
 
             let (x, y) = bbox_click_point(scrollbar);
-            let _ = context.keys.send_mouse(x, y, MouseAction::Scroll);
+            let _ = context.input.send_mouse(x, y, MouseKind::Scroll);
 
             swapping.stage_scrolling(timeout, Some(scrollbar), retry_count)
         }
@@ -580,7 +579,7 @@ fn update_scrolling(
         Lifecycle::Updated(timeout) => {
             if timeout.current == SCROLLING_REST_TICK {
                 let (x, y) = bbox_click_point(scrollbar.unwrap());
-                let _ = context.keys.send_mouse(x + 70, y, MouseAction::Move);
+                let _ = context.input.send_mouse(x + 70, y, MouseKind::Move);
             }
 
             swapping.stage_scrolling(timeout, scrollbar, retry_count)
@@ -608,7 +607,7 @@ fn update_saving(
             };
 
             let (x, y) = bbox_click_point(button);
-            let _ = context.keys.send_mouse(x, y, MouseAction::Click);
+            let _ = context.input.send_mouse(x, y, MouseKind::Click);
 
             swapping.stage_saving(timeout, retry_count)
         }
@@ -624,11 +623,11 @@ fn update_saving(
                 PRESS_OK_AT => {
                     if let Ok(button) = context.detector_unwrap().detect_esc_confirm_button() {
                         let (x, y) = bbox_click_point(button);
-                        let _ = context.keys.send_mouse(x, y, MouseAction::Click);
+                        let _ = context.input.send_mouse(x, y, MouseKind::Click);
                     }
                 }
                 PRESS_ESC_AT => {
-                    let _ = context.keys.send(KeyKind::Esc);
+                    let _ = context.input.send_key(KeyKind::Esc);
                 }
                 _ => (),
             }
@@ -649,7 +648,7 @@ fn update_completing(
         Lifecycle::Started(timeout) => {
             let has_menu = context.detector_unwrap().detect_familiar_menu_opened();
             if has_menu {
-                let _ = context.keys.send(KeyKind::Esc);
+                let _ = context.input.send_key(KeyKind::Esc);
             }
             swapping.stage_completing(timeout, !has_menu)
         }
@@ -673,7 +672,7 @@ mod tests {
     use mockall::predicate::{eq, function};
 
     use super::*;
-    use crate::{array::Array, bridge::MockKeySender, detect::MockDetector};
+    use crate::{array::Array, bridge::MockInput, detect::MockDetector};
 
     #[test]
     fn update_free_slots_advance_index_if_already_free() {
@@ -695,12 +694,12 @@ mod tests {
             .expect_detect_familiar_level_button()
             .once()
             .returning(move || Ok(bbox));
-        let mut keys = MockKeySender::default();
+        let mut keys = MockInput::default();
         keys.expect_send_mouse()
             .with(
                 eq(15),
                 eq(15),
-                function(|action| matches!(action, MouseAction::Click)),
+                function(|action| matches!(action, MouseKind::Click)),
             )
             .once()
             .returning(|_, _, _| Ok(()));
@@ -744,7 +743,7 @@ mod tests {
 
     #[test]
     fn update_free_slot_detect_level_5_and_click() {
-        let mut keys = MockKeySender::default();
+        let mut keys = MockInput::default();
         keys.expect_send_mouse()
             .times(3)
             .returning(|_, _, _| Ok(()));
@@ -796,7 +795,7 @@ mod tests {
 
     #[test]
     fn update_swapping_detect_level_5_and_move_to_rest() {
-        let mut keys = MockKeySender::default();
+        let mut keys = MockInput::default();
         keys.expect_send_mouse().once().returning(|_, _, _| Ok(()));
         let mut detector = MockDetector::default();
         detector
@@ -819,7 +818,7 @@ mod tests {
 
     #[test]
     fn update_swapping_detect_level_other_double_click_and_move_to_rest() {
-        let mut keys = MockKeySender::default();
+        let mut keys = MockInput::default();
         keys.expect_send_mouse()
             .times(3)
             .returning(|_, _, _| Ok(()));
@@ -871,7 +870,7 @@ mod tests {
 
     #[test]
     fn update_swapping_timeout_advance_to_scroll_if_slot_available_and_card_unavailable() {
-        let mut keys = MockKeySender::default();
+        let mut keys = MockInput::default();
         keys.expect_send_mouse().once().returning(|_, _, _| Ok(()));
         let mut detector = MockDetector::default();
         detector
@@ -899,7 +898,7 @@ mod tests {
 
     #[test]
     fn update_saving_detect_and_click_save_button() {
-        let mut keys = MockKeySender::default();
+        let mut keys = MockInput::default();
         keys.expect_send_mouse().once().returning(|_, _, _| Ok(()));
 
         let mut detector = MockDetector::default();
@@ -919,11 +918,11 @@ mod tests {
 
     #[test]
     fn update_saving_press_ok_button() {
-        let mut keys = MockKeySender::default();
+        let mut keys = MockInput::default();
         keys.expect_send_mouse()
             .times(1) // one for OK button click
             .returning(|_, _, _| Ok(()));
-        keys.expect_send().once().returning(|_| Ok(()));
+        keys.expect_send_key().once().returning(|_| Ok(()));
 
         let mut detector = MockDetector::default();
         detector

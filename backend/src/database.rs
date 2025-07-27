@@ -6,13 +6,13 @@ use std::{
 
 use anyhow::{Result, bail};
 use opencv::core::Rect;
-use platforms::windows::KeyKind;
 use rusqlite::{Connection, Params, Statement, types::Null};
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use strum::{Display, EnumIter, EnumString};
 use tokio::sync::broadcast::{Receiver, Sender, channel};
 
+use crate::bridge::KeyKind;
 use crate::pathing;
 
 const MAPS: &str = "maps";
@@ -880,83 +880,6 @@ pub enum KeyBinding {
     Shift,
     Ctrl,
     Alt,
-}
-
-impl From<KeyBinding> for KeyKind {
-    fn from(value: KeyBinding) -> Self {
-        match value {
-            KeyBinding::A => KeyKind::A,
-            KeyBinding::B => KeyKind::B,
-            KeyBinding::C => KeyKind::C,
-            KeyBinding::D => KeyKind::D,
-            KeyBinding::E => KeyKind::E,
-            KeyBinding::F => KeyKind::F,
-            KeyBinding::G => KeyKind::G,
-            KeyBinding::H => KeyKind::H,
-            KeyBinding::I => KeyKind::I,
-            KeyBinding::J => KeyKind::J,
-            KeyBinding::K => KeyKind::K,
-            KeyBinding::L => KeyKind::L,
-            KeyBinding::M => KeyKind::M,
-            KeyBinding::N => KeyKind::N,
-            KeyBinding::O => KeyKind::O,
-            KeyBinding::P => KeyKind::P,
-            KeyBinding::Q => KeyKind::Q,
-            KeyBinding::R => KeyKind::R,
-            KeyBinding::S => KeyKind::S,
-            KeyBinding::T => KeyKind::T,
-            KeyBinding::U => KeyKind::U,
-            KeyBinding::V => KeyKind::V,
-            KeyBinding::W => KeyKind::W,
-            KeyBinding::X => KeyKind::X,
-            KeyBinding::Y => KeyKind::Y,
-            KeyBinding::Z => KeyKind::Z,
-            KeyBinding::Zero => KeyKind::Zero,
-            KeyBinding::One => KeyKind::One,
-            KeyBinding::Two => KeyKind::Two,
-            KeyBinding::Three => KeyKind::Three,
-            KeyBinding::Four => KeyKind::Four,
-            KeyBinding::Five => KeyKind::Five,
-            KeyBinding::Six => KeyKind::Six,
-            KeyBinding::Seven => KeyKind::Seven,
-            KeyBinding::Eight => KeyKind::Eight,
-            KeyBinding::Nine => KeyKind::Nine,
-            KeyBinding::F1 => KeyKind::F1,
-            KeyBinding::F2 => KeyKind::F2,
-            KeyBinding::F3 => KeyKind::F3,
-            KeyBinding::F4 => KeyKind::F4,
-            KeyBinding::F5 => KeyKind::F5,
-            KeyBinding::F6 => KeyKind::F6,
-            KeyBinding::F7 => KeyKind::F7,
-            KeyBinding::F8 => KeyKind::F8,
-            KeyBinding::F9 => KeyKind::F9,
-            KeyBinding::F10 => KeyKind::F10,
-            KeyBinding::F11 => KeyKind::F11,
-            KeyBinding::F12 => KeyKind::F12,
-            KeyBinding::Up => KeyKind::Up,
-            KeyBinding::Down => KeyKind::Down,
-            KeyBinding::Left => KeyKind::Left,
-            KeyBinding::Right => KeyKind::Right,
-            KeyBinding::Home => KeyKind::Home,
-            KeyBinding::End => KeyKind::End,
-            KeyBinding::PageUp => KeyKind::PageUp,
-            KeyBinding::PageDown => KeyKind::PageDown,
-            KeyBinding::Insert => KeyKind::Insert,
-            KeyBinding::Delete => KeyKind::Delete,
-            KeyBinding::Enter => KeyKind::Enter,
-            KeyBinding::Space => KeyKind::Space,
-            KeyBinding::Tilde => KeyKind::Tilde,
-            KeyBinding::Quote => KeyKind::Quote,
-            KeyBinding::Semicolon => KeyKind::Semicolon,
-            KeyBinding::Comma => KeyKind::Comma,
-            KeyBinding::Period => KeyKind::Period,
-            KeyBinding::Slash => KeyKind::Slash,
-            KeyBinding::Esc => KeyKind::Esc,
-            KeyBinding::Shift => KeyKind::Shift,
-            KeyBinding::Ctrl => KeyKind::Ctrl,
-            KeyBinding::Alt => KeyKind::Alt,
-        }
-    }
 }
 
 impl From<KeyKind> for KeyBinding {

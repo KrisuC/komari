@@ -2,7 +2,6 @@ use std::cmp::Ordering;
 
 use log::debug;
 use opencv::core::{Point, Rect};
-use platforms::windows::KeyKind;
 
 use super::{
     PingPongDirection, Player, PlayerAction, PlayerActionKey, PlayerState,
@@ -16,6 +15,7 @@ use super::{
 };
 use crate::{
     ActionKeyDirection, ActionKeyWith,
+    bridge::KeyKind,
     context::Context,
     player::{
         moving::MOVE_TIMEOUT,
@@ -181,8 +181,8 @@ pub fn update_double_jumping_context(
             Player::DoubleJumping(double_jumping.moving(moving))
         }
         MovingLifecycle::Ended(moving) => {
-            let _ = context.keys.send_up(KeyKind::Right);
-            let _ = context.keys.send_up(KeyKind::Left);
+            let _ = context.input.send_key_up(KeyKind::Right);
+            let _ = context.input.send_key_up(KeyKind::Left);
 
             Player::Moving(moving.dest, moving.exact, moving.intermediates)
         }
@@ -209,8 +209,8 @@ pub fn update_double_jumping_context(
                         }
                     };
                     if let Some((key_down, key_up, direction)) = option {
-                        let _ = context.keys.send_down(key_down);
-                        let _ = context.keys.send_up(key_up);
+                        let _ = context.input.send_key_down(key_down);
+                        let _ = context.input.send_key_up(key_up);
                         state.last_known_direction = direction;
                     }
                 }
@@ -223,14 +223,14 @@ pub fn update_double_jumping_context(
                         && state.velocity.0 <= X_VELOCITY_THRESHOLD
                     {
                         let _ = context
-                            .keys
-                            .send(state.config.teleport_key.unwrap_or(state.config.jump_key));
+                            .input
+                            .send_key(state.config.teleport_key.unwrap_or(state.config.jump_key));
                     } else {
                         double_jumping.update_jump_cooldown();
                     }
                 } else {
-                    let _ = context.keys.send_up(KeyKind::Right);
-                    let _ = context.keys.send_up(KeyKind::Left);
+                    let _ = context.input.send_key_up(KeyKind::Right);
+                    let _ = context.input.send_key_up(KeyKind::Left);
                     moving = moving.completed(true);
                 }
             }
@@ -360,8 +360,8 @@ fn on_ping_pong_use_key_action(
         return None;
     }
 
-    let _ = context.keys.send_up(KeyKind::Left);
-    let _ = context.keys.send_up(KeyKind::Right);
+    let _ = context.input.send_key_up(KeyKind::Left);
+    let _ = context.input.send_key_up(KeyKind::Right);
     let bound_y_max = bound.y + bound.height;
     let bound_y_mid = bound.y + bound.height / 2;
 
@@ -435,12 +435,11 @@ mod tests {
 
     use anyhow::Ok;
     use opencv::core::{Point, Rect};
-    use platforms::windows::KeyKind;
 
     use super::{on_ping_pong_use_key_action, update_double_jumping_context};
     use crate::{
         ActionKeyDirection,
-        bridge::MockKeySender,
+        bridge::{KeyKind, MockInput},
         context::Context,
         player::{
             PingPongDirection, Player, PlayerAction, PlayerActionPingPong,
@@ -508,16 +507,16 @@ mod tests {
         state.last_known_pos = Some(pos);
         state.config.jump_key = KeyKind::Space;
 
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
             .withf(|k| matches!(k, KeyKind::Left))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send_up()
+        keys.expect_send_key_up()
             .withf(|k| matches!(k, KeyKind::Right))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|k| matches!(k, KeyKind::Space))
             .once()
             .returning(|_| Ok(()));
@@ -528,13 +527,13 @@ mod tests {
 
     #[test]
     fn update_double_jumping_context_updated_forced_presses_only_jump_key() {
-        let mut keys = MockKeySender::new();
-        keys.expect_send()
+        let mut keys = MockInput::new();
+        keys.expect_send_key()
             .withf(|&key| key == KeyKind::Space) // or use jump_key if needed
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send_down().never();
-        keys.expect_send_up().never();
+        keys.expect_send_key_down().never();
+        keys.expect_send_key_up().never();
         let context = Context::new(Some(keys), None);
 
         let mut state = PlayerState::default();
@@ -599,16 +598,16 @@ mod tests {
         state.last_known_direction = ActionKeyDirection::Right;
         state.config.teleport_key = Some(KeyKind::Shift); // Mage
 
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
             .withf(|k| matches!(k, KeyKind::Right)) // Must still send right
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send_up()
+        keys.expect_send_key_up()
             .withf(|k| matches!(k, KeyKind::Left))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|k| matches!(k, KeyKind::Shift)) // Teleport key used, not jump
             .once()
             .returning(|_| Ok(()));
@@ -673,8 +672,8 @@ mod tests {
             ..Default::default()
         });
 
-        let mut keys = MockKeySender::new();
-        keys.expect_send_up().returning(|_| Ok(()));
+        let mut keys = MockInput::new();
+        keys.expect_send_key_up().returning(|_| Ok(()));
         let context = Context::new(Some(keys), None);
         let result = on_ping_pong_use_key_action(
             &context,
@@ -709,8 +708,8 @@ mod tests {
             ..Default::default()
         });
 
-        let mut keys = MockKeySender::new();
-        keys.expect_send_up().returning(|_| Ok(()));
+        let mut keys = MockInput::new();
+        keys.expect_send_key_up().returning(|_| Ok(()));
         let context = Context::new(Some(keys), None);
         let result = on_ping_pong_use_key_action(
             &context,

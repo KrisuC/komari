@@ -1,11 +1,10 @@
-use platforms::windows::KeyKind;
-
 use super::{
     Player, PlayerState,
     actions::PlayerAction,
     timeout::{Lifecycle, next_timeout_lifecycle},
 };
 use crate::{
+    bridge::KeyKind,
     context::Context,
     detect::{ArrowsCalibrating, ArrowsState},
     player::{on_action_state_mut, timeout::Timeout},
@@ -93,7 +92,7 @@ pub fn update_solving_rune_context(
 ) -> Player {
     let solving_rune = match solving_rune.stage {
         RuneStage::Precondition => {
-            if !state.is_stationary || !context.keys.all_keys_cleared() {
+            if !state.is_stationary || !context.input.all_keys_cleared() {
                 solving_rune.stage_precondition()
             } else {
                 solving_rune.stage_find_region(
@@ -182,7 +181,7 @@ fn update_find_region(
     debug_assert!(cooldown_timeout.is_none());
     match next_timeout_lifecycle(timeout, 35) {
         Lifecycle::Started(timeout) => {
-            let _ = context.keys.send(interact_key);
+            let _ = context.input.send_key(interact_key);
             solving_rune.stage_find_region(calibrating, timeout, cooldown_timeout, retry_count)
         }
         Lifecycle::Ended => match context.detector_unwrap().detect_rune_arrows(calibrating) {
@@ -244,7 +243,7 @@ fn update_press_keys(
 
     match next_timeout_lifecycle(timeout, PRESS_KEY_INTERVAL) {
         Lifecycle::Started(timeout) => {
-            let _ = context.keys.send(keys[key_index]);
+            let _ = context.input.send_key(keys[key_index]);
             solving_rune.stage_press_keys(timeout, keys, key_index)
         }
         Lifecycle::Ended => {
@@ -267,14 +266,14 @@ mod tests {
 
     use super::*;
     use crate::{
-        bridge::MockKeySender,
+        bridge::MockInput,
         context::Context,
         detect::{ArrowsCalibrating, ArrowsState, MockDetector},
     };
 
     #[test]
     fn update_solving_rune_context_precondition_to_find_region_when_stationary_and_keys_cleared() {
-        let mut keys = MockKeySender::default();
+        let mut keys = MockInput::default();
         keys.expect_all_keys_cleared().once().returning(|| true);
         let context = Context::new(Some(keys), None);
         let solving_rune = SolvingRune::default().stage_precondition();
@@ -309,7 +308,7 @@ mod tests {
         let result = update_find_region(
             &context,
             solving_rune,
-            KeyKind::default(),
+            KeyKind::A,
             ArrowsCalibrating::default(),
             Timeout {
                 started: true,
@@ -352,7 +351,7 @@ mod tests {
         let result = update_find_region(
             &context,
             solving_rune,
-            KeyKind::default(),
+            KeyKind::A,
             ArrowsCalibrating::default(),
             Timeout {
                 started: true,
@@ -389,7 +388,7 @@ mod tests {
         let result = update_find_region(
             &context,
             solving_rune,
-            KeyKind::default(),
+            KeyKind::A,
             ArrowsCalibrating::default(),
             Timeout::default(),
             Some(Timeout {
@@ -508,8 +507,8 @@ mod tests {
 
         // Simulate 4 rounds of key pressing
         for _ in 0..4 {
-            let mut keys = MockKeySender::default();
-            keys.expect_send()
+            let mut keys = MockInput::default();
+            keys.expect_send_key()
                 .with(eq(expected_keys[key_index]))
                 .return_once(|_| Ok(()));
             let context = Context::new(Some(keys), None);

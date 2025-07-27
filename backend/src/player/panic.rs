@@ -1,11 +1,10 @@
-use platforms::windows::KeyKind;
-
 use super::{
     Player, PlayerState,
     actions::{PanicTo, on_action},
     timeout::Timeout,
 };
 use crate::{
+    bridge::KeyKind,
     context::Context,
     minimap::Minimap,
     player::timeout::{Lifecycle, next_timeout_lifecycle},
@@ -137,7 +136,7 @@ fn update_changing_channel(
                 .detector_unwrap()
                 .detect_change_channel_menu_opened()
             {
-                let _ = context.keys.send(key);
+                let _ = context.input.send_key(key);
             }
 
             panicking.stage_changing_channel(timeout, retry_count)
@@ -165,7 +164,7 @@ fn update_changing_channel(
                         .detector_unwrap()
                         .detect_change_channel_menu_opened()
                     {
-                        let _ = context.keys.send(KeyKind::Right);
+                        let _ = context.input.send_key(KeyKind::Right);
                     }
                 }
                 tick if tick == press_enter_at => {
@@ -173,7 +172,7 @@ fn update_changing_channel(
                         .detector_unwrap()
                         .detect_change_channel_menu_opened()
                     {
-                        let _ = context.keys.send(KeyKind::Enter);
+                        let _ = context.input.send_key(KeyKind::Enter);
                     }
                 }
                 _ => (),
@@ -193,7 +192,7 @@ fn update_going_to_town(
 ) -> Panicking {
     match next_timeout_lifecycle(timeout, 90) {
         Lifecycle::Started(timeout) => {
-            let _ = context.keys.send(key);
+            let _ = context.input.send_key(key);
             panicking.stage_going_to_town(timeout, retry_count)
         }
         Lifecycle::Ended => {
@@ -202,7 +201,7 @@ fn update_going_to_town(
                 .detect_esc_confirm_button()
                 .is_ok();
             if has_confirm_button {
-                let _ = context.keys.send(KeyKind::Enter);
+                let _ = context.input.send_key(KeyKind::Enter);
             }
 
             if !has_confirm_button && retry_count < MAX_RETRY {
@@ -253,19 +252,19 @@ mod tests {
 
     use super::*;
     use crate::{
-        bridge::MockKeySender,
+        bridge::MockInput,
         detect::MockDetector,
         minimap::{Minimap, MinimapIdle},
     };
 
     #[test]
-    fn update_changing_channel_and_send_keys() {
-        let mut keys = MockKeySender::default();
+    fn update_changing_channel_and_send_key_keys() {
+        let mut keys = MockInput::default();
         let mut detector = MockDetector::default();
         detector
             .expect_detect_change_channel_menu_opened()
             .return_const(true);
-        keys.expect_send().times(2).returning(|_| Ok(()));
+        keys.expect_send_key().times(2).returning(|_| Ok(()));
         let context = Context::new(Some(keys), Some(detector));
         let panicking = Panicking::new(PanicTo::Channel);
 
@@ -288,12 +287,12 @@ mod tests {
 
     #[test]
     fn update_changing_channel_and_send_keys_retry() {
-        let mut keys = MockKeySender::default();
+        let mut keys = MockInput::default();
         let mut detector = MockDetector::default();
         detector
             .expect_detect_change_channel_menu_opened()
             .return_const(true);
-        keys.expect_send().times(2).returning(|_| Ok(()));
+        keys.expect_send_key().times(2).returning(|_| Ok(()));
         let context = Context::new(Some(keys), Some(detector));
         let panicking = Panicking::new(PanicTo::Channel);
 
@@ -346,8 +345,8 @@ mod tests {
 
     #[test]
     fn update_going_to_town_started_send_key() {
-        let mut keys = MockKeySender::default();
-        keys.expect_send()
+        let mut keys = MockInput::default();
+        keys.expect_send_key()
             .once()
             .with(eq(KeyKind::F2))
             .returning(|_| Ok(()));
@@ -363,8 +362,8 @@ mod tests {
 
     #[test]
     fn update_going_to_town_ended_send_key_and_complete_if_esc_confirm_opened() {
-        let mut keys = MockKeySender::default();
-        keys.expect_send()
+        let mut keys = MockInput::default();
+        keys.expect_send_key()
             .once()
             .with(eq(KeyKind::Enter))
             .returning(|_| Ok(()));

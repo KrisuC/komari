@@ -1,5 +1,4 @@
 use opencv::core::Point;
-use platforms::windows::KeyKind;
 
 use super::{
     Player, PlayerActionKey, PlayerState,
@@ -10,6 +9,7 @@ use super::{
 };
 use crate::{
     ActionKeyWith,
+    bridge::KeyKind,
     context::Context,
     player::{
         MOVE_TIMEOUT, PlayerAction, actions::on_auto_mob_use_key_action, state::LastMovement,
@@ -75,13 +75,13 @@ pub fn update_falling_context(
             state.last_movement = Some(LastMovement::Falling);
 
             // Do the fall
-            let _ = context.keys.send_down(KeyKind::Down);
+            let _ = context.input.send_key_down(KeyKind::Down);
             if let Some(key) = state.config.teleport_key
                 && y_distance < TELEPORT_FALL_THRESHOLD
             {
-                let _ = context.keys.send(key);
+                let _ = context.input.send_key(key);
             } else {
-                let _ = context.keys.send(state.config.jump_key);
+                let _ = context.input.send_key(state.config.jump_key);
             }
 
             Player::Falling {
@@ -91,12 +91,12 @@ pub fn update_falling_context(
             }
         }
         MovingLifecycle::Ended(moving) => {
-            let _ = context.keys.send_up(KeyKind::Down);
+            let _ = context.input.send_key_up(KeyKind::Down);
             Player::Moving(moving.dest, moving.exact, moving.intermediates)
         }
         MovingLifecycle::Updated(mut moving) => {
             if moving.timeout.total == STOP_DOWN_KEY_TICK {
-                let _ = context.keys.send_up(KeyKind::Down);
+                let _ = context.input.send_key_up(KeyKind::Down);
             }
 
             if !moving.completed {
@@ -137,7 +137,7 @@ fn on_player_action(
         PlayerAction::AutoMob(_) => {
             // Ignore `timeout_on_complete` for auto-mobbing intermediate destination
             if moving.completed && moving.is_destination_intermediate() && y_direction >= 0 {
-                let _ = context.keys.send_up(KeyKind::Down);
+                let _ = context.input.send_key_up(KeyKind::Down);
                 return Some((
                     Player::Moving(moving.dest, moving.exact, moving.intermediates),
                     false,
@@ -178,11 +178,10 @@ mod tests {
     use std::assert_matches::assert_matches;
 
     use opencv::core::Point;
-    use platforms::windows::KeyKind;
 
     use super::update_falling_context;
     use crate::{
-        bridge::MockKeySender,
+        bridge::{KeyKind, MockInput},
         context::Context,
         player::{Player, PlayerState, moving::Moving, timeout::Timeout},
     };
@@ -201,12 +200,12 @@ mod tests {
         state.is_stationary = true;
         state.last_known_pos = Some(pos);
 
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down()
             .withf(|key| matches!(key, KeyKind::Down))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| matches!(key, KeyKind::Space))
             .once()
             .returning(|_| Ok(()));
@@ -214,18 +213,18 @@ mod tests {
 
         // (1) Send keys if stationary
         update_falling_context(&context, &mut state, moving, Point::default(), false);
-        let _ = context.keys; // Drop for test checkpoint
+        let _ = context.input; // Drop for test checkpoint
 
         // (2) Don't send keys if not stationary
         state.is_stationary = false;
 
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down().never();
-        keys.expect_send().never();
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down().never();
+        keys.expect_send_key().never();
         let context = Context::new(Some(keys), None);
 
         update_falling_context(&context, &mut state, moving, Point::default(), false);
-        let _ = context.keys; // Drop for test checkpoint
+        let _ = context.input; // Drop for test checkpoint
 
         // (3) Don't send keys if already at destination
         state.is_stationary = true;
@@ -234,9 +233,9 @@ mod tests {
             dest: pos,
             ..moving
         };
-        let mut keys = MockKeySender::new();
-        keys.expect_send_down().never();
-        keys.expect_send().never();
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down().never();
+        keys.expect_send_key().never();
         let context = Context::new(Some(keys), None);
 
         update_falling_context(&context, &mut state, moving, Point::default(), false);
@@ -258,8 +257,8 @@ mod tests {
             ..Default::default()
         };
 
-        let mut keys = MockKeySender::new();
-        keys.expect_send_up()
+        let mut keys = MockInput::new();
+        keys.expect_send_key_up()
             .withf(|key| matches!(key, KeyKind::Down))
             .once()
             .returning(|_| Ok(()));
@@ -271,7 +270,7 @@ mod tests {
 
         // (1) Send up key because total == 2, so next tick is total == 3 == STOP_DOWN_KEY_TICK
         update_falling_context(&context, &mut state, moving, anchor, false);
-        let _ = context.keys; // Drop for test checkpoint
+        let _ = context.input; // Drop for test checkpoint
 
         // (2) Timeout early after complete if enabled
         let moving = Moving {

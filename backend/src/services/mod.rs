@@ -1,12 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
-use platforms::windows::{KeyInputKind, KeyReceiver};
+use platforms::input::InputKind;
 use tokio::sync::broadcast::Receiver;
 
 use crate::{
-    CaptureMode, Character, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler,
-    Settings,
-    bridge::{DefaultKeySender, ImageCapture, KeySender, KeySenderMethod},
+    Character, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler, Settings,
+    bridge::{Capture, DefaultInput, Input, InputMethod, InputReceiver},
     buff::BuffState,
     context::Context,
     database::Seeds,
@@ -40,7 +39,7 @@ pub struct PollArgs<'a> {
     pub buffs: &'a mut Vec<BuffState>,
     pub rotator: &'a mut Rotator,
     pub navigator: &'a mut Navigator,
-    pub capture: &'a mut ImageCapture,
+    pub capture: &'a mut Capture,
 }
 
 #[derive(Debug)]
@@ -54,27 +53,26 @@ pub struct DefaultService {
 }
 
 impl DefaultService {
-    pub fn new(
-        seeds: Seeds,
-        settings: Rc<RefCell<Settings>>,
-    ) -> (Self, Box<dyn KeySender>, ImageCapture) {
+    pub fn new(seeds: Seeds, settings: Rc<RefCell<Settings>>) -> (Self, Box<dyn Input>, Capture) {
         let mut settings_service = SettingsService::new(settings.clone());
 
         // Initialize with default handle and input method
-        let keys_method =
-            KeySenderMethod::Default(settings_service.current_handle(), KeyInputKind::Fixed);
-        let mut keys = DefaultKeySender::new(keys_method, seeds);
-        let mut key_receiver =
-            KeyReceiver::new(settings_service.current_handle(), KeyInputKind::Fixed);
+        let window = settings_service.current_window();
+        let input_method = InputMethod::Default(window, InputKind::Focused);
+        let mut input = DefaultInput::new(input_method, seeds);
+        let mut input_receiver = InputReceiver::new(window, InputKind::Focused);
 
-        // Initialize with default handle and default capture method
-        let mut capture =
-            ImageCapture::new(settings_service.current_handle(), CaptureMode::default());
+        let mut capture = Capture::new(window);
         // Update to current settings
-        settings_service.update_selected_handle(&mut keys, &mut key_receiver, &mut capture, None);
+        settings_service.update_selected_window(
+            &mut input,
+            &mut input_receiver,
+            &mut capture,
+            None,
+        );
 
         let service = Self {
-            game: GameService::new(key_receiver),
+            game: GameService::new(input_receiver),
             minimap: MinimapService::default(),
             player: PlayerService::default(),
             rotator: RotatorService,
@@ -82,7 +80,7 @@ impl DefaultService {
             settings: settings_service,
         };
 
-        (service, Box::new(keys), capture)
+        (service, Box::new(input), capture)
     }
 
     #[inline]
@@ -143,12 +141,12 @@ impl DefaultRequestHandler<'_> {
                 GameEvent::CharacterUpdated(character) => self.on_update_character(character),
                 GameEvent::SettingsUpdated(settings) => self.service.settings.update(
                     &mut self.args.context.operation,
-                    self.args.context.keys.as_mut(),
-                    self.service.game.current_key_receiver_mut(),
+                    self.args.context.input.as_mut(),
+                    self.service.game.current_input_receiver_mut(),
                     self.args.capture,
                     settings,
                 ),
-                GameEvent::NavigationPathsUpdated => todo!(),
+                GameEvent::NavigationPathsUpdated => self.args.navigator.mark_dirty(),
             }
         }
     }
@@ -252,21 +250,21 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_refresh_capture_handles(&mut self) {
-        self.service.settings.update_handles();
+        self.service.settings.update_windows();
         self.on_select_capture_handle(None);
     }
 
     fn on_query_capture_handles(&self) -> (Vec<String>, Option<usize>) {
         (
-            self.service.settings.current_handle_names(),
-            self.service.settings.current_selected_handle_index(),
+            self.service.settings.current_window_names(),
+            self.service.settings.current_selected_window_index(),
         )
     }
 
     fn on_select_capture_handle(&mut self, index: Option<usize>) {
-        self.service.settings.update_selected_handle(
-            self.args.context.keys.as_mut(),
-            self.service.game.current_key_receiver_mut(),
+        self.service.settings.update_selected_window(
+            self.args.context.input.as_mut(),
+            self.service.game.current_input_receiver_mut(),
             self.args.capture,
             index,
         );

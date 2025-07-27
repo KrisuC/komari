@@ -1,11 +1,10 @@
 use opencv::core::MatTraitConst;
-use platforms::windows::KeyKind;
 
 use super::{
     Player, PlayerState,
     timeout::{Lifecycle, Timeout, next_timeout_lifecycle},
 };
-use crate::{bridge::MouseAction, context::Context};
+use crate::{bridge::KeyKind, bridge::MouseKind, context::Context};
 
 #[derive(Clone, Copy, Debug)]
 pub enum CashShop {
@@ -26,7 +25,7 @@ pub fn update_cash_shop_context(
 ) -> Player {
     match cash_shop {
         CashShop::Entering => {
-            let _ = context.keys.send(state.config.cash_shop_key);
+            let _ = context.input.send_key(state.config.cash_shop_key);
             let next = if context.detector_unwrap().detect_player_in_cash_shop() {
                 CashShop::Entered
             } else {
@@ -51,10 +50,10 @@ pub fn update_cash_shop_context(
             };
             let size = context.detector_unwrap().mat().size().unwrap();
             let _ = context
-                .keys
-                .send_mouse(size.width / 2, size.height / 2, MouseAction::Click);
-            let _ = context.keys.send(KeyKind::Esc);
-            let _ = context.keys.send(KeyKind::Enter);
+                .input
+                .send_mouse(size.width / 2, size.height / 2, MouseKind::Click);
+            let _ = context.input.send_key(KeyKind::Esc);
+            let _ = context.input.send_key(KeyKind::Enter);
             Player::CashShopThenExit(timeout, next)
         }
         CashShop::Exitted => {

@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 #[cfg(windows)]
-use crate::windows::{Handle, client_to_monitor_or_frame};
+use crate::windows::{Handle, HandleKind, client_to_monitor_or_frame};
 
 pub mod capture;
 pub mod input;
@@ -60,8 +60,15 @@ pub struct Window {
 }
 
 impl Window {
+    #[cfg(windows)]
+    pub fn new(class: &'static str) -> Self {
+        Self {
+            windows: Handle::new(HandleKind::Dynamic(class)),
+        }
+    }
+
     #[inline]
-    pub fn as_monitor_or_frame_coordinate(
+    pub fn convert_coordinate(
         &self,
         x: i32,
         y: i32,
@@ -77,5 +84,18 @@ impl Window {
         }
 
         Err(Error::PlatformNotSupported)
+    }
+}
+
+#[cfg(windows)]
+impl From<Handle> for Window {
+    fn from(value: Handle) -> Self {
+        Self { windows: value }
+    }
+}
+
+pub fn init() {
+    if cfg!(windows) {
+        windows::init();
     }
 }

@@ -3,11 +3,11 @@ use std::{
     rc::Rc,
 };
 
-use platforms::windows::{Handle, KeyInputKind, KeyReceiver, query_capture_handles};
+use platforms::{Window, capture::query_capture_name_window_pairs, input::InputKind};
 
 use crate::{
-    CaptureMode, InputMethod, Settings,
-    bridge::{ImageCapture, ImageCaptureKind, KeySender, KeySenderMethod},
+    CaptureMode, InputMethod as DatabaseInputMethod, Settings,
+    bridge::{Capture, Input, InputMethod, InputReceiver},
     context::Operation,
 };
 
@@ -15,9 +15,9 @@ use crate::{
 #[derive(Debug)]
 pub struct SettingsService {
     settings: Rc<RefCell<Settings>>,
-    capture_default_handle: Handle,
-    capture_handles: Vec<(String, Handle)>,
-    capture_selected_handle_index: Option<usize>,
+    capture_default_window: Window,
+    capture_name_window_pairs: Vec<(String, Window)>,
+    capture_selected_window_index: Option<usize>,
 }
 
 impl SettingsService {
@@ -25,57 +25,63 @@ impl SettingsService {
         // MapleStoryClass <- GMS
         // MapleStoryClassSG <- MSEA
         // MapleStoryClassTW <- TMS
-        let handle = Handle::new("MapleStoryClass");
+        if cfg!(windows) {
+            let window = Window::new("MapleStoryClass");
 
-        Self {
-            settings,
-            capture_default_handle: handle,
-            capture_handles: query_capture_handles(),
-            capture_selected_handle_index: None,
+            return Self {
+                settings,
+                capture_default_window: window,
+                capture_name_window_pairs: query_capture_name_window_pairs()
+                    .expect("supported platform"),
+                capture_selected_window_index: None,
+            };
         }
+
+        panic!("unsupported platform")
     }
 
     pub fn current(&self) -> Ref<'_, Settings> {
         self.settings.borrow()
     }
 
-    pub fn current_handle_names(&self) -> Vec<String> {
-        self.capture_handles
+    pub fn current_window_names(&self) -> Vec<String> {
+        self.capture_name_window_pairs
             .iter()
             .map(|(name, _)| name)
             .cloned()
             .collect::<Vec<_>>()
     }
 
-    pub fn current_selected_handle_index(&self) -> Option<usize> {
-        self.capture_selected_handle_index
+    pub fn current_selected_window_index(&self) -> Option<usize> {
+        self.capture_selected_window_index
     }
 
-    pub fn current_handle(&self) -> Handle {
-        self.capture_selected_handle_index
+    pub fn current_window(&self) -> Window {
+        self.capture_selected_window_index
             .and_then(|index| {
-                self.capture_handles
+                self.capture_name_window_pairs
                     .get(index)
                     .map(|(_, handle)| handle)
                     .copied()
             })
-            .unwrap_or(self.capture_default_handle)
+            .unwrap_or(self.capture_default_window)
     }
 
-    pub fn update_handles(&mut self) {
-        self.capture_handles = query_capture_handles();
+    pub fn update_windows(&mut self) {
+        self.capture_name_window_pairs =
+            query_capture_name_window_pairs().expect("supported platform");
     }
 
-    pub fn update_selected_handle(
+    pub fn update_selected_window(
         &mut self,
-        keys: &mut dyn KeySender,
-        key_receiver: &mut KeyReceiver,
-        capture: &mut ImageCapture,
+        input: &mut dyn Input,
+        input_receiver: &mut InputReceiver,
+        capture: &mut Capture,
         index: Option<usize>,
     ) {
-        self.capture_selected_handle_index = index;
+        self.capture_selected_window_index = index;
         self.update_capture(capture, true);
-        self.update_keys(keys, key_receiver, capture.kind());
+        self.update_inputs(input, input_receiver, capture);
     }
 
     /// Updates the currently used [`Settings`] from `new_settings` and configures `keys`,
@@ -83,9 +89,9 @@ impl SettingsService {
     pub fn update(
         &mut self,
         operation: &mut Operation,
-        keys: &mut dyn KeySender,
-        key_receiver: &mut KeyReceiver,
-        capture: &mut ImageCapture,
+        input: &mut dyn Input,
+        input_receiver: &mut InputReceiver,
+        capture: &mut Capture,
         new_settings: Settings,
     ) {
         operation.update_current(
@@ -95,42 +101,38 @@ impl SettingsService {
         );
         *self.settings.borrow_mut() = new_settings;
         self.update_capture(capture, false);
-        self.update_keys(keys, key_receiver, capture.kind());
+        self.update_inputs(input, input_receiver, capture);
     }
 
-    fn update_capture(&self, capture: &mut ImageCapture, forced: bool) {
+    fn update_capture(&self, capture: &mut Capture, forced: bool) {
         let settings = self.current();
-        let current_mode = match capture.kind() {
-            ImageCaptureKind::BitBlt(_) => CaptureMode::BitBlt,
-            ImageCaptureKind::Wgc(_) => CaptureMode::WindowsGraphicsCapture,
-            ImageCaptureKind::BitBltArea(_) => CaptureMode::BitBltArea,
-        };
-        if forced || current_mode != settings.capture_mode {
-            capture.set_mode(self.current_handle(), settings.capture_mode);
+        if forced || capture.mode() != settings.capture_mode {
+            capture.set_mode(settings.capture_mode);
+            capture.set_window(self.current_window());
         }
     }
 
-    fn update_keys(
+    fn update_inputs(
         &self,
-        keys: &mut dyn KeySender,
-        key_receiver: &mut KeyReceiver,
-        capture_kind: &ImageCaptureKind,
+        input: &mut dyn Input,
+        input_receiver: &mut InputReceiver,
+        capture: &Capture,
     ) {
         let settings = self.current();
-        let (handle, kind) = if let ImageCaptureKind::BitBltArea(capture) = capture_kind {
-            (capture.handle(), KeyInputKind::Foreground)
+        let (window, kind) = if matches!(capture.mode(), CaptureMode::BitBltArea) {
+            (capture.window(), InputKind::Foreground)
         } else {
-            (self.current_handle(), KeyInputKind::Fixed)
+            (self.current_window(), InputKind::Focused)
         };
 
-        *key_receiver = KeyReceiver::new(handle, kind);
+        *input_receiver = InputReceiver::new(window, kind);
         match settings.input_method {
-            InputMethod::Default => {
-                keys.set_method(KeySenderMethod::Default(handle, kind));
+            DatabaseInputMethod::Default => {
+                input.set_method(InputMethod::Default(window, kind));
             }
-            InputMethod::Rpc => {
-                keys.set_method(KeySenderMethod::Rpc(
-                    handle,
+            DatabaseInputMethod::Rpc => {
+                input.set_method(InputMethod::Rpc(
+                    window,
                     settings.input_method_rpc_server_url.clone(),
                 ));
             }
@@ -154,7 +156,7 @@ mod tests {
         let settings = Rc::new(RefCell::new(Settings::default()));
         let service = SettingsService::new(settings.clone());
 
-        assert_eq!(service.current_selected_handle_index(), None);
+        assert_eq!(service.current_selected_window_index(), None);
         assert_eq!(service.current().input_method, InputMethod::Default);
     }
 
@@ -164,8 +166,8 @@ mod tests {
         let service = SettingsService::new(settings.clone());
 
         // Without selected handle index
-        let default = service.capture_default_handle;
-        let current = service.current_handle();
+        let default = service.capture_default_window;
+        let current = service.current_window();
         assert_eq!(current, default);
     }
 
@@ -176,7 +178,7 @@ mod tests {
             ..Default::default()
         }));
         let mut service = SettingsService::new(settings.clone());
-        service.capture_handles = vec![
+        service.capture_name_window_pairs = vec![
             ("Foo".to_string(), Handle::new("Foo")),
             ("Bar".to_string(), Handle::new("Bar")),
         ];
@@ -191,13 +193,13 @@ mod tests {
                 }
             })
             .returning(|_| ());
-        let mut key_receiver = KeyReceiver::new(service.current_handle(), KeyInputKind::Fixed);
-        let mut capture = ImageCapture::new(service.current_handle(), CaptureMode::BitBlt);
+        let mut key_receiver = KeyReceiver::new(service.current_window(), KeyInputKind::Fixed);
+        let mut capture = ImageCapture::new(service.current_window(), CaptureMode::BitBlt);
 
-        service.update_selected_handle(&mut mock_keys, &mut key_receiver, &mut capture, Some(1));
+        service.update_selected_window(&mut mock_keys, &mut key_receiver, &mut capture, Some(1));
 
-        assert_eq!(service.current_selected_handle_index(), Some(1));
-        assert_eq!(service.current_handle(), Handle::new("Bar"));
+        assert_eq!(service.current_selected_window_index(), Some(1));
+        assert_eq!(service.current_window(), Handle::new("Bar"));
         assert_matches!(capture.kind(), ImageCaptureKind::Wgc(_));
         // assert_matches!(key_receiver.kind(), KeyInputKind::Fixed);
         // assert_eq!(key_receiver.handle(), Handle::new("Bar"));
@@ -215,7 +217,7 @@ mod tests {
             ..Default::default()
         };
         let mut mock_keys = MockKeySender::default();
-        let service_current_handle = service.current_handle();
+        let service_current_handle = service.current_window();
         mock_keys
             .expect_set_method()
             .withf_st(move |method| match method {
@@ -225,8 +227,8 @@ mod tests {
                 KeySenderMethod::Default(_, _) => false,
             })
             .returning(|_| ());
-        let mut key_receiver = KeyReceiver::new(service.current_handle(), KeyInputKind::Fixed);
-        let mut capture = ImageCapture::new(service.current_handle(), CaptureMode::BitBlt);
+        let mut key_receiver = KeyReceiver::new(service.current_window(), KeyInputKind::Fixed);
+        let mut capture = ImageCapture::new(service.current_window(), CaptureMode::BitBlt);
         let mut op = Operation::Running;
 
         service.update(
