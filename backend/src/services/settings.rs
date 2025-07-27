@@ -94,7 +94,7 @@ impl SettingsService {
         capture: &mut Capture,
         new_settings: Settings,
     ) {
-        operation.update_current(
+        *operation = operation.update_current(
             new_settings.cycle_run_stop,
             new_settings.cycle_run_duration_millis,
             new_settings.cycle_stop_duration_millis,
@@ -147,7 +147,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
-    use crate::bridge::{ImageCaptureKind, KeySenderMethod, MockKeySender};
+    use crate::bridge::{Capture, InputMethod as BridgeInputMethod, MockInput};
     use crate::context::Operation;
     use crate::{CaptureMode, InputMethod};
 
@@ -179,30 +179,30 @@ mod tests {
         }));
         let mut service = SettingsService::new(settings.clone());
         service.capture_name_window_pairs = vec![
-            ("Foo".to_string(), Handle::new("Foo")),
-            ("Bar".to_string(), Handle::new("Bar")),
+            ("Foo".to_string(), Window::new("Foo")),
+            ("Bar".to_string(), Window::new("Bar")),
         ];
 
-        let mut mock_keys = MockKeySender::default();
+        let mut mock_keys = MockInput::default();
         mock_keys
             .expect_set_method()
             .withf(|method| match method {
-                KeySenderMethod::Rpc(_, _) => false,
-                KeySenderMethod::Default(handle, kind) => {
-                    *handle == Handle::new("Bar") && matches!(kind, KeyInputKind::Fixed)
+                BridgeInputMethod::Rpc(_, _) => false,
+                BridgeInputMethod::Default(window, kind) => {
+                    *window == Window::new("Bar") && matches!(kind, InputKind::Focused)
                 }
             })
             .returning(|_| ());
-        let mut key_receiver = KeyReceiver::new(service.current_window(), KeyInputKind::Fixed);
-        let mut capture = ImageCapture::new(service.current_window(), CaptureMode::BitBlt);
+        let mut key_receiver = InputReceiver::new(service.current_window(), InputKind::Focused);
+        let mut capture = Capture::new(service.current_window());
 
         service.update_selected_window(&mut mock_keys, &mut key_receiver, &mut capture, Some(1));
 
         assert_eq!(service.current_selected_window_index(), Some(1));
-        assert_eq!(service.current_window(), Handle::new("Bar"));
-        assert_matches!(capture.kind(), ImageCaptureKind::Wgc(_));
-        // assert_matches!(key_receiver.kind(), KeyInputKind::Fixed);
-        // assert_eq!(key_receiver.handle(), Handle::new("Bar"));
+        assert_eq!(service.current_window(), Window::new("Bar"));
+        assert_matches!(capture.mode(), CaptureMode::WindowsGraphicsCapture);
+        assert_matches!(key_receiver.kind(), InputKind::Focused);
+        assert_eq!(key_receiver.window(), Window::new("Bar"));
     }
 
     #[test]
@@ -216,19 +216,19 @@ mod tests {
             cycle_run_duration_millis: 1000,
             ..Default::default()
         };
-        let mut mock_keys = MockKeySender::default();
-        let service_current_handle = service.current_window();
+        let mut mock_keys = MockInput::default();
+        let service_current_window = service.current_window();
         mock_keys
             .expect_set_method()
             .withf_st(move |method| match method {
-                KeySenderMethod::Rpc(handle, url) => {
-                    *handle == service_current_handle && url.as_str() == "http://localhost:9000"
+                BridgeInputMethod::Rpc(window, url) => {
+                    *window == service_current_window && url.as_str() == "http://localhost:9000"
                 }
-                KeySenderMethod::Default(_, _) => false,
+                BridgeInputMethod::Default(_, _) => false,
             })
             .returning(|_| ());
-        let mut key_receiver = KeyReceiver::new(service.current_window(), KeyInputKind::Fixed);
-        let mut capture = ImageCapture::new(service.current_window(), CaptureMode::BitBlt);
+        let mut key_receiver = InputReceiver::new(service.current_window(), InputKind::Focused);
+        let mut capture = Capture::new(service.current_window());
         let mut op = Operation::Running;
 
         service.update(
@@ -244,19 +244,4 @@ mod tests {
         assert_eq!(current.input_method, InputMethod::Rpc);
         assert_eq!(current.input_method_rpc_server_url, "http://localhost:9000");
     }
-
-    // #[test]
-    // fn update_handles_reloads_handle_list() {
-    //     let settings = Rc::new(RefCell::new(Settings::default()));
-    //     let mut service = SettingsService::new(settings.clone());
-
-    //     let original_len = service.capture_handles.len();
-
-    //     service.update_handles();
-    //     let updated_len = service.capture_handles.len();
-
-    //     // Cannot assume increase; just ensure function does not panic and changes may occur.
-    //     assert!(updated_len >= 0);
-    //     assert_eq!(updated_len, service.capture_handles.len());
-    // }
 }

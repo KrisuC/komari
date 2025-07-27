@@ -53,7 +53,7 @@ pub struct ConvertedCoordinates {
     pub y: i32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Window {
     #[cfg(windows)]
     windows: Handle,

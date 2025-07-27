@@ -275,7 +275,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::Up))
             .returning(|_| Ok(()))
             .once();
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| matches!(key, KeyKind::Space))
             .returning(|_| Ok(()))
             .once();
@@ -290,7 +290,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::Up))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| matches!(key, KeyKind::Space))
             .never()
             .returning(|_| Ok(()));
@@ -305,7 +305,7 @@ mod tests {
             .withf(|key| matches!(key, KeyKind::Up))
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| matches!(key, KeyKind::Space))
             .once()
             .returning(|_| Ok(()));
@@ -368,7 +368,7 @@ mod tests {
         keys.expect_send_key_down()
             .withf(|key| *key == KeyKind::Up)
             .never();
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| *key == KeyKind::Space)
             .once()
             .returning(|_| Ok(()));
@@ -383,11 +383,11 @@ mod tests {
         let mut keys = MockInput::new();
         moving.timeout.total = 7; // SPAM_DELAY
         moving.timeout.started = true;
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| *key == KeyKind::Up)
             .times(2)
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| *key == KeyKind::Space)
             .never();
         context.input = Box::new(keys);
@@ -419,7 +419,7 @@ mod tests {
             .withf(|key| *key == KeyKind::Up)
             .once()
             .returning(|_| Ok(()));
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| *key == KeyKind::Space)
             .once()
             .returning(|_| Ok(()));
@@ -436,7 +436,7 @@ mod tests {
         // Not sending any key before delay
         let mut keys = MockInput::new();
         moving.timeout.total = 4; // Before SPAM_DELAY
-        keys.expect_send().never();
+        keys.expect_send_key().never();
         context.input = Box::new(keys);
         assert_matches!(
             update_up_jumping_context(&context, &mut state, UpJumping::new(moving)),
@@ -453,7 +453,7 @@ mod tests {
         // Send key after delay
         let mut keys = MockInput::new();
         moving.timeout.total = 7; // At SPAM_DELAY
-        keys.expect_send()
+        keys.expect_send_key()
             .withf(|key| *key == KeyKind::Shift)
             .once()
             .returning(|_| Ok(()));

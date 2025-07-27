@@ -454,13 +454,31 @@ impl From<KeyKind> for RpcKeyKind {
 #[derive(Debug)]
 pub struct InputReceiver {
     inner: PlatformInputReceiver,
+    #[cfg(test)]
+    window: Window,
+    #[cfg(test)]
+    kind: PlatformInputKind,
 }
 
 impl InputReceiver {
     pub fn new(window: Window, kind: PlatformInputKind) -> Self {
         Self {
             inner: PlatformInputReceiver::new(window, kind).expect("supported platform"),
+            #[cfg(test)]
+            window,
+            #[cfg(test)]
+            kind,
         }
+    }
+
+    #[cfg(test)]
+    pub fn window(&self) -> Window {
+        self.window
+    }
+
+    #[cfg(test)]
+    pub fn kind(&self) -> PlatformInputKind {
+        self.kind
     }
 
     #[inline]
@@ -753,6 +771,8 @@ impl Capture {
 
     #[inline]
     pub fn set_mode(&mut self, mode: CaptureMode) {
+        self.mode = mode;
+
         if cfg!(windows) {
             let kind = match mode {
                 CaptureMode::BitBlt => WindowsCaptureKind::BitBlt,
@@ -792,13 +812,13 @@ mod tests {
         64, 44, 192, 172, 191, 191, 157, 107, 206, 193, 55, 115, 68,
     ];
 
-    fn test_key_sender() -> DefaultKeySender {
+    fn test_key_sender() -> DefaultInput {
         let seeds = Seeds {
             id: None,
             seed: SEED,
         };
-        DefaultKeySender::new(
-            InputMethod::Default(Handle::new("Handle"), KeyInputKind::Fixed),
+        DefaultInput::new(
+            InputMethod::Default(Window::new("Handle"), PlatformInputKind::Focused),
             seeds,
         )
     }
