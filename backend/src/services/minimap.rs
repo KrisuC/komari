@@ -67,4 +67,7 @@ impl MinimapService {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    #[test]
+    pub fn create() {}
+}

@@ -30,7 +30,7 @@ mod debug;
 mod detect;
 mod mat;
 mod minimap;
-mod navigation;
+mod navigator;
 mod network;
 mod pathing;
 mod player;
@@ -171,13 +171,13 @@ pub(crate) trait RequestHandler {
     fn on_capture_image(&self, is_grayscale: bool);
 
     #[cfg(debug_assertions)]
-    fn on_infer_rune(&self);
+    fn on_infer_rune(&mut self);
 
     #[cfg(debug_assertions)]
     fn on_infer_minimap(&self);
 
     #[cfg(debug_assertions)]
-    fn on_record_images(&self, start: bool);
+    fn on_record_images(&mut self, start: bool);
 
     #[cfg(debug_assertions)]
     fn on_test_spin_rune(&self);

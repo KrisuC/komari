@@ -21,6 +21,7 @@ pub struct SettingsService {
 }
 
 impl SettingsService {
+    /// Creates a new [`SettingsService`] from the provided `settings`.
     pub fn new(settings: Rc<RefCell<Settings>>) -> Self {
         // MapleStoryClass <- GMS
         // MapleStoryClassSG <- MSEA
@@ -40,10 +41,14 @@ impl SettingsService {
         panic!("unsupported platform")
     }
 
+    /// Gets the current [`Settings`] in use.
     pub fn current(&self) -> Ref<'_, Settings> {
         self.settings.borrow()
     }
 
+    /// Gets a list of [`Window`] names to be used for selection.
+    ///
+    /// The index of a name corresponds to a [`Window`].
     pub fn current_window_names(&self) -> Vec<String> {
         self.capture_name_window_pairs
             .iter()
@@ -52,10 +57,14 @@ impl SettingsService {
             .collect::<Vec<_>>()
     }
 
+    /// Gets the current selected [`Window`] index.
     pub fn current_selected_window_index(&self) -> Option<usize> {
         self.capture_selected_window_index
     }
 
+    /// Gets the current selected [`Window`].
+    ///
+    /// If none is selected, the default [`Window`] is returned.
     pub fn current_window(&self) -> Window {
         self.capture_selected_window_index
             .and_then(|index| {
@@ -67,11 +76,13 @@ impl SettingsService {
             .unwrap_or(self.capture_default_window)
     }
 
+    /// Updates the list available of [`Window`]s from platform.
     pub fn update_windows(&mut self) {
         self.capture_name_window_pairs =
             query_capture_name_window_pairs().expect("supported platform");
     }
 
+    /// Updates `input`, `input_receiver` and `capture` to use the [`Window`] specified by `index`.
     pub fn update_selected_window(
         &mut self,
         input: &mut dyn Input,
@@ -84,8 +95,8 @@ impl SettingsService {
         self.update_inputs(input, input_receiver, capture);
     }
 
-    /// Updates the currently used [`Settings`] from `new_settings` and configures `keys`,
-    /// `key_receiver` and `capture`.
+    /// Updates the currently used [`Settings`] with `new_settings` and configures `operation`,
+    /// `input`, `input_receiver` and `capture` to reflect the updated [`Settings`].
     pub fn update(
         &mut self,
         operation: &mut Operation,
@@ -243,5 +254,7 @@ mod tests {
         assert_matches!(op, Operation::RunUntil(_));
         assert_eq!(current.input_method, InputMethod::Rpc);
         assert_eq!(current.input_method_rpc_server_url, "http://localhost:9000");
+        assert_matches!(key_receiver.kind(), InputKind::Focused);
+        assert_eq!(key_receiver.window(), service_current_window);
     }
 }

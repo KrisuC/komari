@@ -143,6 +143,7 @@ impl Navigator {
 
         let next_point_state = self.compute_next_point();
         if !matches!(next_point_state, PointState::Dirty) {
+            // Only update `last_point_state` if non-dirty
             self.last_point_state = Some(next_point_state.clone());
         }
 
@@ -267,6 +268,7 @@ impl Navigator {
         PointState::Unreachable
     }
 
+    /// Marks all paths computed as dirty and should be recomputed.
     #[inline]
     pub fn mark_dirty(&mut self) {
         // Do not reset `base_path`, `current_path` and `last_point_state` here so that
@@ -275,6 +277,7 @@ impl Navigator {
         self.path_dirty_retry_count = 0;
     }
 
+    /// Same as [`Self::mark_dirty`] but also sets the destination.
     #[inline]
     pub fn mark_dirty_with_destination(&mut self, paths_id_index: Option<(i64, usize)>) {
         self.destination_path_id =

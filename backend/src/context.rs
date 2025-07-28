@@ -19,13 +19,13 @@ use strum::IntoEnumIterator;
 #[cfg(test)]
 use crate::{Settings, bridge::MockInput, detect::MockDetector};
 use crate::{
-    bridge::{DefaultInput, Input},
+    bridge::Input,
     buff::{Buff, BuffKind, BuffState},
     database::{query_seeds, query_settings},
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
-    navigation::Navigator,
+    navigator::Navigator,
     network::{DiscordNotification, NotificationKind},
     player::{PanicTo, Panicking, Player, PlayerState},
     rng::Rng,
@@ -34,9 +34,18 @@ use crate::{
     skill::{Skill, SkillKind, SkillState},
 };
 
+/// The FPS the bot runs at.
+///
+/// This must **not** be changed as it affects other ticking systems.
 const FPS: u32 = 30;
+
+/// Seconds to wait before halting.
 const PENDING_HALT_SECS: u64 = 12;
+
+/// Milliseconds per tick as an [`u64`].
 pub const MS_PER_TICK: u64 = MS_PER_TICK_F32 as u64;
+
+/// Milliseconds per tick as an [`f32`].
 pub const MS_PER_TICK_F32: f32 = 1000.0 / FPS as f32;
 
 /// A control flow to use after a contextual state update.
@@ -49,9 +58,6 @@ pub enum ControlFlow<T> {
 }
 
 /// Represents a contextual state.
-///
-/// TODO: Apply a minimal ECS where each Contextual can be a system. Components are the
-/// TODO: persistent state and the contextual state itself.
 pub trait Contextual {
     /// The inner state that is persistent through each [`Contextual::update`] tick.
     type Persistent = ();
@@ -299,14 +305,8 @@ fn update_loop() {
                 rotator.rotate_action(&context, &mut player_state);
             }
         }
-        // TODO: Maybe should not downcast but really don't want to public update_input_delay
-        // method
-        context
-            .input
-            .as_any_mut()
-            .downcast_mut::<DefaultInput>()
-            .unwrap()
-            .update_input_delay(context.tick);
+
+        context.input.update(context.tick);
         context.notification.update_scheduled_frames(|| {
             to_png(context.detector.as_ref().map(|detector| detector.mat()))
         });
@@ -328,6 +328,7 @@ fn update_loop() {
             player_state.clear_actions_aborted(false);
             context.player = Player::Panicking(Panicking::new(PanicTo::Town));
         }
+
         // Upon accidental or white roomed causing map to change,
         // abort actions and send notification
         if service.has_minimap_data() && !context.operation.halting() {

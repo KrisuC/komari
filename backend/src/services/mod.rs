@@ -3,6 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use platforms::input::InputKind;
 use tokio::sync::broadcast::Receiver;
 
+#[cfg(debug_assertions)]
+use crate::services::debug::DebugService;
 use crate::{
     Character, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler, Settings,
     bridge::{Capture, DefaultInput, Input, InputMethod, InputReceiver},
@@ -10,7 +12,7 @@ use crate::{
     context::Context,
     database::Seeds,
     minimap::MinimapState,
-    navigation::Navigator,
+    navigator::Navigator,
     player::PlayerState,
     poll_request,
     rotator::Rotator,
@@ -24,6 +26,8 @@ use crate::{
     },
 };
 
+#[cfg(debug_assertions)]
+mod debug;
 mod game;
 mod minimap;
 mod navigator;
@@ -50,13 +54,15 @@ pub struct DefaultService {
     rotator: RotatorService,
     navigator: NavigatorService,
     settings: SettingsService,
+    #[cfg(debug_assertions)]
+    debug: DebugService,
 }
 
 impl DefaultService {
     pub fn new(seeds: Seeds, settings: Rc<RefCell<Settings>>) -> (Self, Box<dyn Input>, Capture) {
         let mut settings_service = SettingsService::new(settings.clone());
 
-        // Initialize with default handle and input method
+        // Initialize with default window and input method
         let window = settings_service.current_window();
         let input_method = InputMethod::Default(window, InputKind::Focused);
         let mut input = DefaultInput::new(input_method, seeds);
@@ -78,6 +84,8 @@ impl DefaultService {
             rotator: RotatorService,
             navigator: NavigatorService,
             settings: settings_service,
+            #[cfg(debug_assertions)]
+            debug: DebugService::default(),
         };
 
         (service, Box::new(input), capture)
@@ -149,6 +157,8 @@ impl DefaultRequestHandler<'_> {
                 GameEvent::NavigationPathsUpdated => self.args.navigator.mark_dirty(),
             }
         }
+
+        self.service.debug.poll(self.args.context);
     }
 
     fn broadcast_state(&self) {
@@ -271,27 +281,29 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     #[cfg(debug_assertions)]
-    fn on_capture_image(&self, _is_grayscale: bool) {
-        todo!()
+    fn on_capture_image(&self, is_grayscale: bool) {
+        self.service
+            .debug
+            .capture_image(self.args.context, is_grayscale);
     }
 
     #[cfg(debug_assertions)]
-    fn on_infer_rune(&self) {
-        todo!()
+    fn on_infer_rune(&mut self) {
+        self.service.debug.infer_rune();
     }
 
     #[cfg(debug_assertions)]
     fn on_infer_minimap(&self) {
-        todo!()
+        self.service.debug.infer_minimap(self.args.context);
     }
 
     #[cfg(debug_assertions)]
-    fn on_record_images(&self, _start: bool) {
-        todo!()
+    fn on_record_images(&mut self, start: bool) {
+        self.service.debug.record_images(start);
     }
 
     #[cfg(debug_assertions)]
     fn on_test_spin_rune(&self) {
-        todo!()
+        self.service.debug.test_spin_rune();
     }
 }

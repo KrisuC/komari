@@ -13,6 +13,7 @@ mod windows;
 
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// Platform-specific error.
 #[derive(Error, PartialEq, Clone, Debug)]
 pub enum Error {
     #[error("key was not sent due to the window not focused or other error")]
@@ -39,20 +40,29 @@ pub enum Error {
     Win32(u32, String),
 }
 
+/// Relativeness of a point to be converted to.
 #[derive(Debug)]
 pub enum CoordinateRelative {
+    /// Point will be converted with x, y coordinates relative to the monitor of the specified `[Window]`.
     Monitor,
+    /// Point will be converted with x, y coordinates relative to the client area of the specified `[Window]`.
     Window,
 }
 
+/// Represents converted coordinates as specified by [`CoordinateRelative`].
 #[derive(Debug)]
 pub struct ConvertedCoordinates {
+    /// The width of the monitor or client area.
     pub width: i32,
+    /// The height of the monitor or client area.
     pub height: i32,
+    /// x coordinate in relative to the monitor or client area.
     pub x: i32,
+    /// y coordinate in relative to the monitor or client area.
     pub y: i32,
 }
 
+/// A platform-specific handle to a window on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Window {
     #[cfg(windows)]
