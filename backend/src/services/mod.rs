@@ -1,8 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
+use mockall_double::double;
 use platforms::input::InputKind;
 use tokio::sync::broadcast::Receiver;
 
+#[double]
+use crate::rotator::Rotator;
 #[cfg(debug_assertions)]
 use crate::services::debug::DebugService;
 use crate::{
@@ -15,7 +18,6 @@ use crate::{
     navigator::Navigator,
     player::PlayerState,
     poll_request,
-    rotator::Rotator,
     services::{
         game::{GameEvent, GameService},
         minimap::MinimapService,
@@ -147,17 +149,28 @@ impl DefaultRequestHandler<'_> {
                     self.on_update_minimap(self.service.minimap.current_preset(), minimap)
                 }
                 GameEvent::CharacterUpdated(character) => self.on_update_character(character),
-                GameEvent::SettingsUpdated(settings) => self.service.settings.update(
-                    &mut self.args.context.operation,
-                    self.args.context.input.as_mut(),
-                    self.service.game.current_input_receiver_mut(),
-                    self.args.capture,
-                    settings,
-                ),
+                GameEvent::SettingsUpdated(settings) => {
+                    self.service.settings.update(
+                        &mut self.args.context.operation,
+                        self.args.context.input.as_mut(),
+                        self.service.game.current_input_receiver_mut(),
+                        self.args.capture,
+                        settings,
+                    );
+                    self.service.rotator.update(
+                        self.args.rotator,
+                        self.service.minimap.current(),
+                        self.service.player.current(),
+                        &self.service.settings.current(),
+                        self.service.game.current_actions(),
+                        self.service.game.current_buffs(),
+                    );
+                }
                 GameEvent::NavigationPathsUpdated => self.args.navigator.mark_dirty(),
             }
         }
 
+        #[cfg(debug_assertions)]
         self.service.debug.poll(self.args.context);
     }
 
@@ -229,6 +242,11 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     fn on_update_character(&mut self, character: Option<Character>) {
         self.service.player.update(character);
         self.service.player.update_from_character(self.args.player);
+        self.service.game.update_actions(
+            self.service.minimap.current(),
+            self.service.minimap.current_preset(),
+            self.service.player.current(),
+        );
         self.service
             .game
             .update_buffs(self.service.player.current());

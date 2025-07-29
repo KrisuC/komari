@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use log::debug;
+use mockall_double::double;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Rect, Vec4b};
 use strum::IntoEnumIterator;
 use tokio::{
@@ -8,6 +9,8 @@ use tokio::{
     sync::broadcast::{self, Receiver, Sender},
 };
 
+#[double]
+use crate::rotator::Rotator;
 use crate::{
     Action, ActionCondition, ActionConfigurationCondition, ActionKey, BoundQuadrant, Character,
     DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration, Minimap,
@@ -18,7 +21,6 @@ use crate::{
     context::{Context, Operation},
     database_event_receiver, minimap,
     player::{PlayerState, Quadrant},
-    rotator::Rotator,
     skill::SkillKind,
 };
 

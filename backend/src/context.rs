@@ -10,12 +10,15 @@ use std::{
 use dyn_clone::clone_box;
 #[cfg(debug_assertions)]
 use log::debug;
+use mockall_double::double;
 use opencv::{
     core::{Vector, VectorToVec},
     imgcodecs::imencode_def,
 };
 use strum::IntoEnumIterator;
 
+#[double]
+use crate::rotator::Rotator;
 #[cfg(test)]
 use crate::{Settings, bridge::MockInput, detect::MockDetector};
 use crate::{
@@ -29,7 +32,6 @@ use crate::{
     network::{DiscordNotification, NotificationKind},
     player::{PanicTo, Panicking, Player, PlayerState},
     rng::Rng,
-    rotator::Rotator,
     services::{DefaultService, PollArgs},
     skill::{Skill, SkillKind, SkillState},
 };

@@ -763,6 +763,7 @@ impl Capture {
             mode: CaptureMode::BitBlt,
         }
     }
+
     #[inline]
     pub fn grab(&mut self) -> Option<Frame> {
         self.inner.grab().ok()
