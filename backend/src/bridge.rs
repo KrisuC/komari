@@ -1,4 +1,4 @@
-use std::{any::Any, cell::RefCell, collections::HashMap, fmt::Debug};
+use std::{cell::RefCell, collections::HashMap, fmt::Debug};
 
 use anyhow::Result;
 #[cfg(test)]
@@ -36,6 +36,9 @@ const MEAN_STD_REVERSION_RATE: f32 = 0.2;
 /// The rate at which generated mean will revert to the base [`BASE_MEAN_MS_DELAY`] over time.
 const MEAN_STD_VOLATILITY: f32 = 3.0;
 
+/// The kind of mouse movement/action to perform.
+///
+/// This is a bridge enum between platform-specific and gRPC.
 #[derive(Debug)]
 pub enum MouseKind {
     Move,
@@ -63,8 +66,9 @@ impl From<MouseKind> for PlatformMouseKind {
     }
 }
 
-// impl From<MouseKind> for Rpc
-
+/// The kind of key to sent.
+///
+/// This is a bridge enum between platform-specific, gRPC and database.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum KeyKind {
     A,
@@ -451,34 +455,20 @@ impl From<KeyKind> for RpcKeyKind {
     }
 }
 
+/// A receiver to receive to platform keystroke event.
+///
+/// This is a bridge struct for [`KeyKind`].
 #[derive(Debug)]
 pub struct InputReceiver {
     inner: PlatformInputReceiver,
-    #[cfg(test)]
-    window: Window,
-    #[cfg(test)]
-    kind: PlatformInputKind,
 }
 
+#[cfg_attr(test, automock)]
 impl InputReceiver {
     pub fn new(window: Window, kind: PlatformInputKind) -> Self {
         Self {
             inner: PlatformInputReceiver::new(window, kind).expect("supported platform"),
-            #[cfg(test)]
-            window,
-            #[cfg(test)]
-            kind,
         }
-    }
-
-    #[cfg(test)]
-    pub fn window(&self) -> Window {
-        self.window
-    }
-
-    #[cfg(test)]
-    pub fn kind(&self) -> PlatformInputKind {
-        self.kind
     }
 
     #[inline]
@@ -505,6 +495,7 @@ enum InputMethodInner {
     Default(PlatformInput),
 }
 
+/// States of input delay tracking.
 #[derive(Debug)]
 enum InputDelay {
     Untracked,
@@ -515,6 +506,10 @@ enum InputDelay {
 /// A trait for sending inputs.
 #[cfg_attr(test, automock)]
 pub trait Input: Debug {
+    /// Performs a tick update.
+    fn update(&mut self, tick: u64);
+
+    /// Overwrites the current input method with new `method`.
     fn set_method(&mut self, method: InputMethod);
 
     /// Sends mouse `kind` to `(x, y)` relative to the client coordinate (e.g. capture area).
@@ -522,17 +517,20 @@ pub trait Input: Debug {
     /// `(0, 0)` is top-left and `(width, height)` is bottom-right.
     fn send_mouse(&self, x: i32, y: i32, kind: MouseKind) -> Result<()>;
 
+    /// Presses a single key `kind`.
     fn send_key(&self, kind: KeyKind) -> Result<()>;
 
+    /// Releases a held key `kind`.
     fn send_key_up(&self, kind: KeyKind) -> Result<()>;
 
+    /// Holds down key `kind`.
     fn send_key_down(&self, kind: KeyKind) -> Result<()>;
 
+    /// Whether all keys are cleared.
     fn all_keys_cleared(&self) -> bool;
-
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
+/// Default implementation of [`Input`].
 #[derive(Debug)]
 pub struct DefaultInput {
     kind: InputMethodInner,
@@ -673,6 +671,10 @@ impl DefaultInput {
 }
 
 impl Input for DefaultInput {
+    fn update(&mut self, tick: u64) {
+        self.update_input_delay(tick);
+    }
+
     fn set_method(&mut self, method: InputMethod) {
         self.kind = input_method_inner_from(method, self.delay_rng.seed());
     }
@@ -726,22 +728,18 @@ impl Input for DefaultInput {
     fn all_keys_cleared(&self) -> bool {
         self.delay_map.borrow().is_empty()
     }
-
-    #[inline]
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }
 
 /// A struct for managing different capture modes.
 ///
-/// Bridge for platform and database.
+/// A bridge struct between platform-specific and database.
 #[derive(Debug)]
 pub struct Capture {
     inner: PlatformCapture,
     mode: CaptureMode,
 }
 
+#[cfg_attr(test, automock)]
 impl Capture {
     pub fn new(window: Window) -> Self {
         Self {
@@ -749,6 +747,7 @@ impl Capture {
             mode: CaptureMode::BitBlt,
         }
     }
+
     #[inline]
     pub fn grab(&mut self) -> Option<Frame> {
         self.inner.grab().ok()

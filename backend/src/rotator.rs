@@ -6,7 +6,9 @@ use std::{
 };
 
 use anyhow::Result;
-use log::debug;
+use log::{debug, info};
+#[cfg(test)]
+use mockall::{automock, concretize};
 use opencv::core::{Point, Rect};
 use ordered_hash_map::OrderedHashMap;
 
@@ -84,7 +86,7 @@ struct PriorityAction {
     last_queued_time: Option<Instant>,
 }
 
-/// The action that will be passed to the player
+/// The action that will be passed to the player.
 ///
 /// There are [`RotatorAction::Single`] and [`RotatorAction::Linked`] actions.
 /// With [`RotatorAction::Linked`] action is a linked list of actions. [`RotatorAction::Linked`]
@@ -96,14 +98,14 @@ enum RotatorAction {
     Linked(LinkedAction),
 }
 
-/// A linked list of actions
+/// A linked list of actions.
 #[derive(Clone, Debug)]
 struct LinkedAction {
     inner: PlayerAction,
     next: Option<Box<LinkedAction>>,
 }
 
-/// The rotator's rotation mode
+/// The rotator's rotation mode.
 #[derive(Default, Debug)]
 pub enum RotatorMode {
     StartToEnd,
@@ -157,9 +159,11 @@ pub struct RotatorBuildArgs<'a> {
     pub enable_reset_normal_actions_on_erda: bool,
 }
 
+#[cfg_attr(test, automock)]
 impl Rotator {
+    #[cfg_attr(test, concretize)]
     pub fn build_actions(&mut self, args: RotatorBuildArgs<'_>) {
-        debug!(target: "rotator", "preparing actions {args:?}");
+        info!(target: "rotator", "preparing actions {args:?}");
         let RotatorBuildArgs {
             mode,
             actions,
@@ -322,44 +326,47 @@ impl Rotator {
             player: &PlayerState,
             id: u32,
         ) -> bool {
-            if rotator
+            let queuing_id = rotator
                 .priority_queuing_linked_action
                 .as_ref()
-                .is_some_and(|(action_id, _)| *action_id == id)
-            {
+                .map(|(action_id, _)| *action_id);
+            if Some(id) == queuing_id {
                 return true;
             }
-            player.priority_action_id().is_some_and(|action_id| {
-                action_id == id
-                    && rotator
-                        .priority_actions
-                        .get(&id)
-                        .is_some_and(|action| matches!(action.inner, RotatorAction::Linked(_)))
-            })
+
+            let Some(action_id) = player.priority_action_id() else {
+                return false;
+            };
+            if action_id != id {
+                return false;
+            }
+
+            rotator
+                .priority_actions
+                .get(&id)
+                .is_some_and(|action| matches!(action.inner, RotatorAction::Linked(_)))
         }
 
         /// Checks if the player or the queue has
         /// a [`ActionCondition::ErdaShowerOffCooldown`] action.
         #[inline]
         fn has_erda_action_queuing_or_executing(rotator: &Rotator, player: &PlayerState) -> bool {
-            if player.priority_action_id().is_some_and(|id| {
-                rotator.priority_actions.get(&id).is_some_and(|action| {
-                    matches!(
-                        action.condition_kind,
-                        Some(ActionCondition::ErdaShowerOffCooldown)
-                    )
-                })
-            }) {
-                return true;
-            }
-            rotator.priority_actions_queue.iter().any(|id| {
-                matches!(
-                    rotator
-                        .priority_actions
-                        .get(id)
-                        .and_then(|action| action.condition_kind),
+            if let Some(id) = player.priority_action_id()
+                && let Some(action) = rotator.priority_actions.get(&id)
+                && matches!(
+                    action.condition_kind,
                     Some(ActionCondition::ErdaShowerOffCooldown)
                 )
+            {
+                return true;
+            }
+
+            rotator.priority_actions_queue.iter().any(|id| {
+                let condition = rotator
+                    .priority_actions
+                    .get(id)
+                    .and_then(|action| action.condition_kind);
+                matches!(condition, Some(ActionCondition::ErdaShowerOffCooldown))
             })
         }
 
@@ -477,15 +484,11 @@ impl Rotator {
         {
             return;
         }
+
         if self.rotate_queuing_linked_action(player, true) {
             return;
         }
-        let id = *self.priority_actions_queue.front().unwrap();
-        let Some(action) = self.priority_actions.get(&id) else {
-            self.priority_actions_queue.pop_front();
-            return;
-        };
-        let has_queue_to_front = player
+        let player_has_queue_to_front = player
             .priority_action_id()
             .and_then(|id| {
                 self.priority_actions
@@ -493,14 +496,21 @@ impl Rotator {
                     .map(|action| action.queue_to_front)
             })
             .unwrap_or_default();
-        if has_queue_to_front {
-            return;
-        }
-        if player.has_priority_action() && !action.queue_to_front {
+        if player_has_queue_to_front {
             return;
         }
 
-        self.priority_actions_queue.pop_front();
+        let Some(id) = self.priority_actions_queue.pop_front_if(|id| {
+            self.priority_actions
+                .get(id)
+                .is_none_or(|action| !player.has_priority_action() || action.queue_to_front)
+        }) else {
+            return;
+        };
+        let Some(action) = self.priority_actions.get(&id) else {
+            return;
+        };
+
         match action.inner.clone() {
             RotatorAction::Single(inner) => {
                 if action.queue_to_front {

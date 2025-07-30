@@ -69,6 +69,11 @@ pub struct MinimapState {
 }
 
 impl MinimapState {
+    #[cfg(test)]
+    pub fn platforms(&self) -> &[Platform] {
+        &self.platforms
+    }
+
     pub fn set_platforms(&mut self, platforms: Vec<Platform>) {
         self.platforms = platforms;
         self.platforms_dirty = true;

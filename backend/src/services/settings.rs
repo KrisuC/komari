@@ -3,11 +3,16 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(test)]
+use mockall::automock;
+use mockall_double::double;
 use platforms::{Window, capture::query_capture_name_window_pairs, input::InputKind};
 
+#[double]
+use crate::bridge::{Capture, InputReceiver};
 use crate::{
     CaptureMode, InputMethod as DatabaseInputMethod, Settings,
-    bridge::{Capture, Input, InputMethod, InputReceiver},
+    bridge::{Input, InputMethod},
     context::Operation,
 };
 
@@ -20,7 +25,9 @@ pub struct SettingsService {
     capture_selected_window_index: Option<usize>,
 }
 
+#[cfg_attr(test, automock)]
 impl SettingsService {
+    /// Creates a new [`SettingsService`] from the provided `settings`.
     pub fn new(settings: Rc<RefCell<Settings>>) -> Self {
         // MapleStoryClass <- GMS
         // MapleStoryClassSG <- MSEA
@@ -40,10 +47,14 @@ impl SettingsService {
         panic!("unsupported platform")
     }
 
+    /// Gets the current [`Settings`] in use.
     pub fn current(&self) -> Ref<'_, Settings> {
         self.settings.borrow()
     }
 
+    /// Gets a list of [`Window`] names to be used for selection.
+    ///
+    /// The index of a name corresponds to a [`Window`].
     pub fn current_window_names(&self) -> Vec<String> {
         self.capture_name_window_pairs
             .iter()
@@ -52,10 +63,14 @@ impl SettingsService {
             .collect::<Vec<_>>()
     }
 
+    /// Gets the current selected [`Window`] index.
     pub fn current_selected_window_index(&self) -> Option<usize> {
         self.capture_selected_window_index
     }
 
+    /// Gets the current selected [`Window`].
+    ///
+    /// If none is selected, the default [`Window`] is returned.
     pub fn current_window(&self) -> Window {
         self.capture_selected_window_index
             .and_then(|index| {
@@ -67,11 +82,13 @@ impl SettingsService {
             .unwrap_or(self.capture_default_window)
     }
 
+    /// Updates the list available of [`Window`]s from platform.
     pub fn update_windows(&mut self) {
         self.capture_name_window_pairs =
             query_capture_name_window_pairs().expect("supported platform");
     }
 
+    /// Updates `input`, `input_receiver` and `capture` to use the [`Window`] specified by `index`.
     pub fn update_selected_window(
         &mut self,
         input: &mut dyn Input,
@@ -84,8 +101,8 @@ impl SettingsService {
         self.update_inputs(input, input_receiver, capture);
     }
 
-    /// Updates the currently used [`Settings`] from `new_settings` and configures `keys`,
-    /// `key_receiver` and `capture`.
+    /// Updates the currently used [`Settings`] with `new_settings` and configures `operation`,
+    /// `input`, `input_receiver` and `capture` to reflect the updated [`Settings`].
     pub fn update(
         &mut self,
         operation: &mut Operation,
@@ -145,11 +162,15 @@ mod tests {
     use std::assert_matches::assert_matches;
     use std::cell::RefCell;
     use std::rc::Rc;
+    use std::sync::Mutex;
 
     use super::*;
-    use crate::bridge::{Capture, InputMethod as BridgeInputMethod, MockInput};
+    use crate::bridge::{InputMethod as BridgeInputMethod, MockInput};
     use crate::context::Operation;
     use crate::{CaptureMode, InputMethod};
+
+    /// A mutex to guard against mocking static method from multiple threads.
+    static MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn settings_service_initialization() {
@@ -173,6 +194,7 @@ mod tests {
 
     #[test]
     fn update_selected_handle_sets_index_and_updates() {
+        let _guard = MUTEX.lock();
         let settings = Rc::new(RefCell::new(Settings {
             capture_mode: CaptureMode::WindowsGraphicsCapture,
             ..Default::default()
@@ -184,29 +206,42 @@ mod tests {
         ];
 
         let mut mock_keys = MockInput::default();
-        mock_keys
-            .expect_set_method()
-            .withf(|method| match method {
-                BridgeInputMethod::Rpc(_, _) => false,
-                BridgeInputMethod::Default(window, kind) => {
-                    *window == Window::new("Bar") && matches!(kind, InputKind::Focused)
-                }
-            })
-            .returning(|_| ());
-        let mut key_receiver = InputReceiver::new(service.current_window(), InputKind::Focused);
-        let mut capture = Capture::new(service.current_window());
+        mock_keys.expect_set_method().withf(|method| match method {
+            BridgeInputMethod::Rpc(_, _) => false,
+            BridgeInputMethod::Default(window, kind) => {
+                *window == Window::new("Bar") && matches!(kind, InputKind::Focused)
+            }
+        });
+
+        let mut key_receiver = InputReceiver::default();
+        let mut capture = Capture::default();
+        capture
+            .expect_set_window()
+            .withf(|window| *window == Window::new("Bar"))
+            .once();
+        capture
+            .expect_mode()
+            .once()
+            .return_const(CaptureMode::WindowsGraphicsCapture);
+        capture
+            .expect_set_mode()
+            .withf(|mode| *mode == CaptureMode::WindowsGraphicsCapture)
+            .once();
+
+        let key_receiver_context = InputReceiver::new_context();
+        key_receiver_context.expect().withf(|window, kind| {
+            *window == Window::new("Bar") && matches!(kind, InputKind::Focused)
+        });
 
         service.update_selected_window(&mut mock_keys, &mut key_receiver, &mut capture, Some(1));
 
         assert_eq!(service.current_selected_window_index(), Some(1));
         assert_eq!(service.current_window(), Window::new("Bar"));
-        assert_matches!(capture.mode(), CaptureMode::WindowsGraphicsCapture);
-        assert_matches!(key_receiver.kind(), InputKind::Focused);
-        assert_eq!(key_receiver.window(), Window::new("Bar"));
     }
 
     #[test]
     fn update_settings_replaces_state_and_updates_components() {
+        let _guard = MUTEX.lock();
         let settings = Rc::new(RefCell::new(Settings::default()));
         let mut service = SettingsService::new(settings.clone());
         let new_settings = Settings {
@@ -214,21 +249,36 @@ mod tests {
             input_method_rpc_server_url: "http://localhost:9000".to_string(),
             cycle_run_stop: true,
             cycle_run_duration_millis: 1000,
+            capture_mode: CaptureMode::WindowsGraphicsCapture,
             ..Default::default()
         };
         let mut mock_keys = MockInput::default();
-        let service_current_window = service.current_window();
-        mock_keys
-            .expect_set_method()
-            .withf_st(move |method| match method {
-                BridgeInputMethod::Rpc(window, url) => {
-                    *window == service_current_window && url.as_str() == "http://localhost:9000"
-                }
-                BridgeInputMethod::Default(_, _) => false,
-            })
-            .returning(|_| ());
-        let mut key_receiver = InputReceiver::new(service.current_window(), InputKind::Focused);
-        let mut capture = Capture::new(service.current_window());
+        mock_keys.expect_set_method().withf(|method| match method {
+            BridgeInputMethod::Rpc(window, url) => {
+                *window == Window::new("MapleStoryClass") && url.as_str() == "http://localhost:9000"
+            }
+            BridgeInputMethod::Default(_, _) => false,
+        });
+
+        let mut key_receiver = InputReceiver::default();
+        let key_receiver_context = InputReceiver::new_context();
+        key_receiver_context.expect().withf(|window, kind| {
+            *window == Window::new("MapleStoryClass") && matches!(kind, InputKind::Focused)
+        });
+
+        let mut capture = Capture::default();
+        capture
+            .expect_set_mode()
+            .withf(|mode| *mode == CaptureMode::WindowsGraphicsCapture)
+            .once();
+        capture
+            .expect_set_window()
+            .withf(|window| *window == Window::new("MapleStoryClass"))
+            .once();
+        capture
+            .expect_mode()
+            .times(2)
+            .return_const(CaptureMode::BitBlt);
         let mut op = Operation::Running;
 
         service.update(
@@ -240,8 +290,46 @@ mod tests {
         );
 
         let current = service.current();
+
         assert_matches!(op, Operation::RunUntil(_));
         assert_eq!(current.input_method, InputMethod::Rpc);
         assert_eq!(current.input_method_rpc_server_url, "http://localhost:9000");
+    }
+
+    #[test]
+    fn update_settings_input_receiver_foreground() {
+        let _guard = MUTEX.lock();
+        let settings = Rc::new(RefCell::new(Settings::default()));
+        let mut service = SettingsService::new(settings.clone());
+        let new_settings = Settings {
+            capture_mode: CaptureMode::BitBltArea,
+            ..Default::default()
+        };
+        let mut mock_keys = MockInput::default();
+        mock_keys.expect_set_method().once();
+        let mut key_receiver = InputReceiver::default();
+        let key_receiver_context = InputReceiver::new_context();
+        key_receiver_context.expect().withf(|window, kind| {
+            *window == Window::new("MapleStoryClass") && matches!(kind, InputKind::Foreground)
+        });
+
+        let mut capture = Capture::default();
+        capture
+            .expect_window()
+            .once()
+            .returning(|| Window::new("MapleStoryClass"));
+        capture
+            .expect_mode()
+            .times(2)
+            .return_const(CaptureMode::BitBltArea);
+        let mut op = Operation::Running;
+
+        service.update(
+            &mut op,
+            &mut mock_keys,
+            &mut key_receiver,
+            &mut capture,
+            new_settings.clone(),
+        );
     }
 }
