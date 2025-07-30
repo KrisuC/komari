@@ -11,14 +11,14 @@ base64 = "0.22.1"
 prost = "0.13.5"
 platforms = { workspace = true }
 ort = { version = "2.0.0-rc.10", default-features = false, features = [
-    "load-dynamic",
-    "cuda",
+  "load-dynamic",
+  "cuda",
 ] }
 opencv = { version = "0.94.4", default-features = false, features = [
-    "dnn",
-    "imgcodecs",
-    "imgproc",
-    "highgui",
+  "dnn",
+  "imgcodecs",
+  "imgproc",
+  "highgui",
 ] }
 anyhow = "1.0.98"
 log = { workspace = true }
@@ -39,7 +39,7 @@ mockall_double = "0.3.1"
 tonic-build = "*"
 
 [dev-dependencies]
-mockall = "0.13.1"
+mockall = { version = "0.13.1", features = ["nightly"] }
 
 [features]
 gpu = []

@@ -1,4 +1,6 @@
 use base64::{Engine, prelude::BASE64_STANDARD};
+#[cfg(test)]
+use mockall::automock;
 use opencv::{
     core::{MatTraitConst, Rect, Vector},
     imgcodecs::imencode_def,
@@ -6,9 +8,10 @@ use opencv::{
 
 use crate::{NavigationPath, context::Context, minimap::Minimap};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct NavigatorService;
 
+#[cfg_attr(test, automock)]
 impl NavigatorService {
     pub fn create_path(&self, context: &Context) -> Option<NavigationPath> {
         if let Some((minimap_base64, name_base64, name_bbox)) =
@@ -61,3 +64,6 @@ fn extract_minimap_and_name_base64(context: &Context) -> Option<(String, String,
         None
     }
 }
+
+#[cfg(test)]
+mod tests {}

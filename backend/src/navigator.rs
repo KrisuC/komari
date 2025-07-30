@@ -11,10 +11,13 @@ use base64::{Engine, prelude::BASE64_STANDARD};
 use log::{debug, info};
 #[cfg(test)]
 use mockall::automock;
+use mockall_double::double;
 use opencv::{
     core::{Mat, Rect, Vector},
     imgcodecs::{IMREAD_COLOR, IMREAD_GRAYSCALE, imdecode},
 };
+#[double]
+use source::NavigatorDataSource;
 
 use crate::{
     ActionKeyDirection, ActionKeyWith, KeyBinding, NavigationPaths, Position,
@@ -24,6 +27,21 @@ use crate::{
     minimap::Minimap,
     player::{PlayerAction, PlayerActionKey, PlayerState},
 };
+
+mod source {
+    use super::*;
+
+    #[derive(Debug, Default)]
+    pub struct NavigatorDataSource;
+
+    /// A data source to query [`NavigationPath`].
+    #[cfg_attr(test, automock)]
+    impl NavigatorDataSource {
+        pub fn query_paths(&self) -> Result<Vec<NavigationPaths>> {
+            query_navigation_paths()
+        }
+    }
+}
 
 /// Internal representation of [`NavigationPath`].
 ///
@@ -72,29 +90,12 @@ enum UpdateState {
     NoMatch,
 }
 
-/// A data source to query [`NavigationPath`].
-///
-/// This helps abstracting out database and useful for tests.
-#[cfg_attr(test, automock)]
-pub trait NavigatorDataSource: Debug + 'static {
-    fn query_paths(&self) -> Result<Vec<NavigationPaths>>;
-}
-
-#[derive(Debug)]
-struct DefaultNavigatorDataSource;
-
-impl NavigatorDataSource for DefaultNavigatorDataSource {
-    fn query_paths(&self) -> Result<Vec<NavigationPaths>> {
-        query_navigation_paths()
-    }
-}
-
 /// Manages navigation paths to reach a certain minimap.
 #[derive(Debug)]
 pub struct Navigator {
     // TODO: Cache mat?
     /// Data source for querying [`NavigationPaths`]s.
-    source: Box<dyn NavigatorDataSource>,
+    source: NavigatorDataSource,
     /// Base path to search for navigation points.
     base_path: Option<Rc<RefCell<Path>>>,
     /// The player's current path.
@@ -115,14 +116,16 @@ pub struct Navigator {
 
 impl Default for Navigator {
     fn default() -> Self {
-        Self::new(DefaultNavigatorDataSource)
+        #[allow(clippy::default_constructed_unit_structs)]
+        Self::new(NavigatorDataSource::default())
     }
 }
 
+#[cfg_attr(test, automock)]
 impl Navigator {
-    fn new(source: impl NavigatorDataSource) -> Self {
+    fn new(source: NavigatorDataSource) -> Self {
         Self {
-            source: Box::new(source),
+            source,
             base_path: None,
             current_path: None,
             path_dirty: true,
@@ -658,7 +661,7 @@ mod tests {
 
     #[test]
     fn compute_next_point_when_path_dirty() {
-        let navigator = Navigator::default();
+        let navigator = Navigator::new(NavigatorDataSource::new());
 
         let result = navigator.compute_next_point();
 
@@ -667,10 +670,8 @@ mod tests {
 
     #[test]
     fn compute_next_point_when_no_destination_path() {
-        let navigator = Navigator {
-            path_dirty: false,
-            ..Default::default()
-        };
+        let mut navigator = Navigator::new(NavigatorDataSource::new());
+        navigator.path_dirty = false;
 
         let result = navigator.compute_next_point();
 
@@ -679,7 +680,7 @@ mod tests {
 
     #[test]
     fn compute_next_point_when_current_path_matches_destination() {
-        let mut navigator = Navigator::default();
+        let mut navigator = Navigator::new(NavigatorDataSource::new());
         let path = Path {
             id: 42.to_string(),
             minimap_snapshot_base64: "".into(),
@@ -697,7 +698,7 @@ mod tests {
 
     #[test]
     fn compute_next_point_returns_next_point_from_current_path() {
-        let mut navigator = Navigator::default();
+        let mut navigator = Navigator::new(NavigatorDataSource::new());
         let target_path = Path {
             id: 2.to_string(),
             minimap_snapshot_base64: "".into(),
@@ -735,7 +736,7 @@ mod tests {
 
     #[test]
     fn compute_next_point_unreachable_when_not_in_any_path() {
-        let mut navigator = Navigator::default();
+        let mut navigator = Navigator::new(NavigatorDataSource::new());
         let unrelated_path = Rc::new(RefCell::new(Path {
             id: 1.to_string(),
             minimap_snapshot_base64: "".into(),
@@ -783,7 +784,7 @@ mod tests {
             paths: vec![mock_path],
         };
 
-        let mut mock_source = MockNavigatorDataSource::new();
+        let mut mock_source = NavigatorDataSource::new();
         mock_source
             .expect_query_paths()
             .returning(move || Ok(vec![mock_paths.clone()]));

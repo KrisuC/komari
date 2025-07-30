@@ -461,31 +461,14 @@ impl From<KeyKind> for RpcKeyKind {
 #[derive(Debug)]
 pub struct InputReceiver {
     inner: PlatformInputReceiver,
-    #[cfg(test)]
-    window: Window,
-    #[cfg(test)]
-    kind: PlatformInputKind,
 }
 
+#[cfg_attr(test, automock)]
 impl InputReceiver {
     pub fn new(window: Window, kind: PlatformInputKind) -> Self {
         Self {
             inner: PlatformInputReceiver::new(window, kind).expect("supported platform"),
-            #[cfg(test)]
-            window,
-            #[cfg(test)]
-            kind,
         }
-    }
-
-    #[cfg(test)]
-    pub fn window(&self) -> Window {
-        self.window
-    }
-
-    #[cfg(test)]
-    pub fn kind(&self) -> PlatformInputKind {
-        self.kind
     }
 
     #[inline]
@@ -756,6 +739,7 @@ pub struct Capture {
     mode: CaptureMode,
 }
 
+#[cfg_attr(test, automock)]
 impl Capture {
     pub fn new(window: Window) -> Self {
         Self {

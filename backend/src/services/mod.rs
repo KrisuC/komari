@@ -4,27 +4,27 @@ use mockall_double::double;
 use platforms::input::InputKind;
 use tokio::sync::broadcast::Receiver;
 
-#[double]
-use crate::rotator::Rotator;
 #[cfg(debug_assertions)]
 use crate::services::debug::DebugService;
 use crate::{
     Character, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler, Settings,
-    bridge::{Capture, DefaultInput, Input, InputMethod, InputReceiver},
+    bridge::{DefaultInput, Input, InputMethod},
     buff::BuffState,
     context::Context,
     database::Seeds,
     minimap::MinimapState,
-    navigator::Navigator,
     player::PlayerState,
     poll_request,
+    services::game::GameEvent,
+};
+#[double]
+use crate::{
+    bridge::{Capture, InputReceiver},
+    navigator::Navigator,
+    rotator::Rotator,
     services::{
-        game::{GameEvent, GameService},
-        minimap::MinimapService,
-        navigator::NavigatorService,
-        player::PlayerService,
-        rotator::RotatorService,
-        settings::SettingsService,
+        game::GameService, minimap::MinimapService, navigator::NavigatorService,
+        player::PlayerService, rotator::RotatorService, settings::SettingsService,
     },
 };
 
@@ -83,8 +83,10 @@ impl DefaultService {
             game: GameService::new(input_receiver),
             minimap: MinimapService::default(),
             player: PlayerService::default(),
-            rotator: RotatorService,
-            navigator: NavigatorService,
+            #[allow(clippy::default_constructed_unit_structs)]
+            rotator: RotatorService::default(),
+            #[allow(clippy::default_constructed_unit_structs)]
+            navigator: NavigatorService::default(),
             settings: settings_service,
             #[cfg(debug_assertions)]
             debug: DebugService::default(),
@@ -205,24 +207,25 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         self.service
             .minimap
             .update(self.args.minimap, preset, minimap);
+        let minimap = self.service.minimap.current();
+        let character = self.service.player.current();
+
         self.service
             .player
-            .update_from_minimap(self.args.player, self.service.minimap.current());
-        self.service.game.update_actions(
-            self.service.minimap.current(),
-            self.service.minimap.current_preset(),
-            self.service.player.current(),
-        );
-        self.args.navigator.mark_dirty_with_destination(
-            self.service
-                .minimap
-                .current()
-                .and_then(|minimap| minimap.paths_id_index),
-        );
+            .update_from_minimap(self.args.player, minimap);
+
+        self.service
+            .game
+            .update_actions(minimap, self.service.minimap.current_preset(), character);
+
+        self.args
+            .navigator
+            .mark_dirty_with_destination(minimap.and_then(|minimap| minimap.paths_id_index));
+
         self.service.rotator.update(
             self.args.rotator,
-            self.service.minimap.current(),
-            self.service.player.current(),
+            minimap,
+            character,
             &self.service.settings.current(),
             self.service.game.current_actions(),
             self.service.game.current_buffs(),
@@ -242,24 +245,24 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     fn on_update_character(&mut self, character: Option<Character>) {
         self.service.player.update(character);
         self.service.player.update_from_character(self.args.player);
-        self.service.game.update_actions(
-            self.service.minimap.current(),
-            self.service.minimap.current_preset(),
-            self.service.player.current(),
-        );
-        self.service
-            .game
-            .update_buffs(self.service.player.current());
-        if let Some(character) = self.service.player.current() {
+
+        let character = self.service.player.current();
+        let minimap = self.service.minimap.current();
+        let preset = self.service.minimap.current_preset();
+        let settings = self.service.settings.current();
+
+        self.service.game.update_actions(minimap, preset, character);
+        self.service.game.update_buffs(character);
+        if let Some(character) = character {
             self.args.buffs.iter_mut().for_each(|state| {
-                state.update_enabled_state(character, &self.service.settings.current());
+                state.update_enabled_state(character, &settings);
             });
         }
         self.service.rotator.update(
             self.args.rotator,
-            self.service.minimap.current(),
-            self.service.player.current(),
-            &self.service.settings.current(),
+            minimap,
+            character,
+            &settings,
             self.service.game.current_actions(),
             self.service.game.current_buffs(),
         );
@@ -323,5 +326,288 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     #[cfg(debug_assertions)]
     fn on_test_spin_rune(&self) {
         self.service.debug.test_spin_rune();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use mockall::Sequence;
+
+    use super::*;
+    use crate::{
+        Action, Character, KeyBindingConfiguration, buff::BuffKind, context::Context,
+        database::Minimap as MinimapData, minimap::MinimapState, player::PlayerState,
+    };
+
+    fn mock_poll_args(
+        (context, player, minimap, buffs, rotator, navigator, capture): &mut (
+            Context,
+            PlayerState,
+            MinimapState,
+            Vec<BuffState>,
+            Rotator,
+            Navigator,
+            Capture,
+        ),
+    ) -> PollArgs<'_> {
+        PollArgs {
+            context,
+            player,
+            minimap,
+            buffs,
+            rotator,
+            navigator,
+            capture,
+        }
+    }
+
+    fn mock_states() -> (
+        Context,
+        PlayerState,
+        MinimapState,
+        Vec<BuffState>,
+        Rotator,
+        Navigator,
+        Capture,
+    ) {
+        let context = Context::new(None, None);
+        let player = PlayerState::default();
+        let minimap = MinimapState::default();
+        let buffs = vec![];
+        let rotator = Rotator::default();
+        let navigator = Navigator::default();
+        let capture = Capture::default();
+
+        (context, player, minimap, buffs, rotator, navigator, capture)
+    }
+
+    fn mock_service() -> DefaultService {
+        let game = GameService::default();
+        let player = PlayerService::default();
+        let minimap = MinimapService::default();
+        let rotator = RotatorService::default();
+        let navigator = NavigatorService::default();
+        let settings = SettingsService::default();
+
+        DefaultService {
+            game,
+            minimap,
+            player,
+            rotator,
+            navigator,
+            settings,
+            #[cfg(debug_assertions)]
+            debug: crate::services::debug::DebugService::default(),
+        }
+    }
+
+    #[test]
+    fn on_update_minimap_triggers_all_services() {
+        let mut service = mock_service();
+        let mut states = mock_states();
+        let mut sequence = Sequence::new();
+        let args = mock_poll_args(&mut states);
+        let mut handler = DefaultRequestHandler {
+            service: &mut service,
+            args,
+        };
+        let minimap = Box::leak(Box::new(MinimapData::default()));
+        let character = Box::leak(Box::new(Character::default()));
+        let settings = Box::leak(Box::new(RefCell::new(Settings::default())));
+        let actions = Vec::<Action>::new();
+        let buffs = Vec::<(BuffKind, KeyBinding)>::new();
+
+        handler
+            .service
+            .minimap
+            .expect_update()
+            .once()
+            .return_const(())
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .minimap
+            .expect_current()
+            .once()
+            .return_const(Some(&*minimap))
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .player
+            .expect_current()
+            .once()
+            .return_const(Some(&*character))
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .player
+            .expect_update_from_minimap()
+            .once()
+            .return_const(())
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .minimap
+            .expect_current_preset()
+            .once()
+            .return_const(Some("preset".to_string()))
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .game
+            .expect_update_actions()
+            .once()
+            .return_const(())
+            .in_sequence(&mut sequence);
+        handler
+            .args
+            .navigator
+            .expect_mark_dirty_with_destination()
+            .once()
+            .return_const(())
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .settings
+            .expect_current()
+            .once()
+            .returning_st(|| settings.borrow());
+        handler
+            .service
+            .game
+            .expect_current_actions()
+            .once()
+            .return_const(actions);
+        handler
+            .service
+            .game
+            .expect_current_buffs()
+            .once()
+            .return_const(buffs);
+        handler
+            .service
+            .rotator
+            .expect_update()
+            .once()
+            .return_const(())
+            .in_sequence(&mut sequence);
+
+        handler.on_update_minimap(Some("preset".into()), Some(minimap.clone()));
+    }
+
+    #[test]
+    fn on_update_character_calls_dependencies() {
+        let mut service = mock_service();
+        let mut states = mock_states();
+        states.3.push(BuffState::new(BuffKind::Familiar));
+        states.3.push(BuffState::new(BuffKind::SayramElixir));
+
+        let mut sequence = Sequence::new();
+        let args = mock_poll_args(&mut states);
+        let mut handler = DefaultRequestHandler {
+            service: &mut service,
+            args,
+        };
+        let minimap = Box::leak(Box::new(MinimapData::default()));
+        let character = Box::leak(Box::new(Character {
+            sayram_elixir_key: KeyBindingConfiguration {
+                key: KeyBinding::C,
+                enabled: true,
+            },
+            familiar_buff_key: KeyBindingConfiguration {
+                key: KeyBinding::B,
+                enabled: true,
+            },
+            ..Default::default()
+        }));
+        let settings = Box::leak(Box::new(RefCell::new(Settings::default())));
+        let actions = Vec::<Action>::new();
+        let buffs = Vec::<(BuffKind, KeyBinding)>::new();
+
+        handler
+            .service
+            .player
+            .expect_update()
+            .once()
+            .return_const(())
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .player
+            .expect_update_from_character()
+            .once()
+            .return_const(())
+            .in_sequence(&mut sequence);
+
+        handler
+            .service
+            .player
+            .expect_current()
+            .once()
+            .return_const(Some(&*character))
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .minimap
+            .expect_current()
+            .once()
+            .return_const(Some(&*minimap))
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .minimap
+            .expect_current_preset()
+            .once()
+            .return_const(Some("preset".to_string()))
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .settings
+            .expect_current()
+            .once()
+            .returning_st(|| settings.borrow());
+
+        handler
+            .service
+            .game
+            .expect_update_actions()
+            .once()
+            .return_const(())
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .game
+            .expect_update_buffs()
+            .once()
+            .return_const(())
+            .in_sequence(&mut sequence);
+
+        handler
+            .service
+            .game
+            .expect_current_actions()
+            .once()
+            .return_const(actions)
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .game
+            .expect_current_buffs()
+            .once()
+            .return_const(buffs)
+            .in_sequence(&mut sequence);
+        handler
+            .service
+            .rotator
+            .expect_update()
+            .once()
+            .return_const(())
+            .in_sequence(&mut sequence);
+
+        handler.on_update_character(Some(character.clone()));
+
+        // TODO: Assert buffs
     }
 }

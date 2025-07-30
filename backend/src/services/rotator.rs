@@ -1,25 +1,27 @@
+#[cfg(test)]
+use mockall::automock;
 use mockall_double::double;
 
 #[double]
 use crate::rotator::Rotator;
 use crate::{
-    Action, ActionCondition, ActionConfigurationCondition, ActionKey, Character, KeyBinding,
-    KeyBindingConfiguration, Minimap, PotionMode, RotationMode, RotatorMode, Settings,
-    buff::BuffKind, rotator::RotatorBuildArgs,
+    Action, Character, KeyBinding, Minimap, RotationMode, RotatorMode, Settings, buff::BuffKind,
+    rotator::RotatorBuildArgs,
 };
 
 // TODO: Whether to use Rc<RefCell<Rotator>> like Settings
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RotatorService;
 
 /// A service to handle [`Rotator`]-related incoming requests.
+#[cfg_attr(test, automock)]
 impl RotatorService {
     /// Updates `rotator` with data from `minimap`, `character`, `settings`, `actions` and `buffs`.
-    pub fn update(
+    pub fn update<'a>(
         &self,
         rotator: &mut Rotator,
-        minimap: Option<&Minimap>,
-        character: Option<&Character>,
+        minimap: Option<&'a Minimap>,
+        character: Option<&'a Character>,
         settings: &Settings,
         actions: &[Action],
         buffs: &[(BuffKind, KeyBinding)],
@@ -27,14 +29,6 @@ impl RotatorService {
         let mode = rotator_mode_from(minimap);
         let reset_normal_actions_on_erda = minimap
             .map(|minimap| minimap.actions_any_reset_on_erda_condition)
-            .unwrap_or_default();
-        let actions = character
-            .map(|character| {
-                actions_from(character)
-                    .into_iter()
-                    .chain(actions.iter().copied())
-                    .collect::<Vec<_>>()
-            })
             .unwrap_or_default();
         let familiar_essence_key = character
             .map(|character| character.familiar_essence_key.key)
@@ -49,7 +43,7 @@ impl RotatorService {
             .unwrap_or_default();
         let args = RotatorBuildArgs {
             mode,
-            actions: actions.as_slice(),
+            actions,
             buffs,
             familiar_essence_key,
             familiar_swappable_slots: settings.familiars.swappable_familiars,
@@ -85,61 +79,6 @@ fn rotator_mode_from(minimap: Option<&Minimap>) -> RotatorMode {
         .unwrap_or_default()
 }
 
-fn actions_from(character: &Character) -> Vec<Action> {
-    let mut vec = Vec::new();
-
-    if let KeyBindingConfiguration { key, enabled: true } = character.feed_pet_key {
-        let feed_pet_action = Action::Key(ActionKey {
-            key,
-            count: 1,
-            condition: ActionCondition::EveryMillis(character.feed_pet_millis),
-            wait_before_use_millis: 350,
-            wait_after_use_millis: 350,
-            ..ActionKey::default()
-        });
-        for _ in 0..character.num_pets {
-            vec.push(feed_pet_action);
-        }
-    }
-
-    if let KeyBindingConfiguration { key, enabled: true } = character.potion_key
-        && let PotionMode::EveryMillis(millis) = character.potion_mode
-    {
-        vec.push(Action::Key(ActionKey {
-            key,
-            count: 1,
-            condition: ActionCondition::EveryMillis(millis),
-            wait_before_use_millis: 350,
-            wait_after_use_millis: 350,
-            ..ActionKey::default()
-        }));
-    }
-
-    let mut i = 0;
-    let config_actions = &character.actions;
-    while i < config_actions.len() {
-        let action = config_actions[i];
-        let enabled = action.enabled;
-
-        if enabled {
-            vec.push(action.into());
-        }
-        while i + 1 < config_actions.len() {
-            let action = config_actions[i + 1];
-            if !matches!(action.condition, ActionConfigurationCondition::Linked) {
-                break;
-            }
-            if enabled {
-                vec.push(action.into());
-            }
-            i += 1;
-        }
-
-        i += 1;
-    }
-    vec
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -148,160 +87,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        ActionConfiguration, Bound, EliteBossBehavior, FamiliarRarity, SwappableFamiliars,
+        Bound, EliteBossBehavior, FamiliarRarity, KeyBindingConfiguration, SwappableFamiliars,
     };
-
-    #[test]
-    fn update_combine_actions_and_fixed_actions() {
-        let actions = vec![
-            Action::Key(ActionKey {
-                key: KeyBinding::A,
-                ..Default::default()
-            }),
-            Action::Key(ActionKey {
-                key: KeyBinding::B,
-                ..Default::default()
-            }),
-        ];
-        let character = Character {
-            actions: vec![
-                ActionConfiguration {
-                    key: KeyBinding::C,
-                    enabled: true,
-                    ..Default::default()
-                },
-                ActionConfiguration {
-                    key: KeyBinding::D,
-                    condition: ActionConfigurationCondition::Linked,
-                    ..Default::default()
-                },
-                ActionConfiguration {
-                    key: KeyBinding::E,
-                    condition: ActionConfigurationCondition::Linked,
-                    ..Default::default()
-                },
-                ActionConfiguration {
-                    key: KeyBinding::F,
-                    enabled: true,
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        let mut rotator = Rotator::default();
-        rotator
-            .expect_build_actions()
-            .withf(|args| {
-                matches!(
-                    args.actions,
-                    [
-                        Action::Key(ActionKey {
-                            key: KeyBinding::C,
-                            ..
-                        }),
-                        Action::Key(ActionKey {
-                            key: KeyBinding::D,
-                            condition: ActionCondition::Linked,
-                            ..
-                        }),
-                        Action::Key(ActionKey {
-                            key: KeyBinding::E,
-                            condition: ActionCondition::Linked,
-                            ..
-                        }),
-                        Action::Key(ActionKey {
-                            key: KeyBinding::F,
-                            ..
-                        }),
-                        Action::Key(ActionKey {
-                            key: KeyBinding::A,
-                            ..
-                        }),
-                        Action::Key(ActionKey {
-                            key: KeyBinding::B,
-                            ..
-                        }),
-                    ]
-                )
-            })
-            .once()
-            .return_const(());
-        let service = RotatorService;
-        service.update(
-            &mut rotator,
-            None,
-            Some(&character),
-            &Settings::default(),
-            &actions,
-            &[],
-        );
-    }
-
-    #[test]
-    fn update_include_actions_while_fixed_actions_disabled() {
-        let actions = vec![
-            Action::Key(ActionKey {
-                key: KeyBinding::A,
-                ..Default::default()
-            }),
-            Action::Key(ActionKey {
-                key: KeyBinding::B,
-                ..Default::default()
-            }),
-        ];
-        let character = Character {
-            actions: vec![
-                ActionConfiguration {
-                    key: KeyBinding::C,
-                    ..Default::default()
-                },
-                ActionConfiguration {
-                    key: KeyBinding::D,
-                    condition: ActionConfigurationCondition::Linked,
-                    ..Default::default()
-                },
-                ActionConfiguration {
-                    key: KeyBinding::E,
-                    condition: ActionConfigurationCondition::Linked,
-                    ..Default::default()
-                },
-                ActionConfiguration {
-                    key: KeyBinding::F,
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        let mut rotator = Rotator::new();
-        rotator
-            .expect_build_actions()
-            .withf(|args| {
-                matches!(
-                    args.actions,
-                    [
-                        Action::Key(ActionKey {
-                            key: KeyBinding::A,
-                            ..
-                        }),
-                        Action::Key(ActionKey {
-                            key: KeyBinding::B,
-                            ..
-                        }),
-                    ]
-                )
-            })
-            .once()
-            .return_const(());
-        let service = RotatorService;
-        service.update(
-            &mut rotator,
-            None,
-            Some(&character),
-            &Settings::default(),
-            &actions,
-            &[],
-        );
-    }
 
     #[test]
     fn update_rotator_mode() {

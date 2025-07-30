@@ -17,8 +17,6 @@ use opencv::{
 };
 use strum::IntoEnumIterator;
 
-#[double]
-use crate::rotator::Rotator;
 #[cfg(test)]
 use crate::{Settings, bridge::MockInput, detect::MockDetector};
 use crate::{
@@ -28,13 +26,14 @@ use crate::{
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
-    navigator::Navigator,
     network::{DiscordNotification, NotificationKind},
     player::{PanicTo, Panicking, Player, PlayerState},
     rng::Rng,
     services::{DefaultService, PollArgs},
     skill::{Skill, SkillKind, SkillState},
 };
+#[double]
+use crate::{navigator::Navigator, rotator::Rotator};
 
 /// The FPS the bot runs at.
 ///

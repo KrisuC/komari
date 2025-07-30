@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
 use log::debug;
+#[cfg(test)]
+use mockall::{automock, concretize};
 use mockall_double::double;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Rect, Vec4b};
 use strum::IntoEnumIterator;
@@ -9,20 +11,19 @@ use tokio::{
     sync::broadcast::{self, Receiver, Sender},
 };
 
-#[double]
-use crate::rotator::Rotator;
 use crate::{
     Action, ActionCondition, ActionConfigurationCondition, ActionKey, BoundQuadrant, Character,
     DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration, Minimap,
     PotionMode, Settings,
     array::Array,
-    bridge::InputReceiver,
     buff::BuffKind,
     context::{Context, Operation},
     database_event_receiver, minimap,
     player::{PlayerState, Quadrant},
     skill::SkillKind,
 };
+#[double]
+use crate::{bridge::InputReceiver, rotator::Rotator};
 
 #[derive(Debug)]
 pub enum GameEvent {
@@ -44,6 +45,7 @@ pub struct GameService {
     game_buffs: Vec<(BuffKind, KeyBinding)>,
 }
 
+#[cfg_attr(test, automock)]
 impl GameService {
     pub fn new(input_receiver: InputReceiver) -> Self {
         Self {
@@ -68,6 +70,7 @@ impl GameService {
         &mut self.input_receiver
     }
 
+    #[cfg_attr(test, concretize)]
     pub fn broadcast_state(
         &self,
         context: &Context,
@@ -206,11 +209,11 @@ impl GameService {
         }
     }
 
-    pub fn update_actions(
+    pub fn update_actions<'a>(
         &mut self,
-        minimap: Option<&Minimap>,
+        minimap: Option<&'a Minimap>,
         preset: Option<String>,
-        character: Option<&Character>,
+        character: Option<&'a Character>,
     ) {
         self.game_actions = minimap
             .zip(preset)
@@ -220,6 +223,7 @@ impl GameService {
             .unwrap_or_default();
     }
 
+    #[cfg_attr(test, concretize)]
     pub fn update_buffs(&mut self, character: Option<&Character>) {
         self.game_buffs = character.map(buffs_from).unwrap_or_default();
     }
@@ -420,4 +424,141 @@ fn poll_database(
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use std::assert_matches::assert_matches;
+
+    use super::*;
+    use crate::ActionConfiguration;
+
+    #[test]
+    fn update_combine_actions_and_fixed_actions() {
+        let actions = vec![
+            Action::Key(ActionKey {
+                key: KeyBinding::A,
+                ..Default::default()
+            }),
+            Action::Key(ActionKey {
+                key: KeyBinding::B,
+                ..Default::default()
+            }),
+        ];
+        let character = Character {
+            actions: vec![
+                ActionConfiguration {
+                    key: KeyBinding::C,
+                    enabled: true,
+                    ..Default::default()
+                },
+                ActionConfiguration {
+                    key: KeyBinding::D,
+                    condition: ActionConfigurationCondition::Linked,
+                    ..Default::default()
+                },
+                ActionConfiguration {
+                    key: KeyBinding::E,
+                    condition: ActionConfigurationCondition::Linked,
+                    ..Default::default()
+                },
+                ActionConfiguration {
+                    key: KeyBinding::F,
+                    enabled: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut minimap = Minimap::default();
+        minimap.actions.insert("preset".to_string(), actions);
+        let mut service = GameService::new(InputReceiver::default());
+
+        service.update_actions(Some(&minimap), Some("preset".to_string()), Some(&character));
+
+        assert_matches!(
+            service.game_actions.as_slice(),
+            [
+                Action::Key(ActionKey {
+                    key: KeyBinding::C,
+                    ..
+                }),
+                Action::Key(ActionKey {
+                    key: KeyBinding::D,
+                    condition: ActionCondition::Linked,
+                    ..
+                }),
+                Action::Key(ActionKey {
+                    key: KeyBinding::E,
+                    condition: ActionCondition::Linked,
+                    ..
+                }),
+                Action::Key(ActionKey {
+                    key: KeyBinding::F,
+                    ..
+                }),
+                Action::Key(ActionKey {
+                    key: KeyBinding::A,
+                    ..
+                }),
+                Action::Key(ActionKey {
+                    key: KeyBinding::B,
+                    ..
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn update_include_actions_while_fixed_actions_disabled() {
+        let actions = vec![
+            Action::Key(ActionKey {
+                key: KeyBinding::A,
+                ..Default::default()
+            }),
+            Action::Key(ActionKey {
+                key: KeyBinding::B,
+                ..Default::default()
+            }),
+        ];
+        let character = Character {
+            actions: vec![
+                ActionConfiguration {
+                    key: KeyBinding::C,
+                    ..Default::default()
+                },
+                ActionConfiguration {
+                    key: KeyBinding::D,
+                    condition: ActionConfigurationCondition::Linked,
+                    ..Default::default()
+                },
+                ActionConfiguration {
+                    key: KeyBinding::E,
+                    condition: ActionConfigurationCondition::Linked,
+                    ..Default::default()
+                },
+                ActionConfiguration {
+                    key: KeyBinding::F,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut minimap = Minimap::default();
+        minimap.actions.insert("preset".to_string(), actions);
+        let mut service = GameService::new(InputReceiver::default());
+
+        service.update_actions(Some(&minimap), Some("preset".to_string()), Some(&character));
+
+        assert_matches!(
+            service.game_actions.as_slice(),
+            [
+                Action::Key(ActionKey {
+                    key: KeyBinding::A,
+                    ..
+                }),
+                Action::Key(ActionKey {
+                    key: KeyBinding::B,
+                    ..
+                }),
+            ]
+        );
+    }
+}
