@@ -432,16 +432,13 @@ fn update_loop() {
                 if pending_halt.is_none() {
                     pending_halt = Some(Instant::now());
                 } else {
+                    pending_halt = None;
                     rotator.reset_queue();
                     context.operation = Operation::Halting;
                     if did_capture_normally {
                         context.player = Player::Panicking(Panicking::new(PanicTo::Town));
                     }
                     player_state.clear_actions_aborted(!did_capture_normally);
-                    pending_halt = None;
-                }
-
-                if pending_halt.is_none() {
                     let _ = context
                         .notification
                         .schedule_notification(NotificationKind::FailOrMapChange);
