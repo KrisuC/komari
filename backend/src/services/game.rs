@@ -222,12 +222,13 @@ impl GameService {
         preset: Option<String>,
         character: Option<&'a Character>,
     ) {
-        self.game_actions = minimap
+        let character_actions = character.map(actions_from).unwrap_or_default();
+        let minimap_actions = minimap
             .zip(preset)
             .and_then(|(minimap, preset)| minimap.actions.get(&preset).cloned())
-            .zip(character)
-            .map(|(actions, character)| [actions_from(character), actions].concat())
             .unwrap_or_default();
+
+        self.game_actions = [character_actions, minimap_actions].concat();
     }
 
     #[cfg_attr(test, concretize)]
@@ -563,6 +564,62 @@ mod tests {
                 }),
                 Action::Key(ActionKey {
                     key: KeyBinding::B,
+                    ..
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn update_character_actions_only() {
+        let character = Character {
+            actions: vec![
+                ActionConfiguration {
+                    key: KeyBinding::C,
+                    enabled: true,
+                    ..Default::default()
+                },
+                ActionConfiguration {
+                    key: KeyBinding::D,
+                    condition: ActionConfigurationCondition::Linked,
+                    ..Default::default()
+                },
+                ActionConfiguration {
+                    key: KeyBinding::E,
+                    condition: ActionConfigurationCondition::Linked,
+                    ..Default::default()
+                },
+                ActionConfiguration {
+                    key: KeyBinding::F,
+                    enabled: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut service = GameService::new(InputReceiver::default());
+
+        service.update_actions(None, None, Some(&character));
+
+        assert_matches!(
+            service.game_actions.as_slice(),
+            [
+                Action::Key(ActionKey {
+                    key: KeyBinding::C,
+                    ..
+                }),
+                Action::Key(ActionKey {
+                    key: KeyBinding::D,
+                    condition: ActionCondition::Linked,
+                    ..
+                }),
+                Action::Key(ActionKey {
+                    key: KeyBinding::E,
+                    condition: ActionCondition::Linked,
+                    ..
+                }),
+                Action::Key(ActionKey {
+                    key: KeyBinding::F,
                     ..
                 }),
             ]
