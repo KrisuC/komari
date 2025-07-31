@@ -1,10 +1,10 @@
 use std::{fmt::Display, fs::File, io::BufReader};
 
 use backend::{
-    CaptureMode, FamiliarRarity, Familiars, InputMethod, IntoEnumIterator, KeyBinding,
-    KeyBindingConfiguration, Notifications, Settings as SettingsData, SwappableFamiliars,
-    query_capture_handles, query_settings, refresh_capture_handles, select_capture_handle,
-    upsert_settings,
+    CaptureMode, CycleRunStopMode, FamiliarRarity, Familiars, InputMethod, IntoEnumIterator,
+    KeyBinding, KeyBindingConfiguration, Notifications, Settings as SettingsData,
+    SwappableFamiliars, query_capture_handles, query_settings, refresh_capture_handles,
+    select_capture_handle, upsert_settings,
 };
 use dioxus::prelude::*;
 use futures_util::StreamExt;
@@ -512,15 +512,15 @@ fn SectionRunStopCycle(
                     },
                     value: settings_view().cycle_stop_duration_millis,
                 }
-                SettingsCheckbox {
-                    label: "Enabled",
-                    on_value: move |cycle_run_stop| {
+                SettingsEnumSelect::<CycleRunStopMode> {
+                    label: "Mode",
+                    on_select: move |cycle_run_stop| {
                         save_settings(SettingsData {
                             cycle_run_stop,
                             ..settings_view.peek().clone()
                         });
                     },
-                    value: settings_view().cycle_run_stop,
+                    selected: settings_view().cycle_run_stop,
                 }
             }
         }

@@ -47,8 +47,8 @@ pub use {
     database::{
         Action, ActionCondition, ActionConfiguration, ActionConfigurationCondition, ActionKey,
         ActionKeyDirection, ActionKeyWith, ActionMove, Bound, CaptureMode, Character, Class,
-        DatabaseEvent, EliteBossBehavior, FamiliarRarity, Familiars, InputMethod, KeyBinding,
-        KeyBindingConfiguration, LinkKeyBinding, Minimap, MobbingKey, NavigationPath,
+        CycleRunStopMode, DatabaseEvent, EliteBossBehavior, FamiliarRarity, Familiars, InputMethod,
+        KeyBinding, KeyBindingConfiguration, LinkKeyBinding, Minimap, MobbingKey, NavigationPath,
         NavigationPaths, NavigationPoint, NavigationTransition, Notifications, Platform, Position,
         PotionMode, RotationMode, Settings, SwappableFamiliars, database_event_receiver,
     },

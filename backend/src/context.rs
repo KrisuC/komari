@@ -15,11 +15,11 @@ use opencv::{
     core::{Vector, VectorToVec},
     imgcodecs::imencode_def,
 };
+use platforms::Error;
 use strum::IntoEnumIterator;
 
-#[cfg(test)]
-use crate::{Settings, bridge::MockInput, detect::MockDetector};
 use crate::{
+    CycleRunStopMode,
     bridge::Input,
     buff::{Buff, BuffKind, BuffState},
     database::{query_seeds, query_settings},
@@ -32,6 +32,8 @@ use crate::{
     services::{DefaultService, PollArgs},
     skill::{Skill, SkillKind, SkillState},
 };
+#[cfg(test)]
+use crate::{Settings, bridge::MockInput, detect::MockDetector};
 #[double]
 use crate::{navigator::Navigator, rotator::Rotator};
 
@@ -102,8 +104,10 @@ pub struct Context {
     ///
     /// This is increased on each update tick.
     pub tick: u64,
-    /// Whether minimap changed to detecting on the current tick.
+    /// Whether minimap changed to detecting on current tick.
     pub tick_changed_minimap: bool,
+    /// Whether capturing starts failing on current tick.
+    tick_failed_capturing: bool,
 }
 
 impl Context {
@@ -121,6 +125,7 @@ impl Context {
             operation: Operation::Running,
             tick: 0,
             tick_changed_minimap: false,
+            tick_failed_capturing: false,
         }
     }
 
@@ -138,67 +143,113 @@ impl Context {
     }
 }
 
+/// Current operating state of the bot.
 #[derive(Debug, Clone, Copy)]
 pub enum Operation {
-    HaltUntil(Instant),
+    HaltUntil {
+        instant: Instant,
+        run_duration_millis: u64,
+        stop_duration_millis: u64,
+    },
     Halting,
     Running,
-    RunUntil(Instant),
+    RunUntil {
+        instant: Instant,
+        run_duration_millis: u64,
+        stop_duration_millis: u64,
+        once: bool,
+    },
 }
 
 impl Operation {
     #[inline]
     pub fn halting(&self) -> bool {
-        matches!(self, Operation::Halting | Operation::HaltUntil(_))
+        matches!(self, Operation::Halting | Operation::HaltUntil { .. })
     }
 
     pub fn update_current(
         self,
-        cycle_run_stop: bool,
+        cycle_run_stop: CycleRunStopMode,
         run_duration_millis: u64,
         stop_duration_millis: u64,
     ) -> Operation {
         match self {
-            Operation::HaltUntil(_) => {
-                if cycle_run_stop {
-                    Operation::HaltUntil(
-                        Instant::now() + Duration::from_millis(stop_duration_millis),
-                    )
-                } else {
-                    Operation::Halting
+            Operation::HaltUntil { .. } => match cycle_run_stop {
+                CycleRunStopMode::None | CycleRunStopMode::Once => Operation::Halting,
+                CycleRunStopMode::Repeat => {
+                    let duration = Duration::from_millis(stop_duration_millis);
+                    let instant = Instant::now() + duration;
+
+                    Operation::HaltUntil {
+                        instant,
+                        run_duration_millis,
+                        stop_duration_millis,
+                    }
                 }
-            }
+            },
             Operation::Halting => Operation::Halting,
-            Operation::Running | Operation::RunUntil(_) => {
-                if cycle_run_stop {
-                    Operation::RunUntil(Instant::now() + Duration::from_millis(run_duration_millis))
-                } else {
-                    Operation::Running
+            Operation::Running | Operation::RunUntil { .. } => match cycle_run_stop {
+                CycleRunStopMode::None => Operation::Running,
+                CycleRunStopMode::Once | CycleRunStopMode::Repeat => {
+                    let duration = Duration::from_millis(run_duration_millis);
+                    let instant = Instant::now() + duration;
+
+                    Operation::RunUntil {
+                        instant,
+                        run_duration_millis,
+                        stop_duration_millis,
+                        once: matches!(cycle_run_stop, CycleRunStopMode::Once),
+                    }
                 }
-            }
+            },
         }
     }
 
-    fn update(self, run_duration_millis: u64, stop_duration_millis: u64) -> Operation {
+    fn update(self) -> Operation {
         match self {
             // Imply run/stop cycle enabled
-            Operation::HaltUntil(instant) => {
+            Operation::HaltUntil {
+                instant,
+                run_duration_millis,
+                stop_duration_millis,
+            } => {
                 let now = Instant::now();
                 if now < instant {
-                    Operation::HaltUntil(instant)
-                } else {
-                    Operation::RunUntil(now + Duration::from_millis(run_duration_millis))
+                    return self;
+                }
+
+                let duration = Duration::from_millis(run_duration_millis);
+                let instant = now + duration;
+                Operation::RunUntil {
+                    instant,
+                    run_duration_millis,
+                    stop_duration_millis,
+                    once: false,
                 }
             }
             Operation::Halting => Operation::Halting,
             Operation::Running => Operation::Running,
             // Imply run/stop cycle enabled
-            Operation::RunUntil(instant) => {
+            Operation::RunUntil {
+                instant,
+                run_duration_millis,
+                stop_duration_millis,
+                once,
+            } => {
                 let now = Instant::now();
                 if now < instant {
-                    Operation::RunUntil(instant)
-                } else {
-                    Operation::HaltUntil(now + Duration::from_millis(stop_duration_millis))
+                    return self;
+                }
+                if once {
+                    return Operation::Halting;
+                }
+
+                let duration = Duration::from_millis(run_duration_millis);
+                let instant = now + duration;
+                Operation::HaltUntil {
+                    instant,
+                    run_duration_millis,
+                    stop_duration_millis,
                 }
             }
         }
@@ -254,6 +305,7 @@ fn update_loop() {
         operation: Operation::Halting,
         tick: 0,
         tick_changed_minimap: false,
+        tick_failed_capturing: false,
     };
     let mut player_state = PlayerState::default();
     let mut minimap_state = MinimapState::default();
@@ -268,20 +320,30 @@ fn update_loop() {
     // specified threshold to pass before determining panicking is needed. This can be beneficial
     // when navigator falsely navigates to a wrong unknown location.
     let mut pending_halt = None;
+    let mut did_capture_normally = false;
 
     loop_with_fps(FPS, || {
-        let mat = capture.grab().map(OwnedMat::new_from_frame);
+        let detector = capture
+            .grab()
+            .map(OwnedMat::new_from_frame)
+            .map(CachedDetector::new);
         let was_player_alive = !player_state.is_dead();
         let was_player_navigating = navigator.was_last_point_available_or_completed();
-        let was_running_cycle = matches!(context.operation, Operation::RunUntil(_));
-        let detector = mat.map(CachedDetector::new);
+        let was_running_cycle = matches!(context.operation, Operation::RunUntil { .. });
+        let was_capturing_normally = did_capture_normally;
 
+        did_capture_normally = detector.is_ok();
         context.tick += 1;
-        context.operation = context.operation.update(
-            settings.borrow().cycle_run_duration_millis,
-            settings.borrow().cycle_stop_duration_millis,
-        );
-        if let Some(detector) = detector {
+        context.tick_failed_capturing = was_capturing_normally
+            && !did_capture_normally
+            && matches!(
+                detector.as_ref().err(),
+                Some(Error::WindowNotFound | Error::WindowFrameNotAvailable)
+            );
+        context.operation = context.operation.update();
+
+        let did_cycled_to_stop = context.operation.halting();
+        if let Ok(detector) = detector {
             let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
 
             context.detector = Some(Box::new(detector));
@@ -324,7 +386,7 @@ fn update_loop() {
         });
 
         // Go to town on stop cycle
-        if was_running_cycle && matches!(context.operation, Operation::HaltUntil(_)) {
+        if was_running_cycle && did_cycled_to_stop {
             rotator.reset_queue();
             player_state.clear_actions_aborted(false);
             context.player = Player::Panicking(Panicking::new(PanicTo::Town));
@@ -334,13 +396,19 @@ fn update_loop() {
         // abort actions and send notification
         if service.has_minimap_data() && !context.operation.halting() {
             let player_died = was_player_alive && player_state.is_dead();
-            let player_panicking = matches!(
-                context.player,
-                Player::Panicking(Panicking {
-                    to: PanicTo::Channel,
-                    ..
-                })
-            );
+            // Unconditionally halt when player died
+            if player_died {
+                rotator.reset_queue();
+                player_state.clear_actions_aborted(true);
+                context.operation = Operation::Halting;
+                return;
+            }
+
+            let stop_on_fail_or_change_map = settings.borrow().stop_on_fail_or_change_map;
+            if !stop_on_fail_or_change_map {
+                return;
+            }
+
             let mut pending_halt_reached = pending_halt.is_some_and(|instant| {
                 Instant::now().duration_since(instant).as_secs() >= PENDING_HALT_SECS
             });
@@ -349,32 +417,35 @@ fn update_loop() {
                 pending_halt = None;
             }
 
-            let stop_on_fail_or_change_map = settings.borrow().stop_on_fail_or_change_map;
+            // Do not halt if player changed map due to switching channel
+            let player_panicking = matches!(
+                context.player,
+                Player::Panicking(Panicking {
+                    to: PanicTo::Channel,
+                    ..
+                })
+            );
             let can_halt_or_notify = pending_halt_reached
-                || (pending_halt.is_none() && context.tick_changed_minimap && !player_panicking);
-            match (player_died, can_halt_or_notify, stop_on_fail_or_change_map) {
-                (true, _, _) => {
-                    player_state.clear_actions_aborted(true);
+                || (pending_halt.is_none() && context.tick_changed_minimap && !player_panicking)
+                || (pending_halt.is_none() && context.tick_failed_capturing);
+            if can_halt_or_notify {
+                if pending_halt.is_none() {
+                    pending_halt = Some(Instant::now());
+                } else {
                     rotator.reset_queue();
                     context.operation = Operation::Halting;
-                }
-                (_, true, true) => {
-                    if pending_halt.is_none() {
-                        pending_halt = Some(Instant::now());
-                    } else {
-                        pending_halt = None;
-                        player_state.clear_actions_aborted(false);
-                        rotator.reset_queue();
-                        context.operation = Operation::Halting;
+                    if did_capture_normally {
                         context.player = Player::Panicking(Panicking::new(PanicTo::Town));
                     }
+                    player_state.clear_actions_aborted(!did_capture_normally);
+                    pending_halt = None;
                 }
-                _ => (),
-            }
-            if can_halt_or_notify && pending_halt.is_none() {
-                let _ = context
-                    .notification
-                    .schedule_notification(NotificationKind::FailOrMapChange);
+
+                if pending_halt.is_none() {
+                    let _ = context
+                        .notification
+                        .schedule_notification(NotificationKind::FailOrMapChange);
+                }
             }
         }
     });

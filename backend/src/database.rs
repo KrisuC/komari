@@ -165,6 +165,16 @@ pub enum EliteBossBehavior {
     UseKey,
 }
 
+#[derive(
+    Clone, Copy, PartialEq, Default, Debug, Serialize, Deserialize, EnumIter, Display, EnumString,
+)]
+pub enum CycleRunStopMode {
+    #[default]
+    None,
+    Once,
+    Repeat,
+}
+
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct Notifications {
     pub discord_webhook_url: String,
@@ -188,7 +198,7 @@ pub struct Settings {
     pub enable_panic_mode: bool,
     pub stop_on_fail_or_change_map: bool,
     #[serde(default)]
-    pub cycle_run_stop: bool,
+    pub cycle_run_stop: CycleRunStopMode,
     #[serde(default = "cycle_run_duration_millis_default")]
     pub cycle_run_duration_millis: u64,
     #[serde(default = "cycle_stop_duration_millis_default")]
@@ -217,7 +227,7 @@ impl Default for Settings {
             input_method: InputMethod::default(),
             input_method_rpc_server_url: String::default(),
             stop_on_fail_or_change_map: false,
-            cycle_run_stop: false,
+            cycle_run_stop: CycleRunStopMode::default(),
             cycle_run_duration_millis: cycle_run_duration_millis_default(),
             cycle_stop_duration_millis: cycle_stop_duration_millis_default(),
             notifications: Notifications::default(),

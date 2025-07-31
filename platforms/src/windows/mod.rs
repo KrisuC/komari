@@ -64,7 +64,7 @@ pub fn init() {
 
 impl Error {
     #[inline]
-    pub fn from_last_win_error() -> Error {
+    pub(crate) fn from_last_win_error() -> Error {
         Error::from(windows::core::Error::from_win32())
     }
 }

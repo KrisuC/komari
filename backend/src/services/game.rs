@@ -13,8 +13,8 @@ use tokio::{
 
 use crate::{
     Action, ActionCondition, ActionConfigurationCondition, ActionKey, BoundQuadrant, Character,
-    DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration, Minimap,
-    PotionMode, Settings,
+    CycleRunStopMode, DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration,
+    Minimap, PotionMode, Settings,
     array::Array,
     buff::BuffKind,
     context::{Context, Operation},
@@ -95,10 +95,10 @@ impl GameService {
                 })
                 .unwrap_or_default();
             let operation = match context.operation {
-                Operation::HaltUntil(instant) => GameOperation::HaltUntil(instant),
+                Operation::HaltUntil { instant, .. } => GameOperation::HaltUntil(instant),
                 Operation::Halting => GameOperation::Halting,
                 Operation::Running => GameOperation::Running,
-                Operation::RunUntil(instant) => GameOperation::RunUntil(instant),
+                Operation::RunUntil { instant, .. } => GameOperation::RunUntil(instant),
             };
             let idle = if let minimap::Minimap::Idle(idle) = context.minimap {
                 Some(idle)
@@ -197,11 +197,18 @@ impl GameService {
     ) {
         *operation = match (halting, settings.cycle_run_stop) {
             (true, _) => Operation::Halting,
-            (false, true) => Instant::now()
-                .checked_add(Duration::from_millis(settings.cycle_run_duration_millis))
-                .map(Operation::RunUntil)
-                .unwrap_or(Operation::Running),
-            (false, false) => Operation::Running,
+            (false, CycleRunStopMode::Once | CycleRunStopMode::Repeat) => {
+                let duration = Duration::from_millis(settings.cycle_run_duration_millis);
+                let instant = Instant::now() + duration;
+
+                Operation::RunUntil {
+                    instant,
+                    run_duration_millis: settings.cycle_run_duration_millis,
+                    stop_duration_millis: settings.cycle_stop_duration_millis,
+                    once: matches!(settings.cycle_run_stop, CycleRunStopMode::Once),
+                }
+            }
+            (false, CycleRunStopMode::None) => Operation::Running,
         };
         if halting {
             rotator.reset_queue();
