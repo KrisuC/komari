@@ -55,6 +55,10 @@ impl DebugService {
         }
     }
 
+    pub fn set_auto_save_rune(&self, context: &Context, auto_save: bool) {
+        context.debug.set_auto_save_rune(auto_save);
+    }
+
     pub fn capture_image(&self, context: &Context, is_grayscale: bool) {
         if let Some(detector) = context.detector.as_ref() {
             save_image_for_training(detector.mat(), is_grayscale, false);

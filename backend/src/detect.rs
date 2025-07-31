@@ -69,7 +69,7 @@ struct SpinArrow {
 #[derive(Debug)]
 pub enum ArrowsState {
     Calibrating(ArrowsCalibrating),
-    Complete([KeyKind; MAX_ARROWS]),
+    Complete([(Rect, KeyKind); MAX_ARROWS]),
 }
 
 /// Struct representing arrows calibration in-progress
@@ -1796,12 +1796,12 @@ fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Re
 }
 
 #[inline]
-fn extract_rune_arrows_to_slice(vec: Vec<(Rect, KeyKind)>) -> [KeyKind; MAX_ARROWS] {
+fn extract_rune_arrows_to_slice(vec: Vec<(Rect, KeyKind)>) -> [(Rect, KeyKind); MAX_ARROWS] {
     debug_assert!(vec.len() == 4);
-    let first = vec[0].1;
-    let second = vec[1].1;
-    let third = vec[2].1;
-    let fourth = vec[3].1;
+    let first = vec[0];
+    let second = vec[1];
+    let third = vec[2];
+    let fourth = vec[3];
     info!( target: "player", "solving rune result {first:?} {second:?} {third:?} {fourth:?}");
     [first, second, third, fourth]
 }

@@ -101,6 +101,8 @@ enum Request {
     QueryCaptureHandles,
     SelectCaptureHandle(Option<usize>),
     #[cfg(debug_assertions)]
+    AutoSaveRune(bool),
+    #[cfg(debug_assertions)]
     CaptureImage(bool),
     #[cfg(debug_assertions)]
     InferRune,
@@ -130,6 +132,8 @@ enum Response {
     RefreshCaptureHandles,
     QueryCaptureHandles((Vec<String>, Option<usize>)),
     SelectCaptureHandle,
+    #[cfg(debug_assertions)]
+    AutoSaveRune,
     #[cfg(debug_assertions)]
     CaptureImage,
     #[cfg(debug_assertions)]
@@ -167,6 +171,9 @@ pub(crate) trait RequestHandler {
     fn on_query_capture_handles(&self) -> (Vec<String>, Option<usize>);
 
     fn on_select_capture_handle(&mut self, index: Option<usize>);
+
+    #[cfg(debug_assertions)]
+    fn on_auto_save_rune(&self, auto_save: bool);
 
     #[cfg(debug_assertions)]
     fn on_capture_image(&self, is_grayscale: bool);
@@ -423,6 +430,14 @@ pub async fn select_capture_handle(index: Option<usize>) {
 }
 
 #[cfg(debug_assertions)]
+pub async fn auto_save_rune(auto_save: bool) {
+    expect_unit_variant!(
+        request(Request::AutoSaveRune(auto_save)).await,
+        Response::AutoSaveRune
+    )
+}
+
+#[cfg(debug_assertions)]
 pub async fn capture_image(is_grayscale: bool) {
     expect_unit_variant!(
         request(Request::CaptureImage(is_grayscale)).await,
@@ -495,6 +510,11 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::SelectCaptureHandle(index) => {
                 handler.on_select_capture_handle(index);
                 Response::SelectCaptureHandle
+            }
+            #[cfg(debug_assertions)]
+            Request::AutoSaveRune(auto_save) => {
+                handler.on_auto_save_rune(auto_save);
+                Response::AutoSaveRune
             }
             #[cfg(debug_assertions)]
             Request::CaptureImage(is_grayscale) => {

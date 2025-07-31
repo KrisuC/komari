@@ -234,61 +234,31 @@ pub fn debug_rune(mat: &Mat, preds: &Vec<&[f32]>, w_ratio: f32, h_ratio: f32) {
     );
 }
 
-#[allow(unused)]
 pub fn save_rune_for_training<T: MatTraitConst + ToInputArray>(
     mat: &T,
-    preds: &[Vec<f32>],
-    arrows: &[KeyKind; 4],
-    w_ratio: f32,
-    h_ratio: f32,
+    result: [(Rect, KeyKind); 4],
 ) {
     let name = Alphanumeric.sample_string(&mut rand::rng(), 8);
     let size = mat.size().unwrap();
-    let bboxes = preds
-        .iter()
-        .map(|pred| map_bbox_from_prediction(pred, size, w_ratio, h_ratio))
-        .collect::<Vec<Rect>>();
-    let texts = arrows
-        .iter()
-        .map(|arrow| match arrow {
-            KeyKind::Up => "up",
-            KeyKind::Down => "down",
-            KeyKind::Left => "left",
-            KeyKind::Right => "right",
-            _ => unreachable!(),
+    let labels = result
+        .map(|(bbox, arrow)| {
+            let label = match arrow {
+                KeyKind::Up => 0,
+                KeyKind::Down => 1,
+                KeyKind::Left => 2,
+                KeyKind::Right => 3,
+                _ => unreachable!(),
+            };
+            to_yolo_format(label, size, bbox)
         })
-        .collect::<Vec<_>>();
+        .join("\n");
 
-    let key = debug_mat(
-        "Training",
-        mat,
-        0,
-        &bboxes.clone().into_iter().zip(texts).collect::<Vec<_>>(),
-    );
-    if key == 97 {
-        let labels = bboxes
-            .iter()
-            .zip(arrows)
-            .map(|(bbox, arrow)| {
-                let label = match arrow {
-                    KeyKind::Up => 0,
-                    KeyKind::Down => 1,
-                    KeyKind::Left => 2,
-                    KeyKind::Right => 3,
-                    _ => unreachable!(),
-                };
-                to_yolo_format(label, size, *bbox)
-            })
-            .collect::<Vec<String>>()
-            .join("\n");
+    let dataset = &DATASET_RUNE_DIR;
+    let label = dataset.join(format!("{name}.txt"));
+    let image = dataset.join(format!("{name}.png"));
 
-        let dataset = &DATASET_RUNE_DIR;
-        let label = dataset.join(format!("{name}.txt"));
-        let image = dataset.join(format!("{name}.png"));
-
-        imwrite_def(image.to_str().unwrap(), mat).unwrap();
-        fs::write(label, labels).unwrap();
-    }
+    imwrite_def(image.to_str().unwrap(), mat).unwrap();
+    fs::write(label, labels).unwrap();
 }
 
 #[allow(unused)]

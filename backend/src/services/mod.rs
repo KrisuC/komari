@@ -302,6 +302,13 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     #[cfg(debug_assertions)]
+    fn on_auto_save_rune(&self, auto_save: bool) {
+        self.service
+            .debug
+            .set_auto_save_rune(self.args.context, auto_save);
+    }
+
+    #[cfg(debug_assertions)]
     fn on_capture_image(&self, is_grayscale: bool) {
         self.service
             .debug

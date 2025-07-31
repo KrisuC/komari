@@ -22,6 +22,8 @@ use strum::IntoEnumIterator;
 
 #[cfg(debug_assertions)]
 use crate::bridge::KeyKind;
+#[cfg(debug_assertions)]
+use crate::debug::save_rune_for_training;
 use crate::{
     CycleRunStopMode,
     bridge::Input,
@@ -81,20 +83,36 @@ pub trait Contextual {
         Self: Sized;
 }
 
-#[cfg(debug_assertions)]
-pub type RuneArrows = [(KeyKind, Rect); 4];
-
 #[derive(Debug, Default)]
 #[cfg(debug_assertions)]
 pub struct Debug {
-    last_rune_result: RefCell<Option<RuneArrows>>,
+    auto_save: RefCell<bool>,
+    last_rune_detector: RefCell<Option<Box<dyn Detector>>>,
+    last_rune_result: RefCell<Option<[(Rect, KeyKind); 4]>>,
 }
 
 #[cfg(debug_assertions)]
 impl Debug {
-    pub fn save_last_rune_result(&self) {}
+    pub fn set_auto_save_rune(&self, auto_save: bool) {
+        *self.auto_save.borrow_mut() = auto_save;
+    }
 
-    pub fn set_last_rune_result(&self, result: RuneArrows) {
+    pub fn save_last_rune_result(&self) {
+        if !*self.auto_save.borrow() {
+            return;
+        }
+        if let Some((detector, result)) = self
+            .last_rune_detector
+            .borrow()
+            .as_ref()
+            .zip(*self.last_rune_result.borrow())
+        {
+            save_rune_for_training(detector.mat(), result);
+        }
+    }
+
+    pub fn set_last_rune_result(&self, detector: Box<dyn Detector>, result: [(Rect, KeyKind); 4]) {
+        *self.last_rune_detector.borrow_mut() = Some(detector);
         *self.last_rune_result.borrow_mut() = Some(result);
     }
 }

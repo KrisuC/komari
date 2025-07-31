@@ -223,8 +223,12 @@ fn update_solving(
                 Ok(ArrowsState::Calibrating(calibrating)) => {
                     solving_rune.stage_solving(calibrating, timeout)
                 }
-                Ok(ArrowsState::Complete(keys)) => {
-                    solving_rune.stage_press_keys(Timeout::default(), keys, 0)
+                Ok(ArrowsState::Complete(pairs)) => {
+                    #[cfg(debug_assertions)]
+                    context
+                        .debug
+                        .set_last_rune_result(context.detector_cloned_unwrap(), pairs);
+                    solving_rune.stage_press_keys(Timeout::default(), pairs.map(|(_, key)| key), 0)
                 }
                 Err(_) => solving_rune.stage_completed(),
             }
@@ -263,6 +267,7 @@ mod tests {
 
     use anyhow::{Ok, anyhow};
     use mockall::predicate::eq;
+    use opencv::core::Rect;
 
     use super::*;
     use crate::{
@@ -465,7 +470,12 @@ mod tests {
 
     #[test]
     fn update_solving_to_press_keys_on_complete() {
-        let expected_keys = [KeyKind::A, KeyKind::S, KeyKind::D, KeyKind::F];
+        let expected_keys = [
+            (Rect::default(), KeyKind::A),
+            (Rect::default(), KeyKind::S),
+            (Rect::default(), KeyKind::D),
+            (Rect::default(), KeyKind::F),
+        ];
         let mut detector = MockDetector::default();
         detector
             .expect_detect_rune_arrows()

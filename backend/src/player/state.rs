@@ -1087,6 +1087,8 @@ impl PlayerState {
                         self.track_rune_fail_count();
                     } else {
                         self.rune_failed_count = 0;
+                        #[cfg(debug_assertions)]
+                        context.debug.save_last_rune_result();
                     }
                     None
                 }
