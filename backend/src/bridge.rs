@@ -6,7 +6,7 @@ use mockall::automock;
 #[cfg(windows)]
 use platforms::capture::WindowsCaptureKind;
 use platforms::{
-    CoordinateRelative, Window,
+    CoordinateRelative, Error, Window,
     capture::{Capture as PlatformCapture, Frame},
     input::{
         Input as PlatformInput, InputKind as PlatformInputKind,
@@ -749,8 +749,8 @@ impl Capture {
     }
 
     #[inline]
-    pub fn grab(&mut self) -> Option<Frame> {
-        self.inner.grab().ok()
+    pub fn grab(&mut self) -> Result<Frame, Error> {
+        self.inner.grab()
     }
 
     #[inline]

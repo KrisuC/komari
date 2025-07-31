@@ -167,7 +167,7 @@ mod tests {
     use super::*;
     use crate::bridge::{InputMethod as BridgeInputMethod, MockInput};
     use crate::context::Operation;
-    use crate::{CaptureMode, InputMethod};
+    use crate::{CaptureMode, CycleRunStopMode, InputMethod};
 
     /// A mutex to guard against mocking static method from multiple threads.
     static MUTEX: Mutex<()> = Mutex::new(());
@@ -247,7 +247,7 @@ mod tests {
         let new_settings = Settings {
             input_method: InputMethod::Rpc,
             input_method_rpc_server_url: "http://localhost:9000".to_string(),
-            cycle_run_stop: true,
+            cycle_run_stop: CycleRunStopMode::Once,
             cycle_run_duration_millis: 1000,
             capture_mode: CaptureMode::WindowsGraphicsCapture,
             ..Default::default()
@@ -291,7 +291,7 @@ mod tests {
 
         let current = service.current();
 
-        assert_matches!(op, Operation::RunUntil(_));
+        assert_matches!(op, Operation::RunUntil { once: true, .. });
         assert_eq!(current.input_method, InputMethod::Rpc);
         assert_eq!(current.input_method_rpc_server_url, "http://localhost:9000");
     }
