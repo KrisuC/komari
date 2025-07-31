@@ -10,14 +10,18 @@ use std::{
 use dyn_clone::clone_box;
 #[cfg(debug_assertions)]
 use log::debug;
+use log::info;
 use mockall_double::double;
+#[cfg(debug_assertions)]
+use opencv::core::Rect;
 use opencv::{
     core::{Vector, VectorToVec},
     imgcodecs::imencode_def,
 };
-use platforms::Error;
 use strum::IntoEnumIterator;
 
+#[cfg(debug_assertions)]
+use crate::bridge::KeyKind;
 use crate::{
     CycleRunStopMode,
     bridge::Input,
@@ -77,9 +81,30 @@ pub trait Contextual {
         Self: Sized;
 }
 
+#[cfg(debug_assertions)]
+pub type RuneArrows = [(KeyKind, Rect); 4];
+
+#[derive(Debug, Default)]
+#[cfg(debug_assertions)]
+pub struct Debug {
+    last_rune_result: RefCell<Option<RuneArrows>>,
+}
+
+#[cfg(debug_assertions)]
+impl Debug {
+    pub fn save_last_rune_result(&self) {}
+
+    pub fn set_last_rune_result(&self, result: RuneArrows) {
+        *self.last_rune_result.borrow_mut() = Some(result);
+    }
+}
+
 /// A struct that stores the game information.
 #[derive(Debug)]
 pub struct Context {
+    /// A struct to hold debugging information.
+    #[cfg(debug_assertions)]
+    pub debug: Debug,
     /// A struct to send inputs.
     pub input: Box<dyn Input>,
     /// A struct for generating random values.
@@ -114,6 +139,8 @@ impl Context {
     #[cfg(test)]
     pub fn new(input: Option<MockInput>, detector: Option<MockDetector>) -> Self {
         Context {
+            #[cfg(debug_assertions)]
+            debug: Debug::default(),
             input: Box::new(input.unwrap_or_default()),
             rng: Rng::new(rand::random()),
             notification: DiscordNotification::new(Rc::new(RefCell::new(Settings::default()))),
@@ -294,6 +321,8 @@ fn update_loop() {
     let mut rotator = Rotator::default();
     let mut navigator = Navigator::default();
     let mut context = Context {
+        #[cfg(debug_assertions)]
+        debug: Debug::default(),
         input: keys,
         rng,
         notification: DiscordNotification::new(settings.clone()),
@@ -334,12 +363,8 @@ fn update_loop() {
 
         did_capture_normally = detector.is_ok();
         context.tick += 1;
-        context.tick_failed_capturing = was_capturing_normally
-            && !did_capture_normally
-            && matches!(
-                detector.as_ref().err(),
-                Some(Error::WindowNotFound | Error::WindowFrameNotAvailable)
-            );
+        context.tick_failed_capturing =
+            was_capturing_normally && !did_capture_normally && detector.is_err();
         context.operation = context.operation.update();
 
         let did_cycled_to_stop = context.operation.halting();
@@ -413,6 +438,7 @@ fn update_loop() {
                 Instant::now().duration_since(instant).as_secs() >= PENDING_HALT_SECS
             });
             if context.tick_changed_minimap || (pending_halt_reached && was_player_navigating) {
+                info!(target: "context", "halt cancelled due to minimap changed or navigating");
                 pending_halt_reached = false;
                 pending_halt = None;
             }
@@ -430,8 +456,10 @@ fn update_loop() {
                 || (pending_halt.is_none() && context.tick_failed_capturing);
             if can_halt_or_notify {
                 if pending_halt.is_none() {
+                    info!(target: "context", "queued a halt due to minimap changed or detection failed");
                     pending_halt = Some(Instant::now());
                 } else {
+                    info!(target: "context", "halting...");
                     pending_halt = None;
                     rotator.reset_queue();
                     context.operation = Operation::Halting;
