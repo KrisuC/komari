@@ -1356,10 +1356,8 @@ mod tests {
         idle.platforms = Array::from_iter(platforms);
         idle.bbox = Rect::new(0, 0, 100, 100);
 
-        let context = Context {
-            minimap: Minimap::Idle(idle),
-            ..Context::new(None, None)
-        };
+        let mut context = Context::new(None, None);
+        context.minimap = Minimap::Idle(idle);
 
         let mut state = PlayerState::default();
         state.auto_mob_populate_ignore_xs(&context);
@@ -1395,11 +1393,9 @@ mod tests {
         idle.bbox = bbox;
 
         let rng = Rng::new(SEED);
-        let context = Context {
-            minimap: Minimap::Idle(idle),
-            rng,
-            ..Context::new(None, None)
-        };
+        let mut context = Context::new(None, None);
+        context.minimap = Minimap::Idle(idle);
+        context.rng = rng;
 
         let bound = Rect::new(0, 0, 100, 100); // Whole map
         let point = state.auto_mob_pathing_point(&context, bound);
@@ -1422,11 +1418,9 @@ mod tests {
         idle.bbox = bbox;
 
         let rng = Rng::new(SEED);
-        let context = Context {
-            minimap: Minimap::Idle(idle),
-            rng,
-            ..Context::new(None, None)
-        };
+        let mut context = Context::new(None, None);
+        context.minimap = Minimap::Idle(idle);
+        context.rng = rng;
 
         let bound = Rect::new(0, 0, 100, 100);
         let point = state.auto_mob_pathing_point(&context, bound);
