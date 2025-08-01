@@ -944,15 +944,99 @@ fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
 }
 
 fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
+    /// Stores offsets information for various player templates.
+    #[derive(Debug)]
+    struct TemplateOffsets {
+        template: &'static LazyLock<Mat>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    }
+
     /// TODO: Support default ratio
     static TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(include_bytes!(env!("PLAYER_TEMPLATE")), IMREAD_COLOR).unwrap()
     });
+    static TEMPLATE_LEFT_HALF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_LEFT_HALF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static TEMPLATE_RIGHT_HALF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_RIGHT_HALF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static TEMPLATE_TOP_HALF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_TOP_HALF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static TEMPLATE_BOTTOM_HALF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("PLAYER_BOTTOM_HALF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static TEMPLATE_OFFSETS: [TemplateOffsets; 5] = [
+        TemplateOffsets {
+            template: &TEMPLATE,
+            x: -1,
+            y: -1,
+            width: 2,
+            height: 2,
+        },
+        TemplateOffsets {
+            template: &TEMPLATE_LEFT_HALF,
+            x: -1,
+            y: -1,
+            width: 6,
+            height: 2,
+        },
+        TemplateOffsets {
+            template: &TEMPLATE_RIGHT_HALF,
+            x: -5,
+            y: -1,
+            width: 6,
+            height: 2,
+        },
+        TemplateOffsets {
+            template: &TEMPLATE_TOP_HALF,
+            x: -1,
+            y: -1,
+            width: 2,
+            height: 6,
+        },
+        TemplateOffsets {
+            template: &TEMPLATE_BOTTOM_HALF,
+            x: -1,
+            y: -5,
+            width: 2,
+            height: 6,
+        },
+    ];
 
-    // Expands by 2 pixels to preserve previous position calculation. Previous template is 10x10
-    // while the current template is 8x8.
-    detect_template_single(mat, &*TEMPLATE, no_array(), Point::default(), 0.75)
-        .map(|(rect, _)| Rect::new(rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2))
+    // Detect and offset as needed to get a 10x10 for preserving previous behavior.
+    for offsets in &TEMPLATE_OFFSETS {
+        if let Ok(rect) = detect_template(mat, &**offsets.template, Point::default(), 0.75) {
+            let x = rect.x + offsets.x;
+            let y = rect.y + offsets.y;
+            let width = rect.width + offsets.width;
+            let height = rect.height + offsets.height;
+
+            return Ok(Rect::new(x, y, width, height));
+        }
+    }
+
+    Err(anyhow!("player not found"))
 }
 
 fn detect_player_kind(mat: &impl ToInputArray, kind: OtherPlayerKind) -> bool {
