@@ -776,17 +776,7 @@ fn SectionOthers(character_view: Memo<Character>, save_character: Callback<Chara
                     },
                     value: Some(character_view().elite_boss_behavior_key),
                 }
-                CharactersCheckbox {
-                    label: "Enabled",
-                    disabled: character_view().id.is_none(),
-                    on_value: move |elite_boss_behavior_enabled| {
-                        save_character(Character {
-                            elite_boss_behavior_enabled,
-                            ..character_view.peek().clone()
-                        });
-                    },
-                    value: character_view().elite_boss_behavior_enabled,
-                }
+                div {}
                 div { class: "flex gap-2 col-span-3",
                     div { class: "flex-grow",
                         a {

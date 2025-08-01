@@ -33,11 +33,9 @@ impl RotatorService {
         let familiar_essence_key = character
             .map(|character| character.familiar_essence_key.key)
             .unwrap_or_default();
-        let elite_boss_behavior = character.and_then(|character| {
-            character
-                .elite_boss_behavior_enabled
-                .then_some(character.elite_boss_behavior)
-        });
+        let elite_boss_behavior = character
+            .map(|character| character.elite_boss_behavior)
+            .unwrap_or_default();
         let elite_boss_behavior_key = character
             .map(|character| character.elite_boss_behavior_key)
             .unwrap_or_default();
@@ -230,7 +228,6 @@ mod tests {
     #[test]
     fn update_with_elite_boss_behavior() {
         let character = Character {
-            elite_boss_behavior_enabled: true,
             elite_boss_behavior: EliteBossBehavior::CycleChannel,
             elite_boss_behavior_key: KeyBinding::X,
             ..Default::default()
@@ -240,7 +237,7 @@ mod tests {
         rotator
             .expect_build_actions()
             .withf(|args| {
-                args.elite_boss_behavior == Some(EliteBossBehavior::CycleChannel)
+                args.elite_boss_behavior == EliteBossBehavior::CycleChannel
                     && args.elite_boss_behavior_key == KeyBinding::X
             })
             .once()

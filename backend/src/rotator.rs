@@ -151,7 +151,7 @@ pub struct RotatorBuildArgs<'a> {
     pub familiar_swappable_slots: SwappableFamiliars,
     pub familiar_swappable_rarities: &'a HashSet<FamiliarRarity>,
     pub familiar_swap_check_millis: u64,
-    pub elite_boss_behavior: Option<EliteBossBehavior>,
+    pub elite_boss_behavior: EliteBossBehavior,
     pub elite_boss_behavior_key: KeyBinding,
     pub enable_panic_mode: bool,
     pub enable_rune_solving: bool,
@@ -231,20 +231,19 @@ impl Rotator {
                 solve_rune_priority_action(),
             );
         }
-        if let Some(behavior) = elite_boss_behavior {
-            match behavior {
-                EliteBossBehavior::CycleChannel => {
-                    self.priority_actions.insert(
-                        self.id_counter.fetch_add(1, Ordering::Relaxed),
-                        elite_boss_change_channel_priority_action(),
-                    );
-                }
-                EliteBossBehavior::UseKey => {
-                    self.priority_actions.insert(
-                        self.id_counter.fetch_add(1, Ordering::Relaxed),
-                        elite_boss_use_key_priority_action(elite_boss_behavior_key),
-                    );
-                }
+        match elite_boss_behavior {
+            EliteBossBehavior::None => (),
+            EliteBossBehavior::CycleChannel => {
+                self.priority_actions.insert(
+                    self.id_counter.fetch_add(1, Ordering::Relaxed),
+                    elite_boss_change_channel_priority_action(),
+                );
+            }
+            EliteBossBehavior::UseKey => {
+                self.priority_actions.insert(
+                    self.id_counter.fetch_add(1, Ordering::Relaxed),
+                    elite_boss_use_key_priority_action(elite_boss_behavior_key),
+                );
             }
         }
         if enable_familiars_swapping {
@@ -1188,7 +1187,7 @@ mod tests {
             familiar_swappable_slots: SwappableFamiliars::default(),
             familiar_swappable_rarities: &HashSet::default(),
             familiar_swap_check_millis: 0,
-            elite_boss_behavior: Some(EliteBossBehavior::CycleChannel),
+            elite_boss_behavior: EliteBossBehavior::CycleChannel,
             elite_boss_behavior_key: KeyBinding::default(),
             enable_panic_mode: true,
             enable_rune_solving: true,

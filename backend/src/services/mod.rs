@@ -4,11 +4,8 @@ use mockall_double::double;
 use platforms::input::InputKind;
 use tokio::sync::broadcast::Receiver;
 
-#[cfg(debug_assertions)]
-use crate::services::debug::DebugService;
 use crate::{
-    Character, DebugState, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler,
-    Settings,
+    Character, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler, Settings,
     bridge::{DefaultInput, Input, InputMethod},
     buff::BuffState,
     context::Context,
@@ -18,6 +15,8 @@ use crate::{
     poll_request,
     services::game::GameEvent,
 };
+#[cfg(debug_assertions)]
+use crate::{DebugState, services::debug::DebugService};
 #[double]
 use crate::{
     bridge::{Capture, InputReceiver},

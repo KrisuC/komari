@@ -161,6 +161,7 @@ fn familiars_swap_check_millis() -> u64 {
 )]
 pub enum EliteBossBehavior {
     #[default]
+    None,
     CycleChannel,
     UseKey,
 }
@@ -197,7 +198,7 @@ pub struct Settings {
     pub enable_rune_solving: bool,
     pub enable_panic_mode: bool,
     pub stop_on_fail_or_change_map: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_with_ok_or_default")]
     pub cycle_run_stop: CycleRunStopMode,
     #[serde(default = "cycle_run_duration_millis_default")]
     pub cycle_run_duration_millis: u64,
@@ -338,9 +339,7 @@ pub struct Character {
     pub class: Class,
     pub disable_adjusting: bool,
     pub actions: Vec<ActionConfiguration>,
-    #[serde(default)]
-    pub elite_boss_behavior_enabled: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_with_ok_or_default")]
     pub elite_boss_behavior: EliteBossBehavior,
     #[serde(default)]
     pub elite_boss_behavior_key: KeyBinding,
@@ -403,7 +402,6 @@ impl Default for Character {
             class: Class::default(),
             disable_adjusting: false,
             actions: vec![],
-            elite_boss_behavior_enabled: false,
             elite_boss_behavior_key: KeyBinding::default(),
             elite_boss_behavior: EliteBossBehavior::default(),
         }
