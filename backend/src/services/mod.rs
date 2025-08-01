@@ -7,7 +7,8 @@ use tokio::sync::broadcast::Receiver;
 #[cfg(debug_assertions)]
 use crate::services::debug::DebugService;
 use crate::{
-    Character, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler, Settings,
+    Character, DebugState, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler,
+    Settings,
     bridge::{DefaultInput, Input, InputMethod},
     buff::BuffState,
     context::Context,
@@ -299,6 +300,11 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             self.args.capture,
             index,
         );
+    }
+
+    #[cfg(debug_assertions)]
+    fn on_debug_state_receiver(&self) -> Receiver<DebugState> {
+        self.service.debug.subscribe_state()
     }
 
     #[cfg(debug_assertions)]

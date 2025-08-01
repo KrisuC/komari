@@ -93,6 +93,10 @@ pub struct Debug {
 
 #[cfg(debug_assertions)]
 impl Debug {
+    pub fn auto_save_rune(&self) -> bool {
+        *self.auto_save.borrow()
+    }
+
     pub fn set_auto_save_rune(&self, auto_save: bool) {
         *self.auto_save.borrow_mut() = auto_save;
     }

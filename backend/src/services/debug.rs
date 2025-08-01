@@ -9,8 +9,10 @@ use opencv::{
 };
 use rand::distr::SampleString;
 use rand_distr::Alphanumeric;
+use tokio::sync::broadcast::{self, Receiver, Sender};
 
 use crate::{
+    DebugState,
     context::Context,
     debug::{save_image_for_training, save_image_for_training_to, save_minimap_for_training},
     detect::{ArrowsCalibrating, ArrowsState, CachedDetector, Detector},
@@ -19,10 +21,21 @@ use crate::{
 
 const SOLVE_RUNE_TIMEOUT_SECS: u64 = 10;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DebugService {
+    state: Sender<DebugState>,
     recording_id: Option<String>,
     infering_rune: Option<(ArrowsCalibrating, Instant)>,
+}
+
+impl Default for DebugService {
+    fn default() -> Self {
+        Self {
+            state: broadcast::channel(1).0,
+            recording_id: None,
+            infering_rune: None,
+        }
+    }
 }
 
 impl DebugService {
@@ -53,6 +66,17 @@ impl DebugService {
                 }
             }
         }
+
+        if self.state.is_empty() {
+            let _ = self.state.send(DebugState {
+                is_recording: self.recording_id.is_some(),
+                is_rune_auto_saving: context.debug.auto_save_rune(),
+            });
+        }
+    }
+
+    pub fn subscribe_state(&self) -> Receiver<DebugState> {
+        self.state.subscribe()
     }
 
     pub fn set_auto_save_rune(&self, context: &Context, auto_save: bool) {

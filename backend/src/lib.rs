@@ -67,19 +67,17 @@ static REQUESTS: LazyLock<(
     (tx, Mutex::new(rx))
 });
 
-macro_rules! expect_unit_variant {
-    ($e:expr, $p:path) => {
+macro_rules! expect_variant {
+    ($e:expr, $pat:pat) => {
         match $e {
-            $p => (),
+            $pat => (),
             _ => unreachable!(),
         }
     };
-}
 
-macro_rules! expect_value_variant {
-    ($e:expr, $p:path) => {
+    ($e:expr, $pat:pat => $val:expr) => {
         match $e {
-            $p(value) => value,
+            $pat => $val,
             _ => unreachable!(),
         }
     };
@@ -100,6 +98,8 @@ enum Request {
     RefreshCaptureHandles,
     QueryCaptureHandles,
     SelectCaptureHandle(Option<usize>),
+    #[cfg(debug_assertions)]
+    DebugStateReceiver,
     #[cfg(debug_assertions)]
     AutoSaveRune(bool),
     #[cfg(debug_assertions)]
@@ -132,6 +132,8 @@ enum Response {
     RefreshCaptureHandles,
     QueryCaptureHandles((Vec<String>, Option<usize>)),
     SelectCaptureHandle,
+    #[cfg(debug_assertions)]
+    DebugStateReceiver(broadcast::Receiver<DebugState>),
     #[cfg(debug_assertions)]
     AutoSaveRune,
     #[cfg(debug_assertions)]
@@ -173,6 +175,9 @@ pub(crate) trait RequestHandler {
     fn on_select_capture_handle(&mut self, index: Option<usize>);
 
     #[cfg(debug_assertions)]
+    fn on_debug_state_receiver(&self) -> broadcast::Receiver<DebugState>;
+
+    #[cfg(debug_assertions)]
     fn on_auto_save_rune(&self, auto_save: bool);
 
     #[cfg(debug_assertions)]
@@ -198,6 +203,14 @@ pub enum BoundQuadrant {
     TopRight,
     BottomRight,
     BottomLeft,
+}
+
+/// A struct for storing debug information.
+#[derive(Clone, PartialEq, Default, Debug)]
+#[cfg(debug_assertions)]
+pub struct DebugState {
+    pub is_recording: bool,
+    pub is_rune_auto_saving: bool,
 }
 
 /// A struct for storing game information.
@@ -227,7 +240,7 @@ pub enum GameOperation {
 
 /// Starts or stops rotating the actions.
 pub async fn rotate_actions(halting: bool) {
-    expect_unit_variant!(
+    expect_variant!(
         request(Request::RotateActions(halting)).await,
         Response::RotateActions
     )
@@ -259,9 +272,9 @@ pub async fn query_minimaps() -> Option<Vec<Minimap>> {
 ///
 /// This function does not insert the created minimap into the database.
 pub async fn create_minimap(name: String) -> Option<Minimap> {
-    expect_value_variant!(
+    expect_variant!(
         request(Request::CreateMinimap(name)).await,
-        Response::CreateMinimap
+        Response::CreateMinimap(minimap) => minimap
     )
 }
 
@@ -283,7 +296,7 @@ pub async fn upsert_minimap(mut minimap: Minimap) -> Option<Minimap> {
 
 /// Updates the current minimap used by the main game loop.
 pub async fn update_minimap(preset: Option<String>, minimap: Option<Minimap>) {
-    expect_unit_variant!(
+    expect_variant!(
         request(Request::UpdateMinimap(preset, minimap)).await,
         Response::UpdateMinimap
     )
@@ -308,9 +321,9 @@ pub async fn query_navigation_paths() -> Option<Vec<NavigationPaths>> {
 
 /// Creates a navigation path from currently detected minimap.
 pub async fn create_navigation_path() -> Option<NavigationPath> {
-    expect_value_variant!(
+    expect_variant!(
         request(Request::CreateNavigationPath).await,
-        Response::CreateNavigationPath
+        Response::CreateNavigationPath(value) => value
     )
 }
 
@@ -334,9 +347,9 @@ pub async fn upsert_navigation_paths(mut paths: NavigationPaths) -> Option<Navig
 ///
 /// Returns the updated [`NavigationPath`] or original if minimap is currently not detectable.
 pub async fn recapture_navigation_path(path: NavigationPath) -> NavigationPath {
-    expect_value_variant!(
+    expect_variant!(
         request(Request::RecaptureNavigationPath(path)).await,
-        Response::RecaptureNavigationPath
+        Response::RecaptureNavigationPath(value) => value
     )
 }
 
@@ -375,7 +388,7 @@ pub async fn upsert_character(mut character: Character) -> Option<Character> {
 
 /// Updates the current character used by the main game loop.
 pub async fn update_character(character: Option<Character>) {
-    expect_unit_variant!(
+    expect_variant!(
         request(Request::UpdateCharacter(character)).await,
         Response::UpdateCharacter
     )
@@ -391,47 +404,58 @@ pub async fn delete_character(character: Character) -> bool {
 }
 
 pub async fn redetect_minimap() {
-    expect_unit_variant!(
+    expect_variant!(
         request(Request::RedetectMinimap).await,
         Response::RedetectMinimap
     )
 }
 
 pub async fn game_state_receiver() -> broadcast::Receiver<GameState> {
-    expect_value_variant!(
+    expect_variant!(
         request(Request::GameStateReceiver).await,
-        Response::GameStateReceiver
+        Response::GameStateReceiver(value) => value
     )
 }
 
 pub async fn key_receiver() -> broadcast::Receiver<KeyBinding> {
-    expect_value_variant!(request(Request::KeyReceiver).await, Response::KeyReceiver)
+    expect_variant!(
+       request(Request::KeyReceiver).await,
+        Response::KeyReceiver(value) => value
+    )
 }
 
 pub async fn refresh_capture_handles() {
-    expect_unit_variant!(
+    expect_variant!(
         request(Request::RefreshCaptureHandles).await,
         Response::RefreshCaptureHandles
     )
 }
 
 pub async fn query_capture_handles() -> (Vec<String>, Option<usize>) {
-    expect_value_variant!(
+    expect_variant!(
         request(Request::QueryCaptureHandles).await,
-        Response::QueryCaptureHandles
+        Response::QueryCaptureHandles(value) => value
     )
 }
 
 pub async fn select_capture_handle(index: Option<usize>) {
-    expect_unit_variant!(
+    expect_variant!(
         request(Request::SelectCaptureHandle(index)).await,
         Response::SelectCaptureHandle
     )
 }
 
 #[cfg(debug_assertions)]
+pub async fn debug_state_receiver() -> broadcast::Receiver<DebugState> {
+    expect_variant!(
+        request(Request::DebugStateReceiver).await,
+        Response::DebugStateReceiver(value) => value
+    )
+}
+
+#[cfg(debug_assertions)]
 pub async fn auto_save_rune(auto_save: bool) {
-    expect_unit_variant!(
+    expect_variant!(
         request(Request::AutoSaveRune(auto_save)).await,
         Response::AutoSaveRune
     )
@@ -439,7 +463,7 @@ pub async fn auto_save_rune(auto_save: bool) {
 
 #[cfg(debug_assertions)]
 pub async fn capture_image(is_grayscale: bool) {
-    expect_unit_variant!(
+    expect_variant!(
         request(Request::CaptureImage(is_grayscale)).await,
         Response::CaptureImage
     )
@@ -447,17 +471,17 @@ pub async fn capture_image(is_grayscale: bool) {
 
 #[cfg(debug_assertions)]
 pub async fn infer_rune() {
-    expect_unit_variant!(request(Request::InferRune).await, Response::InferRune)
+    expect_variant!(request(Request::InferRune).await, Response::InferRune)
 }
 
 #[cfg(debug_assertions)]
 pub async fn infer_minimap() {
-    expect_unit_variant!(request(Request::InferMinimap).await, Response::InferMinimap)
+    expect_variant!(request(Request::InferMinimap).await, Response::InferMinimap)
 }
 
 #[cfg(debug_assertions)]
 pub async fn record_images(start: bool) {
-    expect_unit_variant!(
+    expect_variant!(
         request(Request::RecordImages(start)).await,
         Response::RecordImages
     )
@@ -465,7 +489,7 @@ pub async fn record_images(start: bool) {
 
 #[cfg(debug_assertions)]
 pub async fn test_spin_rune() {
-    expect_unit_variant!(request(Request::TestSpinRune).await, Response::TestSpinRune)
+    expect_variant!(request(Request::TestSpinRune).await, Response::TestSpinRune)
 }
 
 pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
@@ -510,6 +534,10 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             Request::SelectCaptureHandle(index) => {
                 handler.on_select_capture_handle(index);
                 Response::SelectCaptureHandle
+            }
+            #[cfg(debug_assertions)]
+            Request::DebugStateReceiver => {
+                Response::DebugStateReceiver(handler.on_debug_state_receiver())
             }
             #[cfg(debug_assertions)]
             Request::AutoSaveRune(auto_save) => {
