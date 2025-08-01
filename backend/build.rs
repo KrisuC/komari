@@ -20,6 +20,10 @@ fn main() {
     let elite_boss_bar_1 = dir.join("elite_boss_bar_1_ideal_ratio.png");
     let elite_boss_bar_2 = dir.join("elite_boss_bar_2_ideal_ratio.png");
     let player = dir.join("player_ideal_ratio.png");
+    let player_left_half = dir.join("player_left_half_ideal_ratio.png");
+    let player_right_half = dir.join("player_right_half_ideal_ratio.png");
+    let player_top_half = dir.join("player_top_half_ideal_ratio.png");
+    let player_bottom_half = dir.join("player_bottom_half_ideal_ratio.png");
     let player_stranger = dir.join("player_stranger_ideal_ratio.png");
     let player_guildie = dir.join("player_guildie_ideal_ratio.png");
     let player_friend = dir.join("player_friend_ideal_ratio.png");
@@ -140,6 +144,22 @@ fn main() {
     println!(
         "cargo:rustc-env=PLAYER_TEMPLATE={}",
         player.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=PLAYER_LEFT_HALF_TEMPLATE={}",
+        player_left_half.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=PLAYER_RIGHT_HALF_TEMPLATE={}",
+        player_right_half.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=PLAYER_TOP_HALF_TEMPLATE={}",
+        player_top_half.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=PLAYER_BOTTOM_HALF_TEMPLATE={}",
+        player_bottom_half.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=PLAYER_STRANGER_TEMPLATE={}",
