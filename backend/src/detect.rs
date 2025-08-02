@@ -175,9 +175,13 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     fn detect_player_in_cash_shop(&self) -> bool;
 
     /// Detects the player health bar.
+    ///
+    /// This is the biggest red health bar below the name.
     fn detect_player_health_bar(&self) -> Result<Rect>;
 
     /// Detects the player current and max health bars.
+    ///
+    /// These are the two smaller bars extracted from `health_bar`.
     fn detect_player_current_max_health_bars(&self, health_bar: Rect) -> Result<(Rect, Rect)>;
 
     /// Detects the player current health and max health.
@@ -313,7 +317,7 @@ impl CachedDetector {
         })));
         let buffs_grayscale = grayscale.clone();
         let buffs_grayscale = Arc::new(LazyLock::<Mat, MatFn>::new(Box::new(move || {
-            crop_to_buffs_region(&**buffs_grayscale).clone_pointee()
+            to_buffs_region(&**buffs_grayscale).clone_pointee()
         })));
         Self {
             mat,
@@ -432,7 +436,7 @@ impl Detector for CachedDetector {
             | BuffKind::ExtremeRedPotion
             | BuffKind::ExtremeBluePotion
             | BuffKind::ExtremeGreenPotion
-            | BuffKind::ExtremeGoldPotion => &to_bgr(&crop_to_buffs_region(&*self.mat)),
+            | BuffKind::ExtremeGoldPotion => &to_bgr(&to_buffs_region(&*self.mat)),
         };
         detect_player_buff(mat, kind)
     }
@@ -488,25 +492,6 @@ impl Detector for CachedDetector {
     fn detect_change_channel_menu_opened(&self) -> bool {
         detect_change_channel_menu_opened(&**self.grayscale)
     }
-}
-
-fn crop_to_buffs_region(mat: &impl MatTraitConst) -> BoxedRef<'_, Mat> {
-    let size = mat.size().unwrap();
-    // crop to top right of the image for buffs region
-    let crop_x = size.width / 3;
-    let crop_y = size.height / 4;
-    let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
-    mat.roi(crop_bbox).unwrap()
-}
-
-fn expand_bbox(mat: &impl MatTraitConst, bbox: Rect, size: i32) -> Rect {
-    let x = (bbox.x - size).max(0);
-    let y = (bbox.y - size).max(0);
-    let br = bbox.br();
-    let width = (br.x + size).min(mat.cols()) - x;
-    let height = (br.y + size).min(mat.rows()) - y;
-
-    Rect::new(x, y, width, height)
 }
 
 fn detect_mobs(
@@ -595,7 +580,7 @@ fn detect_mobs(
     let size = mat.size().unwrap();
     let (mat_in, w_ratio, h_ratio, left, top) = preprocess_for_yolo(mat);
     let mut model = MOB_MODEL.lock().unwrap();
-    let result = model.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
+    let result = model.run([to_input_value(&mat_in)]).unwrap();
     let result = from_output_value(&result);
     // SAFETY: 0..result.rows() is within Mat bounds
     let points = (0..result.rows())
@@ -776,7 +761,7 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
     let size = mat.size().unwrap();
     let (mat_in, w_ratio, h_ratio, left, top) = preprocess_for_yolo(mat);
     let mut model = MINIMAP_MODEL.lock().unwrap();
-    let result = model.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
+    let result = model.run([to_input_value(&mat_in)]).unwrap();
     let mat_out = from_output_value(&result);
     let pred = (0..mat_out.rows())
         // SAFETY: 0..result.rows() is within Mat bounds
@@ -888,10 +873,18 @@ fn detect_minimap_match<T: ToInputArray + MatTraitConst>(
 ) -> Result<f64> {
     const EXPAND_NAME_SIZE: i32 = 4;
 
-    let minimap_name_bbox = expand_bbox(grayscale, minimap_name_bbox, EXPAND_NAME_SIZE);
+    let minimap_name_bbox = expand_bbox(
+        Some(grayscale.size().expect("size available")),
+        minimap_name_bbox,
+        EXPAND_NAME_SIZE,
+    );
     let minimap_name = grayscale.roi(minimap_name_bbox)?;
 
-    let minimap_bbox = expand_bbox(mat, minimap_bbox, EXPAND_NAME_SIZE);
+    let minimap_bbox = expand_bbox(
+        Some(mat.size().expect("size available")),
+        minimap_bbox,
+        EXPAND_NAME_SIZE,
+    );
     let minimap = to_bgr(&mat.roi(minimap_bbox)?);
 
     let name_score = detect_template_single(
@@ -924,7 +917,13 @@ fn detect_minimap_portals<T: MatTraitConst + ToInputArray>(minimap: T) -> Vec<Re
     detect_template_multiple(&minimap, &*TEMPLATE, no_array(), Point::default(), 16, 0.7)
         .into_iter()
         .filter_map(|result| result.ok())
-        .map(|(bbox, _)| expand_bbox(&minimap, bbox, PORTAL_EXPAND_SIZE))
+        .map(|(bbox, _)| {
+            expand_bbox(
+                Some(minimap.size().expect("size available")),
+                bbox,
+                PORTAL_EXPAND_SIZE,
+            )
+        })
         .collect::<Vec<_>>()
 }
 
@@ -938,9 +937,9 @@ fn detect_minimap_rune(minimap: &impl ToInputArray) -> Result<Rect> {
     });
 
     // Expands by 2 pixels to preserve previous position calculation. Previous template is 11x11
-    // while the current template is 9x9
+    // while the current template is 9x9.
     detect_template_single(minimap, &*TEMPLATE, &*TEMPLATE_MASK, Point::default(), 0.75)
-        .map(|(rect, _)| Rect::new(rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2))
+        .map(|(bbox, _)| expand_bbox(None, bbox, 1))
 }
 
 fn detect_player(mat: &impl ToInputArray) -> Result<Rect> {
@@ -1463,7 +1462,7 @@ fn detect_rune_arrows_with_scores_regions(mat: &impl MatTraitConst) -> Vec<(Rect
     let size = mat.size().unwrap();
     let (mat_in, w_ratio, h_ratio, left, top) = preprocess_for_yolo(mat);
     let mut model = RUNE_MODEL.lock().unwrap();
-    let result = model.run([norm_rgb_to_input_value(&mat_in)]).unwrap();
+    let result = model.run([to_input_value(&mat_in)]).unwrap();
     let mat_out = from_output_value(&result);
     let mut vec = (0..mat_out.rows())
         // SAFETY: 0..outputs.rows() is within Mat bounds
@@ -2175,7 +2174,8 @@ fn detect_template_single<T: ToInputArray + MatTraitConst>(
         .and_then(|x| x)
 }
 
-/// Detects multiple matches from `template` with the given BGR image `Mat`.
+/// Detects multiple matches from `template` from the given BGR image `Mat` and returns up to
+/// `max_matches` best results.
 #[inline]
 fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
     mat: &impl ToInputArray,
@@ -2187,14 +2187,23 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
 ) -> Vec<Result<(Rect, f64)>> {
     #[inline]
     fn clear_result(result: &mut Mat, rect: Rect, offset: Point) -> Result<()> {
-        let x = (rect.x - offset.x).max(0);
-        let y = (rect.y - offset.y).max(0);
-        let roi_rect = Rect::new(
-            x,
-            y,
-            rect.width.min(result.cols() - x),
-            rect.height.min(result.rows() - y),
-        );
+        let size = result.size().expect("size available");
+        let mut x1 = rect.x - offset.x;
+        let mut y1 = rect.y - offset.y;
+        let mut x2 = x1 + rect.width;
+        let mut y2 = y1 + rect.height;
+        x1 = x1.clamp(0, size.width);
+        y1 = y1.clamp(0, size.height);
+        x2 = x2.clamp(0, size.width);
+        y2 = y2.clamp(0, size.height);
+
+        let width = x2 - x1;
+        let height = y2 - y1;
+        if width <= 0 || height <= 0 {
+            bail!("zero area clearing");
+        }
+
+        let roi_rect = Rect::new(x1, y1, width, height);
         result.roi_mut(roi_rect)?.set_scalar(Scalar::default())?;
         Ok(())
     }
@@ -2217,6 +2226,7 @@ fn detect_template_multiple<T: ToInputArray + MatTraitConst>(
             &no_array(),
         )
         .unwrap();
+
         let tl = loc + offset;
         let br = tl + Point::from_size(template_size);
         let rect = Rect::from_points(tl, br);
@@ -2340,7 +2350,7 @@ fn extract_text_bboxes(
     });
 
     let mut model = TEXT_DETECTION_MODEL.lock().unwrap();
-    let result = model.run([norm_rgb_to_input_value(mat_in)]).unwrap();
+    let result = model.run([to_input_value(mat_in)]).unwrap();
     let mat = from_output_value(&result);
     let text_score = mat
         .ranges(&Vector::from_iter([
@@ -2610,7 +2620,39 @@ fn preprocess_for_text_bboxes(mat: &impl MatTraitConst) -> (Mat, f32, f32) {
     (mat, resize_w_ratio, resize_h_ratio)
 }
 
-/// Converts an BGRA `Mat` image to HSV.
+/// Expands `bbox` in all the direction by `count` pixel(s) and clamps to `size` if provided.
+#[inline]
+fn expand_bbox(size: Option<Size>, bbox: Rect, count: i32) -> Rect {
+    let mut x1 = bbox.x - count;
+    let mut y1 = bbox.y - count;
+    if size.is_some() {
+        x1 = x1.max(0);
+        y1 = y1.max(0);
+    }
+
+    let br = bbox.br();
+    let mut x2 = br.x + count;
+    let mut y2 = br.y + count;
+    if let Some(size) = size {
+        x2 = x2.min(size.width);
+        y2 = y2.min(size.height);
+    }
+
+    Rect::new(x1, y1, x2 - x1, y2 - y1)
+}
+
+/// Crops `mat` to the buffs region.
+#[inline]
+fn to_buffs_region(mat: &impl MatTraitConst) -> BoxedRef<'_, Mat> {
+    let size = mat.size().unwrap();
+    // Crop to top right of the image for buffs region
+    let crop_x = size.width / 3;
+    let crop_y = size.height / 4;
+    let crop_bbox = Rect::new(size.width - crop_x, 0, crop_x, crop_y);
+    mat.roi(crop_bbox).unwrap()
+}
+
+/// Converts a BGRA `Mat` image to HSV.
 #[inline]
 fn to_hsv(mat: &impl MatTraitConst) -> Mat {
     let mut mat = mat.try_clone().unwrap();
@@ -2624,7 +2666,7 @@ fn to_hsv(mat: &impl MatTraitConst) -> Mat {
     mat
 }
 
-/// Converts an BGRA `Mat` image to BGR.
+/// Converts a BGRA `Mat` image to BGR.
 #[inline]
 fn to_bgr(mat: &impl MatTraitConst) -> Mat {
     let mut mat = mat.try_clone().unwrap();
@@ -2637,7 +2679,7 @@ fn to_bgr(mat: &impl MatTraitConst) -> Mat {
     mat
 }
 
-/// Converts an BGRA `Mat` image to grayscale.
+/// Converts a BGRA `Mat` image to grayscale.
 ///
 /// `add_contrast` can be set to `true` in order to increase contrast by a fixed amount
 /// used for template matching.
@@ -2675,7 +2717,7 @@ fn from_output_value(result: &SessionOutputs) -> Mat {
 /// will panic if not. The `Mat` is reshaped to single channel, tranposed to `[1, 3, H, W]` and
 /// converted to `SessionInputValue`.
 #[inline]
-fn norm_rgb_to_input_value(mat: &impl MatTraitConst) -> SessionInputValue<'_> {
+fn to_input_value(mat: &impl MatTraitConst) -> SessionInputValue<'_> {
     let mat = mat.reshape_nd(1, &[1, mat.rows(), mat.cols(), 3]).unwrap();
     let mut mat_t = Mat::default();
     transpose_nd(&mat, &Vector::from_slice(&[0, 3, 1, 2]), &mut mat_t).unwrap();

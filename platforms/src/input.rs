@@ -87,6 +87,7 @@ pub enum KeyKind {
     Alt,
 }
 
+/// Kind of input to send.
 #[derive(Debug, Clone, Copy)]
 pub enum InputKind {
     /// Sends input only if the foreground window is [`Window`] and focused.
