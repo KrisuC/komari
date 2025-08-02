@@ -1455,7 +1455,9 @@ fn ActionKeyInput(
                         disabled: action().position.is_none(),
                         on_value: move |x| {
                             let mut action = action.write();
-                            action.position.as_mut().unwrap().x = x;
+                            if let Some(pos) = action.position.as_mut() {
+                                pos.x = x;
+                            }
                         },
                         value: action().position.map(|pos| pos.x).unwrap_or_default(),
                     }
@@ -1464,7 +1466,9 @@ fn ActionKeyInput(
                             class: ICON_CONTAINER_CLASS,
                             onclick: move |_| {
                                 let mut action = action.write();
-                                action.position.as_mut().unwrap().x = position.peek().0;
+                                if let Some(pos) = action.position.as_mut() {
+                                    pos.x = position.peek().0;
+                                }
                             },
                             PositionIcon { class: ICON_CLASS }
                         }
@@ -1475,7 +1479,9 @@ fn ActionKeyInput(
                     disabled: action().position.is_none(),
                     on_value: move |x| {
                         let mut action = action.write();
-                        action.position.as_mut().unwrap().x_random_range = x;
+                        if let Some(pos) = action.position.as_mut() {
+                            pos.x_random_range = x;
+                        }
                     },
                     value: action().position.map(|pos| pos.x_random_range).unwrap_or_default(),
                 }
@@ -1485,7 +1491,9 @@ fn ActionKeyInput(
                         disabled: action().position.is_none(),
                         on_value: move |y| {
                             let mut action = action.write();
-                            action.position.as_mut().unwrap().y = y;
+                            if let Some(pos) = action.position.as_mut() {
+                                pos.y = y;
+                            }
                         },
                         value: action().position.map(|pos| pos.y).unwrap_or_default(),
                     }
@@ -1494,7 +1502,9 @@ fn ActionKeyInput(
                             class: ICON_CONTAINER_CLASS,
                             onclick: move |_| {
                                 let mut action = action.write();
-                                action.position.as_mut().unwrap().y = position.peek().1;
+                                if let Some(pos) = action.position.as_mut() {
+                                    pos.y = position.peek().1;
+                                }
                             },
                             PositionIcon { class: ICON_CLASS }
                         }
