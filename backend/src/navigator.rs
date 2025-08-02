@@ -272,12 +272,17 @@ impl Navigator {
     }
 
     /// Marks all paths computed as dirty and should be recomputed.
+    ///
+    /// When `invalidate_cache` is `true`, all paths will be retrieved again from database.
     #[inline]
-    pub fn mark_dirty(&mut self) {
-        // Do not reset `base_path`, `current_path` and `last_point_state` here so that
-        // `update_current_path_from_current_location` will try to reuse that when looking up.
+    pub fn mark_dirty(&mut self, invalidate_cache: bool) {
         self.path_dirty = true;
         self.path_dirty_retry_count = 0;
+        if invalidate_cache {
+            self.base_path = None;
+            self.current_path = None;
+            self.last_point_state = None;
+        }
     }
 
     /// Same as [`Self::mark_dirty`] but also sets the destination.
@@ -285,7 +290,7 @@ impl Navigator {
     pub fn mark_dirty_with_destination(&mut self, paths_id_index: Option<(i64, usize)>) {
         self.destination_path_id =
             paths_id_index.map(|(id, index)| path_id_from_paths_id_index(id, index));
-        self.mark_dirty();
+        self.mark_dirty(false);
     }
 
     #[inline]
@@ -293,7 +298,9 @@ impl Navigator {
         const UPDATE_RETRY_MAX_COUNT: u32 = 3;
 
         if context.tick_changed_minimap {
-            self.mark_dirty();
+            // Do not reset `base_path`, `current_path` and `last_point_state` here so that
+            // `update_current_path_from_current_location` will try to reuse that when looking up.
+            self.mark_dirty(false);
         }
         if self.path_dirty {
             match self.update_current_path_from_current_location(context) {

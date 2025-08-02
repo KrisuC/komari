@@ -168,7 +168,7 @@ impl DefaultRequestHandler<'_> {
                         self.service.game.current_buffs(),
                     );
                 }
-                GameEvent::NavigationPathsUpdated => self.args.navigator.mark_dirty(),
+                GameEvent::NavigationPathsUpdated => self.args.navigator.mark_dirty(true),
             }
         }
 
