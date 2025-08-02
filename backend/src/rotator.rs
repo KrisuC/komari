@@ -126,6 +126,7 @@ pub struct Rotator {
     normal_actions_backward: bool,
     normal_actions_reset_on_erda: bool,
     normal_rotate_mode: RotatorMode,
+
     /// The [`Task`] used when [`Self::normal_rotate_mode`] is [`RotatorMode::AutoMobbing`]
     auto_mob_task: Option<Task<Result<Vec<Point>>>>,
     /// Tracks number of times a mob detection has been completed inside the same quad.
@@ -133,6 +134,7 @@ pub struct Rotator {
     /// This limits the number of detections can be done inside the same quad as to help player
     /// advances to the next quad.
     auto_mob_quadrant_consecutive_count: Option<(Quadrant, u32)>,
+
     priority_actions: OrderedHashMap<u32, PriorityAction>,
     /// The currently executing [`RotatorAction::Linked`] action
     priority_queuing_linked_action: Option<(u32, Box<LinkedAction>)>,
@@ -140,6 +142,11 @@ pub struct Rotator {
     ///
     /// Populates from [`Self::priority_actions`] when its predicate for queuing is true
     priority_actions_queue: VecDeque<u32>,
+    /// Side-loaded one-time priority actions.
+    ///
+    /// These are actions injected externally and to be executed as appropriate with the current
+    /// [`Self::priority_actions_queue`]. These actions are run only once and do not have an ID.
+    priority_actions_side_queue: VecDeque<RotatorAction>,
 }
 
 #[derive(Debug)]
@@ -282,7 +289,9 @@ impl Rotator {
         self.normal_actions_backward = false;
         self.reset_normal_actions_queue();
         self.priority_actions_queue.clear();
+        self.priority_actions_side_queue.clear();
         self.priority_queuing_linked_action = None;
+        self.auto_mob_task = None;
         self.auto_mob_quadrant_consecutive_count = None;
     }
 
@@ -290,6 +299,17 @@ impl Rotator {
     fn reset_normal_actions_queue(&mut self) {
         self.normal_index = 0;
         self.normal_queuing_linked_action = None;
+    }
+
+    /// Injects an action to be executed.
+    ///
+    /// This can be useful for one-time action that needs to be run in response to some external
+    /// event (e.g. chat). But should work co-operatively with previously built actions instead of
+    /// directly overwriting through [`PlayerState::set_priority_action`].
+    #[inline]
+    pub fn inject_action(&mut self, action: PlayerAction) {
+        self.priority_actions_side_queue
+            .push_back(RotatorAction::Single(action));
     }
 
     #[inline]
@@ -472,7 +492,15 @@ impl Rotator {
             })
         }
 
-        if self.priority_actions_queue.is_empty() && self.priority_queuing_linked_action.is_none() {
+        #[inline]
+        fn has_side_loaded_action_executing(player: &PlayerState) -> bool {
+            player.has_priority_action() && player.priority_action_id().is_none()
+        }
+
+        if self.priority_actions_queue.is_empty()
+            && self.priority_actions_side_queue.is_empty()
+            && self.priority_queuing_linked_action.is_none()
+        {
             return;
         }
         if !context
@@ -480,6 +508,7 @@ impl Rotator {
             .can_action_override_current_state(player.last_known_pos)
             || has_normal_linked_action_queuing_or_executing(self, player)
             || has_priority_linked_action_executing(self, player)
+            || has_side_loaded_action_executing(player)
         {
             return;
         }
@@ -487,6 +516,17 @@ impl Rotator {
         if self.rotate_queuing_linked_action(player, true) {
             return;
         }
+        // Check for side-loaded actions
+        if let Some(action) = self.priority_actions_side_queue.pop_front() {
+            match action {
+                RotatorAction::Single(action) => {
+                    player.set_priority_action(None, action);
+                }
+                RotatorAction::Linked(_) => unreachable!(),
+            }
+            return;
+        }
+
         let player_has_queue_to_front = player
             .priority_action_id()
             .and_then(|id| {

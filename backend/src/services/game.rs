@@ -4,7 +4,10 @@ use log::debug;
 #[cfg(test)]
 use mockall::{automock, concretize};
 use mockall_double::double;
-use opencv::core::{MatTraitConst, MatTraitConstManual, Rect, Vec4b};
+use opencv::{
+    core::{MatTraitConst, MatTraitConstManual, Rect, ToInputArray, Vec4b, Vector},
+    imgcodecs::imencode_def,
+};
 use strum::IntoEnumIterator;
 use tokio::{
     spawn,
@@ -58,6 +61,24 @@ impl GameService {
         }
     }
 
+    pub fn poll_events(
+        &mut self,
+        minimap_id: Option<i64>,
+        character_id: Option<i64>,
+        settings: &Settings,
+    ) -> Array<GameEvent, 2> {
+        let mut events = Array::new();
+
+        if let Some(event) = poll_key(self, settings) {
+            events.push(event);
+        }
+        if let Some(event) = poll_database(self, minimap_id, character_id) {
+            events.push(event);
+        }
+
+        events
+    }
+
     pub fn current_actions(&self) -> &[Action] {
         &self.game_actions
     }
@@ -68,6 +89,32 @@ impl GameService {
 
     pub fn current_input_receiver_mut(&mut self) -> &mut InputReceiver {
         &mut self.input_receiver
+    }
+
+    pub fn get_state_and_frame(&self, context: &Context) -> (String, Option<Vec<u8>>) {
+        let frame = context
+            .detector
+            .as_ref()
+            .and_then(|detector| frame_from(detector.mat()));
+
+        let state = context.player.to_string();
+        let operation = match context.operation {
+            Operation::HaltUntil { instant, .. } => {
+                format!("Halting for {}", duration_from(instant))
+            }
+            Operation::Halting => "Halting".to_string(),
+            Operation::Running => "Running".to_string(),
+            Operation::RunUntil { instant, .. } => {
+                format!("Running for {}", duration_from(instant))
+            }
+        };
+        let info = [
+            format!("- State: ``{state}``"),
+            format!("- Operation: ``{operation}``"),
+        ]
+        .join("\n");
+
+        (info, frame)
     }
 
     #[cfg_attr(test, concretize)]
@@ -169,24 +216,6 @@ impl GameService {
         self.key_sender.subscribe()
     }
 
-    pub fn poll_events(
-        &mut self,
-        minimap_id: Option<i64>,
-        character_id: Option<i64>,
-        settings: &Settings,
-    ) -> Array<GameEvent, 2> {
-        let mut events = Array::new();
-
-        if let Some(event) = poll_key(self, settings) {
-            events.push(event);
-        }
-        if let Some(event) = poll_database(self, minimap_id, character_id) {
-            events.push(event);
-        }
-
-        events
-    }
-
     pub fn update_operation(
         &self,
         operation: &mut Operation,
@@ -235,6 +264,23 @@ impl GameService {
     pub fn update_buffs(&mut self, character: Option<&Character>) {
         self.game_buffs = character.map(buffs_from).unwrap_or_default();
     }
+}
+
+#[inline]
+fn duration_from(instant: Instant) -> String {
+    let duration = instant.saturating_duration_since(Instant::now());
+    let seconds = duration.as_secs() % 60;
+    let minutes = (duration.as_secs() / 60) % 60;
+    let hours = (duration.as_secs() / 60) / 60;
+
+    format!("{hours:0>2}:{minutes:0>2}:{seconds:0>2}")
+}
+
+#[inline]
+fn frame_from(mat: &impl ToInputArray) -> Option<Vec<u8>> {
+    let mut vector = Vector::new();
+    imencode_def(".png", mat, &mut vector).ok()?;
+    Some(Vec::from_iter(vector))
 }
 
 #[inline]

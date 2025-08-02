@@ -70,6 +70,7 @@ fn main() {
     let familiar_menu = dir.join("familiar_menu_ideal_ratio.png");
     let familiar_essence_deplete = dir.join("familiar_essence_deplete_ideal_ratio.png");
     let change_channel_menu = dir.join("change_channel_menu_ideal_ratio.png");
+    let chat_menu = dir.join("chat_menu_ideal_ratio.png");
 
     let mob_model = dir.join("mob_nms.onnx");
     let rune_model = dir.join("rune_nms.onnx");
@@ -341,6 +342,10 @@ fn main() {
     println!(
         "cargo:rustc-env=CHANGE_CHANNEL_MENU_TEMPLATE={}",
         change_channel_menu.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=CHAT_MENU_TEMPLATE={}",
+        chat_menu.to_str().unwrap()
     );
 
     // onnxruntime dependencies

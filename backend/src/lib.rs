@@ -22,6 +22,7 @@ use tokio::{
 };
 
 mod array;
+mod bot;
 mod bridge;
 mod buff;
 mod context;
@@ -32,7 +33,7 @@ mod detect;
 mod mat;
 mod minimap;
 mod navigator;
-mod network;
+mod notification;
 mod pathing;
 mod player;
 mod rng;

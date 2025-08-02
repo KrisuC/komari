@@ -143,6 +143,7 @@ pub fn update_solving_rune_context(
             | PlayerAction::Panic(_)
             | PlayerAction::Key(_)
             | PlayerAction::FamiliarsSwapping(_)
+            | PlayerAction::Chatting
             | PlayerAction::Move(_) => {
                 unreachable!()
             }

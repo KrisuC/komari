@@ -2,18 +2,20 @@ use std::{cell::RefCell, rc::Rc};
 
 use mockall_double::double;
 use platforms::input::InputKind;
+use serenity::all::{CreateAttachment, EditInteractionResponse};
 use tokio::sync::broadcast::Receiver;
 
 use crate::{
     Character, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler, Settings,
+    bot::BotCommandKind,
     bridge::{DefaultInput, Input, InputMethod},
     buff::BuffState,
-    context::Context,
+    context::{Context, Operation},
     database::Seeds,
     minimap::MinimapState,
-    player::PlayerState,
+    player::{PanicTo, Panicking, Player, PlayerAction, PlayerState},
     poll_request,
-    services::game::GameEvent,
+    services::{bot::BotService, game::GameEvent},
 };
 #[cfg(debug_assertions)]
 use crate::{DebugState, services::debug::DebugService};
@@ -28,6 +30,7 @@ use crate::{
     },
 };
 
+mod bot;
 #[cfg(debug_assertions)]
 mod debug;
 mod game;
@@ -56,6 +59,7 @@ pub struct DefaultService {
     rotator: RotatorService,
     navigator: NavigatorService,
     settings: SettingsService,
+    bot: BotService,
     #[cfg(debug_assertions)]
     debug: DebugService,
 }
@@ -70,6 +74,7 @@ impl DefaultService {
         let mut input = DefaultInput::new(input_method, seeds);
         let mut input_receiver = InputReceiver::new(window, InputKind::Focused);
 
+        let mut bot = BotService::default();
         let mut capture = Capture::new(window);
         // Update to current settings
         settings_service.update_selected_window(
@@ -78,6 +83,7 @@ impl DefaultService {
             &mut capture,
             None,
         );
+        bot.update(&settings_service.current());
 
         let service = Self {
             game: GameService::new(input_receiver),
@@ -88,6 +94,7 @@ impl DefaultService {
             #[allow(clippy::default_constructed_unit_structs)]
             navigator: NavigatorService::default(),
             settings: settings_service,
+            bot,
             #[cfg(debug_assertions)]
             debug: DebugService::default(),
         };
@@ -103,12 +110,31 @@ impl DefaultService {
         };
         handler.poll_request();
         handler.poll_events();
+        handler.poll_bot();
         handler.broadcast_state();
     }
 
     #[inline]
     pub fn has_minimap_data(&self) -> bool {
         self.minimap.current().is_some()
+    }
+}
+
+#[inline]
+pub fn update_operation_with_halt_or_panic(
+    context: &mut Context,
+    rotator: &mut Rotator,
+    player: &mut PlayerState,
+    should_halt: bool,
+    should_panic: bool,
+) {
+    rotator.reset_queue();
+    player.clear_actions_aborted(!should_panic);
+    if should_halt {
+        context.operation = Operation::Halting;
+    }
+    if should_panic {
+        context.player = Player::Panicking(Panicking::new(PanicTo::Town));
     }
 }
 
@@ -139,13 +165,7 @@ impl DefaultRequestHandler<'_> {
             match event {
                 GameEvent::ToggleOperation => {
                     let halting = !self.args.context.operation.halting();
-                    self.service.game.update_operation(
-                        &mut self.args.context.operation,
-                        self.args.rotator,
-                        self.args.player,
-                        &self.service.settings.current(),
-                        halting,
-                    )
+                    self.on_rotate_actions(halting);
                 }
                 GameEvent::MinimapUpdated(minimap) => {
                     self.on_update_minimap(self.service.minimap.current_preset(), minimap)
@@ -159,6 +179,7 @@ impl DefaultRequestHandler<'_> {
                         self.args.capture,
                         settings,
                     );
+                    self.service.bot.update(&self.service.settings.current());
                     self.service.rotator.update(
                         self.args.rotator,
                         self.service.minimap.current(),
@@ -176,11 +197,92 @@ impl DefaultRequestHandler<'_> {
         self.service.debug.poll(self.args.context);
     }
 
+    fn poll_bot(&mut self) {
+        if let Some(command) = self.service.bot.poll() {
+            match command.kind {
+                BotCommandKind::Start => {
+                    if !self.args.context.operation.halting() {
+                        let _ = command
+                            .sender
+                            .send(EditInteractionResponse::new().content("Bot already running."));
+                        return;
+                    }
+                    if !self.service.has_minimap_data() || self.service.player.current().is_none() {
+                        let _ = command.sender.send(
+                            EditInteractionResponse::new().content("No map or character data set."),
+                        );
+                        return;
+                    }
+                    let _ = command
+                        .sender
+                        .send(EditInteractionResponse::new().content("Bot started running."));
+                    self.on_rotate_actions(false);
+                }
+                BotCommandKind::Stop => {
+                    let go_to_town = command
+                        .options
+                        .into_iter()
+                        .next()
+                        .and_then(|option| option.value.as_bool())
+                        .unwrap_or_default();
+                    let _ = command
+                        .sender
+                        .send(EditInteractionResponse::new().content("Bot stopped running."));
+                    self.update_operation_halt_or_panic(true, go_to_town);
+                }
+                BotCommandKind::Status => {
+                    let (status, frame) = self.service.game.get_state_and_frame(self.args.context);
+                    let attachment = frame.map(|bytes| CreateAttachment::bytes(bytes, "image.png"));
+
+                    let mut builder = EditInteractionResponse::new().content(status);
+                    if let Some(attachment) = attachment {
+                        builder = builder.new_attachment(attachment);
+                    }
+
+                    let _ = command.sender.send(builder);
+                }
+                BotCommandKind::Chat => {
+                    let Some(content) = command
+                        .options
+                        .into_iter()
+                        .next()
+                        .and_then(|option| Some(option.value.as_str()?.to_string()))
+                    else {
+                        return;
+                    };
+                    let _ = command
+                        .sender
+                        .send(EditInteractionResponse::new().content("Queued a chat action."));
+                    let is_halting = self.args.context.operation.halting();
+
+                    self.args.player.set_chat_content(content);
+                    if is_halting {
+                        self.args
+                            .player
+                            .set_priority_action(None, PlayerAction::Chatting);
+                    } else {
+                        self.args.rotator.inject_action(PlayerAction::Chatting);
+                    }
+                }
+            }
+        }
+    }
+
     fn broadcast_state(&self) {
         self.service.game.broadcast_state(
             self.args.context,
             self.args.player,
             self.service.minimap.current(),
+        );
+    }
+
+    fn update_operation_halt_or_panic(&mut self, should_halt: bool, should_panic: bool) {
+        update_operation_with_halt_or_panic(
+            self.args.context,
+            self.args.rotator,
+            self.args.player,
+            should_halt,
+            should_panic,
         );
     }
 }
@@ -410,6 +512,7 @@ mod tests {
             rotator,
             navigator,
             settings,
+            bot: BotService::default(),
             #[cfg(debug_assertions)]
             debug: crate::services::debug::DebugService::default(),
         }

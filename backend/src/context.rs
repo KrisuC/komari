@@ -32,10 +32,10 @@ use crate::{
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
-    network::{DiscordNotification, NotificationKind},
+    notification::{DiscordNotification, NotificationKind},
     player::{PanicTo, Panicking, Player, PlayerState},
     rng::Rng,
-    services::{DefaultService, PollArgs},
+    services::{DefaultService, PollArgs, update_operation_with_halt_or_panic},
     skill::{Skill, SkillKind, SkillState},
 };
 #[cfg(test)]
@@ -293,7 +293,7 @@ impl Operation {
                     return Operation::Halting;
                 }
 
-                let duration = Duration::from_millis(run_duration_millis);
+                let duration = Duration::from_millis(stop_duration_millis);
                 let instant = now + duration;
                 Operation::HaltUntil {
                     instant,
@@ -434,9 +434,16 @@ fn update_loop() {
 
         // Go to town on stop cycle
         if was_running_cycle && did_cycled_to_stop {
-            rotator.reset_queue();
-            player_state.clear_actions_aborted(false);
-            context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+            update_operation_with_halt_or_panic(
+                &mut context,
+                &mut rotator,
+                &mut player_state,
+                false,
+                true,
+            );
+        }
+        if context.operation.halting() {
+            pending_halt = None;
         }
 
         // Upon accidental or white roomed causing map to change,
@@ -445,9 +452,13 @@ fn update_loop() {
             let player_died = was_player_alive && player_state.is_dead();
             // Unconditionally halt when player died
             if player_died {
-                rotator.reset_queue();
-                player_state.clear_actions_aborted(true);
-                context.operation = Operation::Halting;
+                update_operation_with_halt_or_panic(
+                    &mut context,
+                    &mut rotator,
+                    &mut player_state,
+                    true,
+                    false,
+                );
                 return;
             }
 
@@ -483,12 +494,13 @@ fn update_loop() {
                 } else {
                     info!(target: "context", "halting...");
                     pending_halt = None;
-                    rotator.reset_queue();
-                    context.operation = Operation::Halting;
-                    if did_capture_normally {
-                        context.player = Player::Panicking(Panicking::new(PanicTo::Town));
-                    }
-                    player_state.clear_actions_aborted(!did_capture_normally);
+                    update_operation_with_halt_or_panic(
+                        &mut context,
+                        &mut rotator,
+                        &mut player_state,
+                        true,
+                        did_capture_normally,
+                    );
                     let _ = context
                         .notification
                         .schedule_notification(NotificationKind::FailOrMapChange);

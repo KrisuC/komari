@@ -206,6 +206,8 @@ pub struct Settings {
     pub cycle_stop_duration_millis: u64,
     pub input_method: InputMethod,
     pub input_method_rpc_server_url: String,
+    #[serde(default)]
+    pub discord_bot_access_token: String,
     pub notifications: Notifications,
     pub familiars: Familiars,
     #[serde(default = "toggle_actions_key_default")]
@@ -231,6 +233,7 @@ impl Default for Settings {
             cycle_run_stop: CycleRunStopMode::default(),
             cycle_run_duration_millis: cycle_run_duration_millis_default(),
             cycle_stop_duration_millis: cycle_stop_duration_millis_default(),
+            discord_bot_access_token: String::default(),
             notifications: Notifications::default(),
             familiars: Familiars::default(),
             toggle_actions_key: toggle_actions_key_default(),

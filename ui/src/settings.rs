@@ -13,6 +13,7 @@ use rand::distr::{Alphanumeric, SampleString};
 use crate::{
     AppState,
     button::{Button, ButtonKind},
+    icons::{EyePasswordHideIcon, EyePasswordShowIcon},
     inputs::{Checkbox, KeyBindingInput, MillisInput, TextInput},
     select::{EnumSelect, Select},
 };
@@ -54,7 +55,7 @@ pub fn Settings() -> Element {
             SectionCapture { settings_view, save_settings }
             SectionInput { settings_view, save_settings }
             SectionFamiliars { settings_view, save_settings }
-            SectionNotifications { settings_view, save_settings }
+            SectionControlAndNotifications { settings_view, save_settings }
             SectionHotkeys { settings_view, save_settings }
             SectionRunStopCycle { settings_view, save_settings }
             SectionOthers { settings_view, save_settings }
@@ -263,18 +264,31 @@ fn SectionFamiliars(
 }
 
 #[component]
-fn SectionNotifications(
+fn SectionControlAndNotifications(
     settings_view: Memo<SettingsData>,
     save_settings: EventHandler<SettingsData>,
 ) -> Element {
     let notifications_view = use_memo(move || settings_view().notifications);
 
     rsx! {
-        Section { name: "Notifications",
+        Section { name: "Control and notifications",
             div { class: "grid grid-cols-2 gap-3 mb-2",
+                SettingsTextInput {
+                    text_label: "Discord bot access token",
+                    button_label: "Update",
+                    sensitive: true,
+                    on_value: move |discord_bot_access_token| {
+                        save_settings(SettingsData {
+                            discord_bot_access_token,
+                            ..settings_view.peek().clone()
+                        });
+                    },
+                    value: settings_view().discord_bot_access_token,
+                }
                 SettingsTextInput {
                     text_label: "Discord webhook URL",
                     button_label: "Update",
+                    sensitive: true,
                     on_value: move |discord_webhook_url| {
                         save_settings(SettingsData {
                             notifications: Notifications {
@@ -716,20 +730,40 @@ fn SettingsCheckbox(
 fn SettingsTextInput(
     text_label: String,
     button_label: String,
+    #[props(default = false)] sensitive: bool,
     on_value: EventHandler<String>,
     value: String,
 ) -> Element {
+    const EYE_ICON_CLASS: &str = "text-gray-50 w-[16px] h-[16px] fill-current";
+
     let mut text = use_signal(String::default);
+    let mut hidden = use_signal(|| sensitive);
 
     use_effect(use_reactive!(|value| text.set(value)));
 
     rsx! {
-        TextInput {
-            label: text_label,
-            on_value: move |new_text| {
-                text.set(new_text);
-            },
-            value: text(),
+        div { class: "relative group",
+            TextInput {
+                label: text_label,
+                hidden: hidden(),
+                on_value: move |new_text| {
+                    text.set(new_text);
+                },
+                value: text(),
+            }
+            if sensitive {
+                div {
+                    class: "absolute right-1 bottom-1 invisible group-hover:visible bg-gray-950",
+                    onclick: move |_| {
+                        hidden.toggle();
+                    },
+                    if hidden() {
+                        EyePasswordShowIcon { class: EYE_ICON_CLASS }
+                    } else {
+                        EyePasswordHideIcon { class: EYE_ICON_CLASS }
+                    }
+                }
+            }
         }
         div { class: "flex items-end",
             Button {
