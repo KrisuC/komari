@@ -267,7 +267,7 @@ impl Operation {
                     return self;
                 }
 
-                let duration = Duration::from_millis(run_duration_millis);
+                let duration = Duration::from_millis(stop_duration_millis);
                 let instant = now + duration;
                 Operation::RunUntil {
                     instant,
