@@ -12,7 +12,7 @@ use crate::{
     array::Array,
     context::{Context, Contextual, ControlFlow},
     detect::{Detector, OtherPlayerKind},
-    network::NotificationKind,
+    notification::NotificationKind,
     pathing::{
         MAX_PLATFORMS_COUNT, Platform, PlatformWithNeighbors, find_neighbors, find_platforms_bound,
     },

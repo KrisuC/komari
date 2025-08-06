@@ -1,9 +1,8 @@
-use std::time::{Duration, Instant};
+use std::fmt::Debug;
 
 use log::debug;
 #[cfg(test)]
 use mockall::{automock, concretize};
-use mockall_double::double;
 use opencv::core::{MatTraitConst, MatTraitConstManual, Rect, Vec4b};
 use strum::IntoEnumIterator;
 use tokio::{
@@ -13,17 +12,16 @@ use tokio::{
 
 use crate::{
     Action, ActionCondition, ActionConfigurationCondition, ActionKey, BoundQuadrant, Character,
-    CycleRunStopMode, DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration,
-    Minimap, PotionMode, Settings,
+    DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration, Minimap,
+    PotionMode, Settings,
     array::Array,
+    bridge::InputReceiver,
     buff::BuffKind,
     context::{Context, Operation},
     database_event_receiver, minimap,
     player::{PlayerState, Quadrant},
     skill::SkillKind,
 };
-#[double]
-use crate::{bridge::InputReceiver, rotator::Rotator};
 
 #[derive(Debug)]
 pub enum GameEvent {
@@ -34,10 +32,51 @@ pub enum GameEvent {
     NavigationPathsUpdated,
 }
 
-/// A service to handle game-related incoming requests and event polling.
+/// A service to handle game-related incoming requests and events polling.
+#[cfg_attr(test, automock)]
+pub trait GameService: Debug {
+    fn poll_events(
+        &mut self,
+        minimap_id: Option<i64>,
+        character_id: Option<i64>,
+        settings: &Settings,
+    ) -> Array<GameEvent, 2>;
+
+    /// Gets the currently in use actions.
+    fn actions(&self) -> &[Action];
+
+    /// Builds a new actions list to be used.
+    fn update_actions<'a>(
+        &mut self,
+        minimap: Option<&'a Minimap>,
+        preset: Option<String>,
+        character: Option<&'a Character>,
+    );
+
+    /// Gets the currently in use buffs.
+    fn buffs(&self) -> &[(BuffKind, KeyBinding)];
+
+    /// Builds a new buffs list to be used.
+    #[cfg_attr(test, concretize)]
+    fn update_buffs(&mut self, character: Option<&Character>);
+
+    /// Gets a mutable reference to [`InputReceiver`].
+    fn input_receiver_mut(&mut self) -> &mut dyn InputReceiver;
+
+    /// Broadcasts game state to listeners.
+    #[cfg_attr(test, concretize)]
+    fn broadcast_state(&self, context: &Context, player: &PlayerState, minimap: Option<&Minimap>);
+
+    /// Subscribes to game state.
+    fn subscribe_state(&self) -> Receiver<GameState>;
+
+    /// Subscribes to key event.
+    fn subscribe_key(&self) -> Receiver<KeyBinding>;
+}
+
 #[derive(Debug)]
-pub struct GameService {
-    input_receiver: InputReceiver,
+pub struct DefaultGameService {
+    input_receiver: Box<dyn InputReceiver>,
     key_sender: Sender<KeyBinding>,
     database_event_receiver: Receiver<DatabaseEvent>,
     game_state_sender: Sender<GameState>,
@@ -45,11 +84,10 @@ pub struct GameService {
     game_buffs: Vec<(BuffKind, KeyBinding)>,
 }
 
-#[cfg_attr(test, automock)]
-impl GameService {
-    pub fn new(input_receiver: InputReceiver) -> Self {
+impl DefaultGameService {
+    pub fn new(input_receiver: impl InputReceiver) -> Self {
         Self {
-            input_receiver,
+            input_receiver: Box::new(input_receiver),
             key_sender: broadcast::channel(1).0,
             database_event_receiver: database_event_receiver(),
             game_state_sender: broadcast::channel(1).0,
@@ -57,26 +95,61 @@ impl GameService {
             game_buffs: vec![],
         }
     }
+}
 
-    pub fn current_actions(&self) -> &[Action] {
+impl GameService for DefaultGameService {
+    fn poll_events(
+        &mut self,
+        minimap_id: Option<i64>,
+        character_id: Option<i64>,
+        settings: &Settings,
+    ) -> Array<GameEvent, 2> {
+        let mut events = Array::new();
+
+        if let Some(event) = poll_key(self, settings) {
+            events.push(event);
+        }
+        if let Some(event) = poll_database(self, minimap_id, character_id) {
+            events.push(event);
+        }
+
+        events
+    }
+
+    fn actions(&self) -> &[Action] {
         &self.game_actions
     }
 
-    pub fn current_buffs(&self) -> &[(BuffKind, KeyBinding)] {
+    fn update_actions<'a>(
+        &mut self,
+        minimap: Option<&'a Minimap>,
+        preset: Option<String>,
+        character: Option<&'a Character>,
+    ) {
+        let character_actions = character.map(actions_from).unwrap_or_default();
+        let minimap_actions = minimap
+            .zip(preset)
+            .and_then(|(minimap, preset)| minimap.actions.get(&preset).cloned())
+            .unwrap_or_default();
+
+        self.game_actions = [character_actions, minimap_actions].concat();
+    }
+
+    fn buffs(&self) -> &[(BuffKind, KeyBinding)] {
         &self.game_buffs
     }
 
-    pub fn current_input_receiver_mut(&mut self) -> &mut InputReceiver {
-        &mut self.input_receiver
+    #[cfg_attr(test, concretize)]
+    fn update_buffs(&mut self, character: Option<&Character>) {
+        self.game_buffs = character.map(buffs_from).unwrap_or_default();
+    }
+
+    fn input_receiver_mut(&mut self) -> &mut dyn InputReceiver {
+        self.input_receiver.as_mut()
     }
 
     #[cfg_attr(test, concretize)]
-    pub fn broadcast_state(
-        &self,
-        context: &Context,
-        player: &PlayerState,
-        minimap: Option<&Minimap>,
-    ) {
+    fn broadcast_state(&self, context: &Context, player: &PlayerState, minimap: Option<&Minimap>) {
         if self.game_state_sender.is_empty() {
             let position = player.last_known_pos.map(|pos| (pos.x, pos.y));
             let state = context.player.to_string();
@@ -161,79 +234,12 @@ impl GameService {
         }
     }
 
-    pub fn subscribe_state(&self) -> Receiver<GameState> {
+    fn subscribe_state(&self) -> Receiver<GameState> {
         self.game_state_sender.subscribe()
     }
 
-    pub fn subscribe_key(&self) -> Receiver<KeyBinding> {
+    fn subscribe_key(&self) -> Receiver<KeyBinding> {
         self.key_sender.subscribe()
-    }
-
-    pub fn poll_events(
-        &mut self,
-        minimap_id: Option<i64>,
-        character_id: Option<i64>,
-        settings: &Settings,
-    ) -> Array<GameEvent, 2> {
-        let mut events = Array::new();
-
-        if let Some(event) = poll_key(self, settings) {
-            events.push(event);
-        }
-        if let Some(event) = poll_database(self, minimap_id, character_id) {
-            events.push(event);
-        }
-
-        events
-    }
-
-    pub fn update_operation(
-        &self,
-        operation: &mut Operation,
-        rotator: &mut Rotator,
-        player: &mut PlayerState,
-        settings: &Settings,
-        halting: bool,
-    ) {
-        *operation = match (halting, settings.cycle_run_stop) {
-            (true, _) => Operation::Halting,
-            (false, CycleRunStopMode::Once | CycleRunStopMode::Repeat) => {
-                let duration = Duration::from_millis(settings.cycle_run_duration_millis);
-                let instant = Instant::now() + duration;
-
-                Operation::RunUntil {
-                    instant,
-                    run_duration_millis: settings.cycle_run_duration_millis,
-                    stop_duration_millis: settings.cycle_stop_duration_millis,
-                    once: matches!(settings.cycle_run_stop, CycleRunStopMode::Once),
-                }
-            }
-            (false, CycleRunStopMode::None) => Operation::Running,
-        };
-        if halting {
-            rotator.reset_queue();
-            player.clear_actions_aborted(true);
-        }
-    }
-
-    pub fn update_actions<'a>(
-        &mut self,
-        minimap: Option<&'a Minimap>,
-        preset: Option<String>,
-        character: Option<&'a Character>,
-    ) {
-        let character_actions = character.map(actions_from).unwrap_or_default();
-        let minimap_actions = minimap
-            .zip(preset)
-            .and_then(|(minimap, preset)| minimap.actions.get(&preset).cloned())
-            .unwrap_or_default();
-
-        self.game_actions = [character_actions, minimap_actions].concat();
-    }
-
-    #[cfg_attr(test, concretize)]
-    pub fn update_buffs(&mut self, character: Option<&Character>) {
-        self.game_buffs = character.map(buffs_from).unwrap_or_default();
     }
 }
 
@@ -370,7 +376,7 @@ fn actions_from(character: &Character) -> Vec<Action> {
 
 // TODO: should only handle a single matched key binding
 #[inline]
-fn poll_key(service: &mut GameService, settings: &Settings) -> Option<GameEvent> {
+fn poll_key(service: &mut DefaultGameService, settings: &Settings) -> Option<GameEvent> {
     let received_key = service.input_receiver.try_recv().ok()?;
     debug!(target: "event", "received key {received_key:?}");
 
@@ -386,7 +392,7 @@ fn poll_key(service: &mut GameService, settings: &Settings) -> Option<GameEvent>
 
 #[inline]
 fn poll_database(
-    service: &mut GameService,
+    service: &mut DefaultGameService,
     minimap_id: Option<i64>,
     character_id: Option<i64>,
 ) -> Option<GameEvent> {
@@ -436,7 +442,7 @@ mod tests {
     use std::assert_matches::assert_matches;
 
     use super::*;
-    use crate::ActionConfiguration;
+    use crate::{ActionConfiguration, bridge::MockInputReceiver};
 
     #[test]
     fn update_combine_actions_and_fixed_actions() {
@@ -477,7 +483,7 @@ mod tests {
         };
         let mut minimap = Minimap::default();
         minimap.actions.insert("preset".to_string(), actions);
-        let mut service = GameService::new(InputReceiver::default());
+        let mut service = DefaultGameService::new(MockInputReceiver::default());
 
         service.update_actions(Some(&minimap), Some("preset".to_string()), Some(&character));
 
@@ -551,7 +557,7 @@ mod tests {
         };
         let mut minimap = Minimap::default();
         minimap.actions.insert("preset".to_string(), actions);
-        let mut service = GameService::new(InputReceiver::default());
+        let mut service = DefaultGameService::new(MockInputReceiver::default());
 
         service.update_actions(Some(&minimap), Some("preset".to_string()), Some(&character));
 
@@ -597,7 +603,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let mut service = GameService::new(InputReceiver::default());
+        let mut service = DefaultGameService::new(MockInputReceiver::default());
 
         service.update_actions(None, None, Some(&character));
 

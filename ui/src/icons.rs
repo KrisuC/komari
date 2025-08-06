@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 
 #[component]
 pub fn DetailsIcon(class: String) -> Element {
-    // <svg viewBox="0 0 24 24"><path d=""/><path d=""/></svg>
     rsx! {
         svg {
             class,
@@ -11,6 +10,62 @@ pub fn DetailsIcon(class: String) -> Element {
             view_box: "0 0 24 24",
             path { d: "M20 3H4c-1.103 0-2 .897-2 2v14c0 1.103.897 2 2 2h16c1.103 0 2-.897 2-2V5c0-1.103-.897-2-2-2zM4 19V5h16l.002 14H4z" }
             path { d: "M6 7h12v2H6zm0 4h12v2H6zm0 4h6v2H6z" }
+        }
+    }
+}
+
+#[component]
+pub fn EyePasswordShowIcon(class: String) -> Element {
+    rsx! {
+        svg {
+            class,
+            fill: "none",
+            width: "24px",
+            height: "24px",
+            view_box: "0 0 24 24",
+            path {
+                stroke: "#000",
+                stroke_linecap: "round",
+                stroke_linejoin: "round",
+                stroke_width: "2",
+                d: "M1 12s4-8 11-8 11 8 11 8M1 12s4 8 11 8 11-8 11-8",
+            }
+            circle {
+                cx: "12",
+                cy: "12",
+                r: "3",
+                stroke: "#000",
+                stroke_linecap: "round",
+                stroke_linejoin: "round",
+                stroke_width: "2",
+            }
+        }
+    }
+}
+
+#[component]
+pub fn EyePasswordHideIcon(class: String) -> Element {
+    rsx! {
+        svg {
+            class,
+            fill: "none",
+            width: "24px",
+            height: "24px",
+            view_box: "0 0 24 24",
+            path {
+                stroke: "currentColor",
+                stroke_linecap: "round",
+                stroke_linejoin: "round",
+                stroke_width: "2",
+                d: "m2 2 20 20M6.713 6.723C3.665 8.795 2 12 2 12s3.636 7 10 7c2.05 0 3.817-.727 5.271-1.712M11 5.058A8.595 8.595 0 0 1 12 5c6.364 0 10 7 10 7s-.692 1.332-2 2.834",
+            }
+            path {
+                stroke: "#000",
+                stroke_linecap: "round",
+                stroke_linejoin: "round",
+                stroke_width: "2",
+                d: "M14 14.236a3 3 0 0 1-4.13-4.348",
+            }
         }
     }
 }

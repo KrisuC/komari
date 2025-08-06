@@ -1,25 +1,38 @@
+use std::fmt::Debug;
+
 #[cfg(test)]
 use mockall::automock;
-use mockall_double::double;
 
-#[double]
 use crate::rotator::Rotator;
 use crate::{
     Action, Character, KeyBinding, Minimap, RotationMode, RotatorMode, Settings, buff::BuffKind,
     rotator::RotatorBuildArgs,
 };
 
-// TODO: Whether to use Rc<RefCell<Rotator>> like Settings
-#[derive(Debug, Default)]
-pub struct RotatorService;
-
 /// A service to handle [`Rotator`]-related incoming requests.
 #[cfg_attr(test, automock)]
-impl RotatorService {
+pub trait RotatorService: Debug {
     /// Updates `rotator` with data from `minimap`, `character`, `settings`, `actions` and `buffs`.
-    pub fn update<'a>(
+    fn update<'a>(
         &self,
-        rotator: &mut Rotator,
+        rotator: &mut dyn Rotator,
+        minimap: Option<&'a Minimap>,
+        character: Option<&'a Character>,
+        settings: &Settings,
+        actions: &[Action],
+        buffs: &[(BuffKind, KeyBinding)],
+    );
+}
+
+// TODO: Whether to use Rc<RefCell<Rotator>> like Settings
+#[derive(Debug, Default)]
+pub struct DefaultRotatorService;
+
+impl RotatorService for DefaultRotatorService {
+    /// Updates `rotator` with data from `minimap`, `character`, `settings`, `actions` and `buffs`.
+    fn update<'a>(
+        &self,
+        rotator: &mut dyn Rotator,
         minimap: Option<&'a Minimap>,
         character: Option<&'a Character>,
         settings: &Settings,
@@ -86,6 +99,7 @@ mod tests {
     use super::*;
     use crate::{
         Bound, EliteBossBehavior, FamiliarRarity, KeyBindingConfiguration, SwappableFamiliars,
+        rotator::MockRotator,
     };
 
     #[test]
@@ -106,11 +120,11 @@ mod tests {
             ..Default::default()
         };
         let character = Character::default();
-        let service = RotatorService;
+        let service = DefaultRotatorService;
 
         for mode in RotationMode::iter() {
             minimap.rotation_mode = mode;
-            let mut rotator = Rotator::new();
+            let mut rotator = MockRotator::new();
             rotator
                 .expect_build_actions()
                 .withf(move |args| {
@@ -160,14 +174,14 @@ mod tests {
         let buffs = vec![(BuffKind::SayramElixir, KeyBinding::F1)];
 
         let buffs_clone = buffs.clone();
-        let mut rotator = Rotator::new();
+        let mut rotator = MockRotator::new();
         rotator
             .expect_build_actions()
-            .withf(move |args| args.buffs == &buffs_clone)
+            .withf(move |args| args.buffs == buffs_clone)
             .once()
             .return_const(());
 
-        let service = RotatorService;
+        let service = DefaultRotatorService;
         service.update(&mut rotator, None, None, &Settings::default(), &[], &buffs);
     }
 
@@ -181,14 +195,14 @@ mod tests {
             ..Default::default()
         };
 
-        let mut rotator = Rotator::new();
+        let mut rotator = MockRotator::new();
         rotator
             .expect_build_actions()
             .withf(|args| args.familiar_essence_key == KeyBinding::Z)
             .once()
             .return_const(());
 
-        let service = RotatorService;
+        let service = DefaultRotatorService;
         service.update(
             &mut rotator,
             None,
@@ -209,7 +223,7 @@ mod tests {
         settings.familiars.enable_familiars_swapping = true;
 
         let settings_clone = settings.clone();
-        let mut rotator = Rotator::new();
+        let mut rotator = MockRotator::new();
         rotator
             .expect_build_actions()
             .withf(move |args| {
@@ -221,7 +235,7 @@ mod tests {
             .once()
             .return_const(());
 
-        let service = RotatorService;
+        let service = DefaultRotatorService;
         service.update(&mut rotator, None, None, &settings_clone, &[], &[]);
     }
 
@@ -233,7 +247,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut rotator = Rotator::new();
+        let mut rotator = MockRotator::new();
         rotator
             .expect_build_actions()
             .withf(|args| {
@@ -243,7 +257,7 @@ mod tests {
             .once()
             .return_const(());
 
-        let service = RotatorService;
+        let service = DefaultRotatorService;
         service.update(
             &mut rotator,
             None,
@@ -261,14 +275,14 @@ mod tests {
             ..Default::default()
         };
 
-        let mut rotator = Rotator::new();
+        let mut rotator = MockRotator::new();
         rotator
             .expect_build_actions()
             .withf(|args| args.enable_reset_normal_actions_on_erda)
             .once()
             .return_const(());
 
-        let service = RotatorService;
+        let service = DefaultRotatorService;
         service.update(
             &mut rotator,
             Some(&minimap),
@@ -281,18 +295,20 @@ mod tests {
 
     #[test]
     fn update_with_panic_mode_and_rune_solving() {
-        let mut settings = Settings::default();
-        settings.enable_panic_mode = true;
-        settings.enable_rune_solving = true;
+        let settings = Settings {
+            enable_panic_mode: true,
+            enable_rune_solving: true,
+            ..Default::default()
+        };
 
-        let mut rotator = Rotator::new();
+        let mut rotator = MockRotator::new();
         rotator
             .expect_build_actions()
             .withf(|args| args.enable_panic_mode && args.enable_rune_solving)
             .once()
             .return_const(());
 
-        let service = RotatorService;
+        let service = DefaultRotatorService;
         service.update(&mut rotator, None, None, &settings, &[], &[]);
     }
 }

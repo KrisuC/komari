@@ -24,11 +24,13 @@ use crate::{
     context::{Context, Contextual, ControlFlow},
     database::ActionKeyDirection,
     minimap::Minimap,
+    player::chat::{Chatting, update_chatting_context},
 };
 
 mod actions;
 mod adjust;
 mod cash_shop;
+mod chat;
 mod double_jump;
 mod fall;
 mod familiars_swap;
@@ -97,6 +99,7 @@ pub enum Player {
     #[strum(to_string = "FamiliarsSwapping({0})")]
     FamiliarsSwapping(FamiliarsSwapping),
     Panicking(Panicking),
+    Chatting(Chatting),
 }
 
 impl Player {
@@ -137,6 +140,7 @@ impl Player {
             | Player::DoubleJumping(DoubleJumping { forced: true, .. })
             | Player::UseKey(_)
             | Player::FamiliarsSwapping(_)
+            | Player::Chatting(_)
             | Player::Panicking(_)
             | Player::Stalling(_, _) => false,
         }
@@ -253,6 +257,7 @@ fn update_non_positional_context(
             failed_to_detect_player,
         )),
         Player::Panicking(panicking) => Some(update_panicking_context(context, state, panicking)),
+        Player::Chatting(chatting) => Some(update_chatting_context(context, state, chatting)),
         Player::Detecting
         | Player::Idle
         | Player::Moving(_, _, _)
@@ -300,6 +305,7 @@ fn update_positional_context(
         | Player::SolvingRune(_)
         | Player::FamiliarsSwapping(_)
         | Player::Panicking(_)
+        | Player::Chatting(_)
         | Player::CashShopThenExit(_, _) => unreachable!(),
     }
 }

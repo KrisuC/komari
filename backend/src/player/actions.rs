@@ -185,6 +185,7 @@ pub enum PlayerAction {
     FamiliarsSwapping(PlayerActionFamiliarsSwapping),
     /// Panicking to town or another channel action.
     Panic(PlayerActionPanic),
+    Chatting,
 }
 
 impl From<Action> for PlayerAction {
@@ -319,6 +320,7 @@ pub fn on_action_state_mut(
                 PlayerAction::Panic(_)
                 | PlayerAction::FamiliarsSwapping(_)
                 | PlayerAction::AutoMob(_)
+                | PlayerAction::Chatting
                 | PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
             }
             // FIXME: clear only when has position?

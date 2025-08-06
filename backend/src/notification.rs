@@ -71,6 +71,20 @@ struct ScheduledNotification {
     frames: Vec<(Option<Vec<u8>>, u32)>,
 }
 
+#[derive(Serialize, Debug)]
+struct DiscordWebhookBody {
+    content: String,
+    username: &'static str,
+    attachments: Vec<DiscordAttachment>,
+}
+
+#[derive(Serialize, Debug)]
+struct DiscordAttachment {
+    id: usize,
+    description: String,
+    filename: String,
+}
+
 #[derive(Debug)]
 pub struct DiscordNotification {
     client: Client,
@@ -264,7 +278,7 @@ async fn post_notification(
         .filter(|(frame, _)| frame.is_some())
         .count()
     {
-        notification.body.attachments.push(Attachment {
+        notification.body.attachments.push(DiscordAttachment {
             id: i,
             description: format!("Game snapshot #{i}"),
             filename: format!("image_{i}.png"),
@@ -303,20 +317,6 @@ async fn post_notification(
         });
 
     Ok(())
-}
-
-#[derive(Serialize, Debug)]
-struct DiscordWebhookBody {
-    content: String,
-    username: &'static str,
-    attachments: Vec<Attachment>,
-}
-
-#[derive(Serialize, Debug)]
-struct Attachment {
-    id: usize,
-    description: String,
-    filename: String,
 }
 
 #[cfg(test)]

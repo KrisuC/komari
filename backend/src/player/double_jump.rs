@@ -328,7 +328,9 @@ fn on_player_action(
         })
         | PlayerAction::SolveRune
         | PlayerAction::Move { .. } => None,
-        PlayerAction::Panic(_) | PlayerAction::FamiliarsSwapping(_) => unreachable!(),
+        PlayerAction::Chatting | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwapping(_) => {
+            unreachable!()
+        }
     }
 }
 

@@ -1,39 +1,50 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
-use mockall_double::double;
+use opencv::{
+    core::{ToInputArray, Vector},
+    imgcodecs::imencode_def,
+};
 use platforms::input::InputKind;
+use serenity::all::{CreateAttachment, EditInteractionResponse};
 use tokio::sync::broadcast::Receiver;
 
 use crate::{
-    Character, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler, Settings,
-    bridge::{DefaultInput, Input, InputMethod},
+    Character, CycleRunStopMode, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler,
+    Settings,
+    bot::BotCommandKind,
+    bridge::{Capture, DefaultCapture, DefaultInput, DefaultInputReceiver, InputMethod},
     buff::BuffState,
-    context::Context,
+    context::{Context, Operation},
     database::Seeds,
     minimap::MinimapState,
-    player::PlayerState,
+    navigator::Navigator,
+    player::{PanicTo, Panicking, Player, PlayerAction, PlayerState},
     poll_request,
-    services::game::GameEvent,
+    rotator::Rotator,
+    services::{
+        bot::BotService,
+        character::{CharacterService, DefaultCharacterService},
+        game::{DefaultGameService, GameEvent, GameService},
+        minimap::{DefaultMinimapService, MinimapService},
+        navigator::{DefaultNavigatorService, NavigatorService},
+        rotator::{DefaultRotatorService, RotatorService},
+        settings::{DefaultSettingsService, SettingsService},
+    },
 };
 #[cfg(debug_assertions)]
 use crate::{DebugState, services::debug::DebugService};
-#[double]
-use crate::{
-    bridge::{Capture, InputReceiver},
-    navigator::Navigator,
-    rotator::Rotator,
-    services::{
-        game::GameService, minimap::MinimapService, navigator::NavigatorService,
-        player::PlayerService, rotator::RotatorService, settings::SettingsService,
-    },
-};
 
+mod bot;
+mod character;
 #[cfg(debug_assertions)]
 mod debug;
 mod game;
 mod minimap;
 mod navigator;
-mod player;
 mod rotator;
 mod settings;
 
@@ -43,34 +54,39 @@ pub struct PollArgs<'a> {
     pub player: &'a mut PlayerState,
     pub minimap: &'a mut MinimapState,
     pub buffs: &'a mut Vec<BuffState>,
-    pub rotator: &'a mut Rotator,
-    pub navigator: &'a mut Navigator,
-    pub capture: &'a mut Capture,
+    pub rotator: &'a mut dyn Rotator,
+    pub navigator: &'a mut dyn Navigator,
+    pub capture: &'a mut dyn Capture,
 }
 
 #[derive(Debug)]
 pub struct DefaultService {
-    game: GameService,
-    minimap: MinimapService,
-    player: PlayerService,
-    rotator: RotatorService,
-    navigator: NavigatorService,
-    settings: SettingsService,
+    game: Box<dyn GameService>,
+    minimap: Box<dyn MinimapService>,
+    character: Box<dyn CharacterService>,
+    rotator: Box<dyn RotatorService>,
+    navigator: Box<dyn NavigatorService>,
+    settings: Box<dyn SettingsService>,
+    bot: BotService,
     #[cfg(debug_assertions)]
     debug: DebugService,
 }
 
 impl DefaultService {
-    pub fn new(seeds: Seeds, settings: Rc<RefCell<Settings>>) -> (Self, Box<dyn Input>, Capture) {
-        let mut settings_service = SettingsService::new(settings.clone());
+    pub fn new(
+        seeds: Seeds,
+        settings: Rc<RefCell<Settings>>,
+    ) -> (Self, DefaultInput, DefaultCapture) {
+        let mut settings_service = DefaultSettingsService::new(settings.clone());
 
         // Initialize with default window and input method
-        let window = settings_service.current_window();
+        let window = settings_service.selected_window();
         let input_method = InputMethod::Default(window, InputKind::Focused);
         let mut input = DefaultInput::new(input_method, seeds);
-        let mut input_receiver = InputReceiver::new(window, InputKind::Focused);
+        let mut input_receiver = DefaultInputReceiver::new(window, InputKind::Focused);
 
-        let mut capture = Capture::new(window);
+        let mut bot = BotService::default();
+        let mut capture = DefaultCapture::new(window);
         // Update to current settings
         settings_service.update_selected_window(
             &mut input,
@@ -78,21 +94,21 @@ impl DefaultService {
             &mut capture,
             None,
         );
+        bot.update(&settings_service.settings());
 
         let service = Self {
-            game: GameService::new(input_receiver),
-            minimap: MinimapService::default(),
-            player: PlayerService::default(),
-            #[allow(clippy::default_constructed_unit_structs)]
-            rotator: RotatorService::default(),
-            #[allow(clippy::default_constructed_unit_structs)]
-            navigator: NavigatorService::default(),
-            settings: settings_service,
+            game: Box::new(DefaultGameService::new(input_receiver)),
+            minimap: Box::new(DefaultMinimapService::default()),
+            character: Box::new(DefaultCharacterService::default()),
+            rotator: Box::new(DefaultRotatorService),
+            navigator: Box::new(DefaultNavigatorService),
+            settings: Box::new(settings_service),
+            bot,
             #[cfg(debug_assertions)]
             debug: DebugService::default(),
         };
 
-        (service, Box::new(input), capture)
+        (service, input, capture)
     }
 
     #[inline]
@@ -103,12 +119,13 @@ impl DefaultService {
         };
         handler.poll_request();
         handler.poll_events();
+        handler.poll_bot();
         handler.broadcast_state();
     }
 
     #[inline]
     pub fn has_minimap_data(&self) -> bool {
-        self.minimap.current().is_some()
+        self.minimap.minimap().is_some()
     }
 }
 
@@ -127,45 +144,39 @@ impl DefaultRequestHandler<'_> {
         let events = self.service.game.poll_events(
             self.service
                 .minimap
-                .current()
+                .minimap()
                 .and_then(|character| character.id),
             self.service
-                .player
-                .current()
+                .character
+                .character()
                 .and_then(|character| character.id),
-            &self.service.settings.current(),
+            &self.service.settings.settings(),
         );
         for event in events {
             match event {
                 GameEvent::ToggleOperation => {
-                    let halting = !self.args.context.operation.halting();
-                    self.service.game.update_operation(
-                        &mut self.args.context.operation,
-                        self.args.rotator,
-                        self.args.player,
-                        &self.service.settings.current(),
-                        halting,
-                    )
+                    self.update_halting(!self.args.context.operation.halting());
                 }
                 GameEvent::MinimapUpdated(minimap) => {
-                    self.on_update_minimap(self.service.minimap.current_preset(), minimap)
+                    self.on_update_minimap(self.service.minimap.preset(), minimap)
                 }
                 GameEvent::CharacterUpdated(character) => self.on_update_character(character),
                 GameEvent::SettingsUpdated(settings) => {
                     self.service.settings.update(
                         &mut self.args.context.operation,
                         self.args.context.input.as_mut(),
-                        self.service.game.current_input_receiver_mut(),
+                        self.service.game.input_receiver_mut(),
                         self.args.capture,
                         settings,
                     );
+                    self.service.bot.update(&self.service.settings.settings());
                     self.service.rotator.update(
                         self.args.rotator,
-                        self.service.minimap.current(),
-                        self.service.player.current(),
-                        &self.service.settings.current(),
-                        self.service.game.current_actions(),
-                        self.service.game.current_buffs(),
+                        self.service.minimap.minimap(),
+                        self.service.character.character(),
+                        &self.service.settings.settings(),
+                        self.service.game.actions(),
+                        self.service.game.buffs(),
                     );
                 }
                 GameEvent::NavigationPathsUpdated => self.args.navigator.mark_dirty(true),
@@ -176,27 +187,129 @@ impl DefaultRequestHandler<'_> {
         self.service.debug.poll(self.args.context);
     }
 
+    fn poll_bot(&mut self) {
+        if let Some(command) = self.service.bot.poll() {
+            match command.kind {
+                BotCommandKind::Start => {
+                    if !self.args.context.operation.halting() {
+                        let _ = command
+                            .sender
+                            .send(EditInteractionResponse::new().content("Bot already running."));
+                        return;
+                    }
+                    if !self.service.has_minimap_data()
+                        || self.service.character.character().is_none()
+                    {
+                        let _ = command.sender.send(
+                            EditInteractionResponse::new().content("No map or character data set."),
+                        );
+                        return;
+                    }
+                    let _ = command
+                        .sender
+                        .send(EditInteractionResponse::new().content("Bot started running."));
+                    self.on_rotate_actions(false);
+                }
+                BotCommandKind::Stop => {
+                    let go_to_town = command
+                        .options
+                        .into_iter()
+                        .next()
+                        .and_then(|option| option.value.as_bool())
+                        .unwrap_or_default();
+                    let _ = command
+                        .sender
+                        .send(EditInteractionResponse::new().content("Bot stopped running."));
+                    self.halt_or_panic(true, go_to_town);
+                }
+                BotCommandKind::Status => {
+                    let (status, frame) = state_and_frame(self.args.context);
+                    let attachment = frame.map(|bytes| CreateAttachment::bytes(bytes, "image.png"));
+
+                    let mut builder = EditInteractionResponse::new().content(status);
+                    if let Some(attachment) = attachment {
+                        builder = builder.new_attachment(attachment);
+                    }
+
+                    let _ = command.sender.send(builder);
+                }
+                BotCommandKind::Chat => {
+                    let Some(content) = command
+                        .options
+                        .into_iter()
+                        .next()
+                        .and_then(|option| Some(option.value.as_str()?.to_string()))
+                    else {
+                        return;
+                    };
+                    let _ = command
+                        .sender
+                        .send(EditInteractionResponse::new().content("Queued a chat action."));
+                    let is_halting = self.args.context.operation.halting();
+
+                    self.args.player.set_chat_content(content);
+                    if is_halting {
+                        self.args
+                            .player
+                            .set_priority_action(None, PlayerAction::Chatting);
+                    } else {
+                        self.args.rotator.inject_action(PlayerAction::Chatting);
+                    }
+                }
+            }
+        }
+    }
+
     fn broadcast_state(&self) {
         self.service.game.broadcast_state(
             self.args.context,
             self.args.player,
-            self.service.minimap.current(),
+            self.service.minimap.minimap(),
+        );
+    }
+
+    fn update_halting(&mut self, halting: bool) {
+        let settings = self.service.settings.settings();
+
+        self.args.context.operation = match (halting, settings.cycle_run_stop) {
+            (true, _) => Operation::Halting,
+            (false, CycleRunStopMode::Once | CycleRunStopMode::Repeat) => {
+                let duration = Duration::from_millis(settings.cycle_run_duration_millis);
+                let instant = Instant::now() + duration;
+
+                Operation::RunUntil {
+                    instant,
+                    run_duration_millis: settings.cycle_run_duration_millis,
+                    stop_duration_millis: settings.cycle_stop_duration_millis,
+                    once: matches!(settings.cycle_run_stop, CycleRunStopMode::Once),
+                }
+            }
+            (false, CycleRunStopMode::None) => Operation::Running,
+        };
+        if halting {
+            self.args.rotator.reset_queue();
+            self.args.player.clear_actions_aborted(true);
+        }
+    }
+
+    fn halt_or_panic(&mut self, should_halt: bool, should_panic: bool) {
+        halt_or_panic(
+            self.args.context,
+            self.args.rotator,
+            self.args.player,
+            should_halt,
+            should_panic,
         );
     }
 }
 
 impl RequestHandler for DefaultRequestHandler<'_> {
     fn on_rotate_actions(&mut self, halting: bool) {
-        if self.service.minimap.current().is_none() || self.service.player.current().is_none() {
+        if self.service.minimap.minimap().is_none() || self.service.character.character().is_none()
+        {
             return;
         }
-        self.service.game.update_operation(
-            &mut self.args.context.operation,
-            self.args.rotator,
-            self.args.player,
-            &self.service.settings.current(),
-            halting,
-        );
+        self.update_halting(halting);
     }
 
     fn on_create_minimap(&self, name: String) -> Option<Minimap> {
@@ -204,19 +317,16 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_minimap(&mut self, preset: Option<String>, minimap: Option<Minimap>) {
+        self.service.minimap.set_minimap_preset(minimap, preset);
         self.service
             .minimap
-            .update(self.args.minimap, preset, minimap);
-        let minimap = self.service.minimap.current();
-        let character = self.service.player.current();
-
-        self.service
-            .player
-            .update_from_minimap(self.args.player, minimap);
+            .update(self.args.minimap, self.args.player);
+        let minimap = self.service.minimap.minimap();
+        let character = self.service.character.character();
 
         self.service
             .game
-            .update_actions(minimap, self.service.minimap.current_preset(), character);
+            .update_actions(minimap, self.service.minimap.preset(), character);
 
         self.args
             .navigator
@@ -226,9 +336,9 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             self.args.rotator,
             minimap,
             character,
-            &self.service.settings.current(),
-            self.service.game.current_actions(),
-            self.service.game.current_buffs(),
+            &self.service.settings.settings(),
+            self.service.game.actions(),
+            self.service.game.buffs(),
         );
     }
 
@@ -243,13 +353,13 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 
     fn on_update_character(&mut self, character: Option<Character>) {
-        self.service.player.update(character);
-        self.service.player.update_from_character(self.args.player);
+        self.service.character.set_character(character);
+        self.service.character.update(self.args.player);
 
-        let character = self.service.player.current();
-        let minimap = self.service.minimap.current();
-        let preset = self.service.minimap.current_preset();
-        let settings = self.service.settings.current();
+        let character = self.service.character.character();
+        let minimap = self.service.minimap.minimap();
+        let preset = self.service.minimap.preset();
+        let settings = self.service.settings.settings();
 
         self.service.game.update_actions(minimap, preset, character);
         self.service.game.update_buffs(character);
@@ -263,8 +373,8 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             minimap,
             character,
             &settings,
-            self.service.game.current_actions(),
-            self.service.game.current_buffs(),
+            self.service.game.actions(),
+            self.service.game.buffs(),
         );
     }
 
@@ -287,15 +397,15 @@ impl RequestHandler for DefaultRequestHandler<'_> {
 
     fn on_query_capture_handles(&self) -> (Vec<String>, Option<usize>) {
         (
-            self.service.settings.current_window_names(),
-            self.service.settings.current_selected_window_index(),
+            self.service.settings.window_names(),
+            self.service.settings.selected_window_index(),
         )
     }
 
     fn on_select_capture_handle(&mut self, index: Option<usize>) {
         self.service.settings.update_selected_window(
             self.args.context.input.as_mut(),
-            self.service.game.current_input_receiver_mut(),
+            self.service.game.input_receiver_mut(),
             self.args.capture,
             index,
         );
@@ -341,6 +451,67 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 }
 
+#[inline]
+pub fn halt_or_panic(
+    context: &mut Context,
+    rotator: &mut dyn Rotator,
+    player: &mut PlayerState,
+    should_halt: bool,
+    should_panic: bool,
+) {
+    rotator.reset_queue();
+    player.clear_actions_aborted(!should_panic);
+    if should_halt {
+        context.operation = Operation::Halting;
+    }
+    if should_panic {
+        context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+    }
+}
+
+fn state_and_frame(context: &Context) -> (String, Option<Vec<u8>>) {
+    let frame = context
+        .detector
+        .as_ref()
+        .and_then(|detector| frame_from(detector.mat()));
+
+    let state = context.player.to_string();
+    let operation = match context.operation {
+        Operation::HaltUntil { instant, .. } => {
+            format!("Halting for {}", duration_from(instant))
+        }
+        Operation::Halting => "Halting".to_string(),
+        Operation::Running => "Running".to_string(),
+        Operation::RunUntil { instant, .. } => {
+            format!("Running for {}", duration_from(instant))
+        }
+    };
+    let info = [
+        format!("- State: ``{state}``"),
+        format!("- Operation: ``{operation}``"),
+    ]
+    .join("\n");
+
+    (info, frame)
+}
+
+#[inline]
+fn duration_from(instant: Instant) -> String {
+    let duration = instant.saturating_duration_since(Instant::now());
+    let seconds = duration.as_secs() % 60;
+    let minutes = (duration.as_secs() / 60) % 60;
+    let hours = (duration.as_secs() / 60) / 60;
+
+    format!("{hours:0>2}:{minutes:0>2}:{seconds:0>2}")
+}
+
+#[inline]
+fn frame_from(mat: &impl ToInputArray) -> Option<Vec<u8>> {
+    let mut vector = Vector::new();
+    imencode_def(".png", mat, &mut vector).ok()?;
+    Some(Vec::from_iter(vector))
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -349,8 +520,19 @@ mod tests {
 
     use super::*;
     use crate::{
-        Action, Character, KeyBindingConfiguration, buff::BuffKind, context::Context,
-        database::Minimap as MinimapData, minimap::MinimapState, player::PlayerState,
+        Action, Character, KeyBindingConfiguration,
+        bridge::MockCapture,
+        buff::BuffKind,
+        context::Context,
+        database::Minimap as MinimapData,
+        minimap::MinimapState,
+        navigator::MockNavigator,
+        player::PlayerState,
+        rotator::MockRotator,
+        services::{
+            character::MockCharacterService, game::MockGameService, minimap::MockMinimapService,
+            rotator::MockRotatorService, settings::MockSettingsService,
+        },
     };
 
     fn mock_poll_args(
@@ -359,9 +541,9 @@ mod tests {
             PlayerState,
             MinimapState,
             Vec<BuffState>,
-            Rotator,
-            Navigator,
-            Capture,
+            MockRotator,
+            MockNavigator,
+            MockCapture,
         ),
     ) -> PollArgs<'_> {
         PollArgs {
@@ -380,150 +562,114 @@ mod tests {
         PlayerState,
         MinimapState,
         Vec<BuffState>,
-        Rotator,
-        Navigator,
-        Capture,
+        MockRotator,
+        MockNavigator,
+        MockCapture,
     ) {
         let context = Context::new(None, None);
         let player = PlayerState::default();
         let minimap = MinimapState::default();
         let buffs = vec![];
-        let rotator = Rotator::default();
-        let navigator = Navigator::default();
-        let capture = Capture::default();
+        let rotator = MockRotator::default();
+        let navigator = MockNavigator::default();
+        let capture = MockCapture::default();
 
         (context, player, minimap, buffs, rotator, navigator, capture)
     }
 
-    fn mock_service() -> DefaultService {
-        let game = GameService::default();
-        let player = PlayerService::default();
-        let minimap = MinimapService::default();
-        let rotator = RotatorService::default();
-        let navigator = NavigatorService::default();
-        let settings = SettingsService::default();
-
-        DefaultService {
-            game,
-            minimap,
-            player,
-            rotator,
-            navigator,
-            settings,
-            #[cfg(debug_assertions)]
-            debug: crate::services::debug::DebugService::default(),
-        }
-    }
-
     #[test]
     fn on_update_minimap_triggers_all_services() {
-        let mut service = mock_service();
         let mut states = mock_states();
-        let mut sequence = Sequence::new();
-        let args = mock_poll_args(&mut states);
-        let mut handler = DefaultRequestHandler {
-            service: &mut service,
-            args,
-        };
-        let minimap = Box::leak(Box::new(MinimapData::default()));
-        let character = Box::leak(Box::new(Character::default()));
-        let settings = Box::leak(Box::new(RefCell::new(Settings::default())));
+
+        let minimap_data = Box::leak(Box::new(MinimapData::default()));
+        let character_data = Box::leak(Box::new(Character::default()));
+        let settings_data = Box::leak(Box::new(RefCell::new(Settings::default())));
         let actions = Vec::<Action>::new();
         let buffs = Vec::<(BuffKind, KeyBinding)>::new();
 
-        handler
-            .service
-            .minimap
-            .expect_update()
+        let mut game = MockGameService::default();
+        let mut character = MockCharacterService::default();
+        let mut minimap = MockMinimapService::default();
+        let mut rotator = MockRotatorService::default();
+        let navigator = Box::new(DefaultNavigatorService);
+        let mut settings = MockSettingsService::default();
+        let mut sequence = Sequence::new();
+
+        minimap
+            .expect_set_minimap_preset()
             .once()
-            .return_const(())
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .minimap
-            .expect_current()
+        minimap.expect_update().once().in_sequence(&mut sequence);
+        minimap
+            .expect_minimap()
             .once()
-            .return_const(Some(&*minimap))
+            .return_const(Some(&*minimap_data))
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .player
-            .expect_current()
+
+        character
+            .expect_character()
             .once()
-            .return_const(Some(&*character))
+            .return_const(Some(&*character_data))
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .player
-            .expect_update_from_minimap()
-            .once()
-            .return_const(())
-            .in_sequence(&mut sequence);
-        handler
-            .service
-            .minimap
-            .expect_current_preset()
+
+        minimap
+            .expect_preset()
             .once()
             .return_const(Some("preset".to_string()))
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .game
-            .expect_update_actions()
+
+        game.expect_update_actions()
             .once()
             .return_const(())
             .in_sequence(&mut sequence);
-        handler
-            .args
-            .navigator
+
+        states
+            .5
             .expect_mark_dirty_with_destination()
             .once()
             .return_const(())
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .settings
-            .expect_current()
+        settings
+            .expect_settings()
             .once()
-            .returning_st(|| settings.borrow());
-        handler
-            .service
-            .game
-            .expect_current_actions()
-            .once()
-            .return_const(actions);
-        handler
-            .service
-            .game
-            .expect_current_buffs()
-            .once()
-            .return_const(buffs);
-        handler
-            .service
-            .rotator
+            .returning_st(|| settings_data.borrow());
+        game.expect_actions().once().return_const(actions);
+        game.expect_buffs().once().return_const(buffs);
+        rotator
             .expect_update()
             .once()
             .return_const(())
             .in_sequence(&mut sequence);
 
-        handler.on_update_minimap(Some("preset".into()), Some(minimap.clone()));
-    }
-
-    #[test]
-    fn on_update_character_calls_dependencies() {
-        let mut service = mock_service();
-        let mut states = mock_states();
-        states.3.push(BuffState::new(BuffKind::Familiar));
-        states.3.push(BuffState::new(BuffKind::SayramElixir));
-
-        let mut sequence = Sequence::new();
         let args = mock_poll_args(&mut states);
+        let mut service = DefaultService {
+            game: Box::new(game),
+            minimap: Box::new(minimap),
+            character: Box::new(character),
+            rotator: Box::new(rotator),
+            navigator,
+            settings: Box::new(settings),
+            bot: BotService::default(),
+            #[cfg(debug_assertions)]
+            debug: crate::services::debug::DebugService::default(),
+        };
         let mut handler = DefaultRequestHandler {
             service: &mut service,
             args,
         };
-        let minimap = Box::leak(Box::new(MinimapData::default()));
-        let character = Box::leak(Box::new(Character {
+
+        handler.on_update_minimap(Some("preset".into()), Some(minimap_data.clone()));
+    }
+
+    #[test]
+    fn on_update_character_calls_dependencies() {
+        let mut states = mock_states();
+        states.3.push(BuffState::new(BuffKind::Familiar));
+        states.3.push(BuffState::new(BuffKind::SayramElixir));
+
+        let args = mock_poll_args(&mut states);
+        let minimap_data = Box::leak(Box::new(MinimapData::default()));
+        let character_data = Box::leak(Box::new(Character {
             sayram_elixir_key: KeyBindingConfiguration {
                 key: KeyBinding::C,
                 enabled: true,
@@ -534,91 +680,84 @@ mod tests {
             },
             ..Default::default()
         }));
-        let settings = Box::leak(Box::new(RefCell::new(Settings::default())));
+        let settings_data = Box::leak(Box::new(RefCell::new(Settings::default())));
         let actions = Vec::<Action>::new();
         let buffs = Vec::<(BuffKind, KeyBinding)>::new();
 
-        handler
-            .service
-            .player
-            .expect_update()
-            .once()
-            .return_const(())
-            .in_sequence(&mut sequence);
-        handler
-            .service
-            .player
-            .expect_update_from_character()
-            .once()
-            .return_const(())
-            .in_sequence(&mut sequence);
+        let mut game = MockGameService::default();
+        let mut character = MockCharacterService::default();
+        let mut minimap = MockMinimapService::default();
+        let mut rotator = MockRotatorService::default();
+        let navigator = Box::new(DefaultNavigatorService);
+        let mut settings = MockSettingsService::default();
+        let mut sequence = Sequence::new();
 
-        handler
-            .service
-            .player
-            .expect_current()
+        character
+            .expect_set_character()
             .once()
-            .return_const(Some(&*character))
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .minimap
-            .expect_current()
+        character.expect_update().once().in_sequence(&mut sequence);
+
+        character
+            .expect_character()
             .once()
-            .return_const(Some(&*minimap))
+            .return_const(Some(&*character_data))
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .minimap
-            .expect_current_preset()
+        minimap
+            .expect_minimap()
+            .once()
+            .return_const(Some(&*minimap_data))
+            .in_sequence(&mut sequence);
+        minimap
+            .expect_preset()
             .once()
             .return_const(Some("preset".to_string()))
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .settings
-            .expect_current()
+        settings
+            .expect_settings()
             .once()
-            .returning_st(|| settings.borrow());
+            .returning_st(|| settings_data.borrow());
 
-        handler
-            .service
-            .game
-            .expect_update_actions()
+        game.expect_update_actions()
             .once()
             .return_const(())
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .game
-            .expect_update_buffs()
+        game.expect_update_buffs()
             .once()
             .return_const(())
             .in_sequence(&mut sequence);
 
-        handler
-            .service
-            .game
-            .expect_current_actions()
+        game.expect_actions()
             .once()
             .return_const(actions)
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .game
-            .expect_current_buffs()
+        game.expect_buffs()
             .once()
             .return_const(buffs)
             .in_sequence(&mut sequence);
-        handler
-            .service
-            .rotator
+        rotator
             .expect_update()
             .once()
             .return_const(())
             .in_sequence(&mut sequence);
 
-        handler.on_update_character(Some(character.clone()));
+        let mut service = DefaultService {
+            game: Box::new(game),
+            minimap: Box::new(minimap),
+            character: Box::new(character),
+            rotator: Box::new(rotator),
+            navigator,
+            settings: Box::new(settings),
+            bot: BotService::default(),
+            #[cfg(debug_assertions)]
+            debug: crate::services::debug::DebugService::default(),
+        };
+        let mut handler = DefaultRequestHandler {
+            service: &mut service,
+            args,
+        };
+
+        handler.on_update_character(Some(character_data.clone()));
 
         // TODO: Assert buffs
     }
