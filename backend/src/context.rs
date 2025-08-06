@@ -11,7 +11,6 @@ use dyn_clone::clone_box;
 #[cfg(debug_assertions)]
 use log::debug;
 use log::info;
-use mockall_double::double;
 #[cfg(debug_assertions)]
 use opencv::core::Rect;
 use opencv::{
@@ -26,22 +25,22 @@ use crate::bridge::KeyKind;
 use crate::debug::save_rune_for_training;
 use crate::{
     CycleRunStopMode,
-    bridge::Input,
+    bridge::{Capture, Input},
     buff::{Buff, BuffKind, BuffState},
     database::{query_seeds, query_settings},
     detect::{CachedDetector, Detector},
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
+    navigator::{DefaultNavigator, Navigator},
     notification::{DiscordNotification, NotificationKind},
     player::{PanicTo, Panicking, Player, PlayerState},
     rng::Rng,
+    rotator::{DefaultRotator, Rotator},
     services::{DefaultService, PollArgs, update_operation_with_halt_or_panic},
     skill::{Skill, SkillKind, SkillState},
 };
 #[cfg(test)]
 use crate::{Settings, bridge::MockInput, detect::MockDetector};
-#[double]
-use crate::{navigator::Navigator, rotator::Rotator};
 
 /// The FPS the bot runs at.
 ///
@@ -340,12 +339,12 @@ fn update_loop() {
     let rng = Rng::new(seeds.seed); // Create one for Context
     let (mut service, keys, mut capture) = DefaultService::new(seeds, settings.clone());
 
-    let mut rotator = Rotator::default();
-    let mut navigator = Navigator::default();
+    let mut rotator = DefaultRotator::default();
+    let mut navigator = DefaultNavigator::default();
     let mut context = Context {
         #[cfg(debug_assertions)]
         debug: Debug::default(),
-        input: keys,
+        input: Box::new(keys),
         rng,
         notification: DiscordNotification::new(settings.clone()),
         detector: None,

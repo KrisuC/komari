@@ -11,13 +11,10 @@ use base64::{Engine, prelude::BASE64_STANDARD};
 use log::{debug, info};
 #[cfg(test)]
 use mockall::automock;
-use mockall_double::double;
 use opencv::{
     core::{Mat, Rect, Vector},
     imgcodecs::{IMREAD_COLOR, IMREAD_GRAYSCALE, imdecode},
 };
-#[double]
-use source::NavigatorDataSource;
 
 use crate::{
     ActionKeyDirection, ActionKeyWith, KeyBinding, NavigationPaths, Position,
@@ -28,18 +25,18 @@ use crate::{
     player::{PlayerAction, PlayerActionKey, PlayerState},
 };
 
-mod source {
-    use super::*;
+/// A data source to query [`NavigationPath`].
+#[cfg_attr(test, automock)]
+trait NavigatorDataSource: 'static + Debug {
+    fn query_paths(&self) -> Result<Vec<NavigationPaths>>;
+}
 
-    #[derive(Debug, Default)]
-    pub struct NavigatorDataSource;
+#[derive(Debug, Default)]
+struct DefaultNavigatorDataSource;
 
-    /// A data source to query [`NavigationPath`].
-    #[cfg_attr(test, automock)]
-    impl NavigatorDataSource {
-        pub fn query_paths(&self) -> Result<Vec<NavigationPaths>> {
-            query_navigation_paths()
-        }
+impl NavigatorDataSource for DefaultNavigatorDataSource {
+    fn query_paths(&self) -> Result<Vec<NavigationPaths>> {
+        query_navigation_paths()
     }
 }
 
@@ -91,11 +88,32 @@ enum UpdateState {
 }
 
 /// Manages navigation paths to reach a certain minimap.
+#[cfg_attr(test, automock)]
+pub trait Navigator: Debug + 'static {
+    /// Navigates the player to the currently set [`Self::destination_path_id`].
+    ///
+    /// Returns `true` if the player has reached the destination.
+    fn navigate_player(&mut self, context: &Context, player: &mut PlayerState) -> bool;
+
+    /// Whether the last point to navigate to was available or the navigation is completed.
+    fn was_last_point_available_or_completed(&self) -> bool;
+
+    /// Marks all paths computed as dirty and should be recomputed.
+    ///
+    /// When `invalidate_cache` is `true`, all paths will be retrieved again from database.
+    fn mark_dirty(&mut self, invalidate_cache: bool);
+
+    /// Same as [`Self::mark_dirty`] but also sets the destination.
+    fn mark_dirty_with_destination(&mut self, paths_id_index: Option<(i64, usize)>);
+
+    fn update(&mut self, context: &Context);
+}
+
 #[derive(Debug)]
-pub struct Navigator {
+pub struct DefaultNavigator {
     // TODO: Cache mat?
     /// Data source for querying [`NavigationPaths`]s.
-    source: NavigatorDataSource,
+    source: Box<dyn NavigatorDataSource>,
     /// Base path to search for navigation points.
     base_path: Option<Rc<RefCell<Path>>>,
     /// The player's current path.
@@ -114,18 +132,10 @@ pub struct Navigator {
     destination_path_id: Option<String>,
 }
 
-impl Default for Navigator {
-    fn default() -> Self {
-        #[allow(clippy::default_constructed_unit_structs)]
-        Self::new(NavigatorDataSource::default())
-    }
-}
-
-#[cfg_attr(test, automock)]
-impl Navigator {
-    fn new(source: NavigatorDataSource) -> Self {
+impl DefaultNavigator {
+    fn new(source: impl NavigatorDataSource) -> Self {
         Self {
-            source,
+            source: Box::new(source),
             base_path: None,
             current_path: None,
             path_dirty: true,
@@ -134,69 +144,6 @@ impl Navigator {
             last_point_state: None,
             destination_path_id: None,
         }
-    }
-
-    /// Navigates the player to the currently set [`Self::destination_path_id`].
-    ///
-    /// Returns `true` if the player has reached the destination.
-    pub fn navigate_player(&mut self, context: &Context, player: &mut PlayerState) -> bool {
-        if context.operation.halting() {
-            return false;
-        }
-
-        let next_point_state = self.compute_next_point();
-        if !matches!(next_point_state, PointState::Dirty) {
-            // Only update `last_point_state` if non-dirty
-            self.last_point_state = Some(next_point_state.clone());
-        }
-
-        match next_point_state {
-            PointState::Dirty => {
-                if context.tick_changed_minimap {
-                    player.take_priority_action();
-                }
-                false
-            }
-            PointState::Completed | PointState::Unreachable => true,
-            PointState::Next(x, y, transition, _) => {
-                match transition {
-                    NavigationTransition::Portal => {
-                        if !player.has_priority_action() {
-                            let position = Position {
-                                x,
-                                y,
-                                x_random_range: 0,
-                                allow_adjusting: true,
-                            };
-                            let key = PlayerActionKey {
-                                key: KeyBinding::Up,
-                                link_key: None,
-                                count: 1,
-                                position: Some(position),
-                                direction: ActionKeyDirection::Any,
-                                with: ActionKeyWith::Stationary,
-                                wait_before_use_ticks: 5,
-                                wait_before_use_ticks_random_range: 0,
-                                wait_after_use_ticks: 0,
-                                wait_after_use_ticks_random_range: 0,
-                            };
-                            player.set_priority_action(None, PlayerAction::Key(key));
-                        }
-                    }
-                }
-
-                false
-            }
-        }
-    }
-
-    /// Whether the last point to navigate to was available or the navigation is completed.
-    #[inline]
-    pub fn was_last_point_available_or_completed(&self) -> bool {
-        matches!(
-            self.last_point_state,
-            Some(PointState::Next(_, _, _, _) | PointState::Completed)
-        )
     }
 
     fn compute_next_point(&self) -> PointState {
@@ -269,52 +216,6 @@ impl Navigator {
         }
 
         PointState::Unreachable
-    }
-
-    /// Marks all paths computed as dirty and should be recomputed.
-    ///
-    /// When `invalidate_cache` is `true`, all paths will be retrieved again from database.
-    #[inline]
-    pub fn mark_dirty(&mut self, invalidate_cache: bool) {
-        self.path_dirty = true;
-        self.path_dirty_retry_count = 0;
-        if invalidate_cache {
-            self.base_path = None;
-            self.current_path = None;
-            self.last_point_state = None;
-        }
-    }
-
-    /// Same as [`Self::mark_dirty`] but also sets the destination.
-    #[inline]
-    pub fn mark_dirty_with_destination(&mut self, paths_id_index: Option<(i64, usize)>) {
-        self.destination_path_id =
-            paths_id_index.map(|(id, index)| path_id_from_paths_id_index(id, index));
-        self.mark_dirty(false);
-    }
-
-    #[inline]
-    pub fn update(&mut self, context: &Context) {
-        const UPDATE_RETRY_MAX_COUNT: u32 = 3;
-
-        if context.tick_changed_minimap {
-            // Do not reset `base_path`, `current_path` and `last_point_state` here so that
-            // `update_current_path_from_current_location` will try to reuse that when looking up.
-            self.mark_dirty(false);
-        }
-        if self.path_dirty {
-            match self.update_current_path_from_current_location(context) {
-                UpdateState::Pending => (),
-                UpdateState::Completed => self.path_dirty = false,
-                UpdateState::NoMatch => {
-                    if self.path_dirty_retry_count < UPDATE_RETRY_MAX_COUNT {
-                        self.path_dirty_retry_count += 1;
-                    } else {
-                        self.path_dirty = false;
-                    }
-                }
-            }
-        }
     }
 
     // TODO: Do this on background thread?
@@ -407,6 +308,123 @@ impl Navigator {
         }
 
         UpdateState::NoMatch
+    }
+}
+
+impl Default for DefaultNavigator {
+    fn default() -> Self {
+        Self::new(DefaultNavigatorDataSource)
+    }
+}
+
+impl Navigator for DefaultNavigator {
+    /// Navigates the player to the currently set [`Self::destination_path_id`].
+    ///
+    /// Returns `true` if the player has reached the destination.
+    fn navigate_player(&mut self, context: &Context, player: &mut PlayerState) -> bool {
+        if context.operation.halting() {
+            return false;
+        }
+
+        let next_point_state = self.compute_next_point();
+        if !matches!(next_point_state, PointState::Dirty) {
+            // Only update `last_point_state` if non-dirty
+            self.last_point_state = Some(next_point_state.clone());
+        }
+
+        match next_point_state {
+            PointState::Dirty => {
+                if context.tick_changed_minimap {
+                    player.take_priority_action();
+                }
+                false
+            }
+            PointState::Completed | PointState::Unreachable => true,
+            PointState::Next(x, y, transition, _) => {
+                match transition {
+                    NavigationTransition::Portal => {
+                        if !player.has_priority_action() {
+                            let position = Position {
+                                x,
+                                y,
+                                x_random_range: 0,
+                                allow_adjusting: true,
+                            };
+                            let key = PlayerActionKey {
+                                key: KeyBinding::Up,
+                                link_key: None,
+                                count: 1,
+                                position: Some(position),
+                                direction: ActionKeyDirection::Any,
+                                with: ActionKeyWith::Stationary,
+                                wait_before_use_ticks: 5,
+                                wait_before_use_ticks_random_range: 0,
+                                wait_after_use_ticks: 0,
+                                wait_after_use_ticks_random_range: 0,
+                            };
+                            player.set_priority_action(None, PlayerAction::Key(key));
+                        }
+                    }
+                }
+
+                false
+            }
+        }
+    }
+
+    /// Whether the last point to navigate to was available or the navigation is completed.
+    #[inline]
+    fn was_last_point_available_or_completed(&self) -> bool {
+        matches!(
+            self.last_point_state,
+            Some(PointState::Next(_, _, _, _) | PointState::Completed)
+        )
+    }
+
+    /// Marks all paths computed as dirty and should be recomputed.
+    ///
+    /// When `invalidate_cache` is `true`, all paths will be retrieved again from database.
+    #[inline]
+    fn mark_dirty(&mut self, invalidate_cache: bool) {
+        self.path_dirty = true;
+        self.path_dirty_retry_count = 0;
+        if invalidate_cache {
+            self.base_path = None;
+            self.current_path = None;
+            self.last_point_state = None;
+        }
+    }
+
+    /// Same as [`Self::mark_dirty`] but also sets the destination.
+    #[inline]
+    fn mark_dirty_with_destination(&mut self, paths_id_index: Option<(i64, usize)>) {
+        self.destination_path_id =
+            paths_id_index.map(|(id, index)| path_id_from_paths_id_index(id, index));
+        self.mark_dirty(false);
+    }
+
+    #[inline]
+    fn update(&mut self, context: &Context) {
+        const UPDATE_RETRY_MAX_COUNT: u32 = 3;
+
+        if context.tick_changed_minimap {
+            // Do not reset `base_path`, `current_path` and `last_point_state` here so that
+            // `update_current_path_from_current_location` will try to reuse that when looking up.
+            self.mark_dirty(false);
+        }
+        if self.path_dirty {
+            match self.update_current_path_from_current_location(context) {
+                UpdateState::Pending => (),
+                UpdateState::Completed => self.path_dirty = false,
+                UpdateState::NoMatch => {
+                    if self.path_dirty_retry_count < UPDATE_RETRY_MAX_COUNT {
+                        self.path_dirty_retry_count += 1;
+                    } else {
+                        self.path_dirty = false;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -668,7 +686,7 @@ mod tests {
 
     #[test]
     fn compute_next_point_when_path_dirty() {
-        let navigator = Navigator::new(NavigatorDataSource::new());
+        let navigator = DefaultNavigator::default();
 
         let result = navigator.compute_next_point();
 
@@ -677,7 +695,7 @@ mod tests {
 
     #[test]
     fn compute_next_point_when_no_destination_path() {
-        let mut navigator = Navigator::new(NavigatorDataSource::new());
+        let mut navigator = DefaultNavigator::default();
         navigator.path_dirty = false;
 
         let result = navigator.compute_next_point();
@@ -687,7 +705,7 @@ mod tests {
 
     #[test]
     fn compute_next_point_when_current_path_matches_destination() {
-        let mut navigator = Navigator::new(NavigatorDataSource::new());
+        let mut navigator = DefaultNavigator::default();
         let path = Path {
             id: 42.to_string(),
             minimap_snapshot_base64: "".into(),
@@ -705,7 +723,7 @@ mod tests {
 
     #[test]
     fn compute_next_point_returns_next_point_from_current_path() {
-        let mut navigator = Navigator::new(NavigatorDataSource::new());
+        let mut navigator = DefaultNavigator::default();
         let target_path = Path {
             id: 2.to_string(),
             minimap_snapshot_base64: "".into(),
@@ -743,7 +761,7 @@ mod tests {
 
     #[test]
     fn compute_next_point_unreachable_when_not_in_any_path() {
-        let mut navigator = Navigator::new(NavigatorDataSource::new());
+        let mut navigator = DefaultNavigator::default();
         let unrelated_path = Rc::new(RefCell::new(Path {
             id: 1.to_string(),
             minimap_snapshot_base64: "".into(),
@@ -791,12 +809,12 @@ mod tests {
             paths: vec![mock_path],
         };
 
-        let mut mock_source = NavigatorDataSource::new();
+        let mut mock_source = MockNavigatorDataSource::new();
         mock_source
             .expect_query_paths()
             .returning(move || Ok(vec![mock_paths.clone()]));
 
-        let mut navigator = Navigator::new(mock_source);
+        let mut navigator = DefaultNavigator::new(mock_source);
 
         // Force update
         navigator.path_last_update = Instant::now() - std::time::Duration::from_secs(10);

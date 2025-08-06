@@ -1,9 +1,11 @@
-use std::time::{Duration, Instant};
+use std::{
+    fmt::Debug,
+    time::{Duration, Instant},
+};
 
 use log::debug;
 #[cfg(test)]
 use mockall::{automock, concretize};
-use mockall_double::double;
 use opencv::{
     core::{MatTraitConst, MatTraitConstManual, Rect, ToInputArray, Vec4b, Vector},
     imgcodecs::imencode_def,
@@ -19,14 +21,14 @@ use crate::{
     CycleRunStopMode, DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration,
     Minimap, PotionMode, Settings,
     array::Array,
+    bridge::InputReceiver,
     buff::BuffKind,
     context::{Context, Operation},
     database_event_receiver, minimap,
     player::{PlayerState, Quadrant},
+    rotator::Rotator,
     skill::SkillKind,
 };
-#[double]
-use crate::{bridge::InputReceiver, rotator::Rotator};
 
 #[derive(Debug)]
 pub enum GameEvent {
@@ -38,9 +40,53 @@ pub enum GameEvent {
 }
 
 /// A service to handle game-related incoming requests and event polling.
+#[cfg_attr(test, automock)]
+pub trait GameService: Debug {
+    fn poll_events(
+        &mut self,
+        minimap_id: Option<i64>,
+        character_id: Option<i64>,
+        settings: &Settings,
+    ) -> Array<GameEvent, 2>;
+
+    fn actions(&self) -> &[Action];
+
+    fn buffs(&self) -> &[(BuffKind, KeyBinding)];
+
+    fn input_receiver_mut(&mut self) -> &mut dyn InputReceiver;
+
+    fn state_and_frame(&self, context: &Context) -> (String, Option<Vec<u8>>);
+
+    #[cfg_attr(test, concretize)]
+    fn broadcast_state(&self, context: &Context, player: &PlayerState, minimap: Option<&Minimap>);
+
+    fn subscribe_state(&self) -> Receiver<GameState>;
+
+    fn subscribe_key(&self) -> Receiver<KeyBinding>;
+
+    fn update_operation(
+        &self,
+        operation: &mut Operation,
+        rotator: &mut dyn Rotator,
+        player: &mut PlayerState,
+        settings: &Settings,
+        halting: bool,
+    );
+
+    fn update_actions<'a>(
+        &mut self,
+        minimap: Option<&'a Minimap>,
+        preset: Option<String>,
+        character: Option<&'a Character>,
+    );
+
+    #[cfg_attr(test, concretize)]
+    fn update_buffs(&mut self, character: Option<&Character>);
+}
+
 #[derive(Debug)]
-pub struct GameService {
-    input_receiver: InputReceiver,
+pub struct DefaultGameService {
+    input_receiver: Box<dyn InputReceiver>,
     key_sender: Sender<KeyBinding>,
     database_event_receiver: Receiver<DatabaseEvent>,
     game_state_sender: Sender<GameState>,
@@ -48,11 +94,10 @@ pub struct GameService {
     game_buffs: Vec<(BuffKind, KeyBinding)>,
 }
 
-#[cfg_attr(test, automock)]
-impl GameService {
-    pub fn new(input_receiver: InputReceiver) -> Self {
+impl DefaultGameService {
+    pub fn new(input_receiver: impl InputReceiver) -> Self {
         Self {
-            input_receiver,
+            input_receiver: Box::new(input_receiver),
             key_sender: broadcast::channel(1).0,
             database_event_receiver: database_event_receiver(),
             game_state_sender: broadcast::channel(1).0,
@@ -60,8 +105,10 @@ impl GameService {
             game_buffs: vec![],
         }
     }
+}
 
-    pub fn poll_events(
+impl GameService for DefaultGameService {
+    fn poll_events(
         &mut self,
         minimap_id: Option<i64>,
         character_id: Option<i64>,
@@ -79,19 +126,19 @@ impl GameService {
         events
     }
 
-    pub fn current_actions(&self) -> &[Action] {
+    fn actions(&self) -> &[Action] {
         &self.game_actions
     }
 
-    pub fn current_buffs(&self) -> &[(BuffKind, KeyBinding)] {
+    fn buffs(&self) -> &[(BuffKind, KeyBinding)] {
         &self.game_buffs
     }
 
-    pub fn current_input_receiver_mut(&mut self) -> &mut InputReceiver {
-        &mut self.input_receiver
+    fn input_receiver_mut(&mut self) -> &mut dyn InputReceiver {
+        self.input_receiver.as_mut()
     }
 
-    pub fn get_state_and_frame(&self, context: &Context) -> (String, Option<Vec<u8>>) {
+    fn state_and_frame(&self, context: &Context) -> (String, Option<Vec<u8>>) {
         let frame = context
             .detector
             .as_ref()
@@ -118,12 +165,7 @@ impl GameService {
     }
 
     #[cfg_attr(test, concretize)]
-    pub fn broadcast_state(
-        &self,
-        context: &Context,
-        player: &PlayerState,
-        minimap: Option<&Minimap>,
-    ) {
+    fn broadcast_state(&self, context: &Context, player: &PlayerState, minimap: Option<&Minimap>) {
         if self.game_state_sender.is_empty() {
             let position = player.last_known_pos.map(|pos| (pos.x, pos.y));
             let state = context.player.to_string();
@@ -208,18 +250,18 @@ impl GameService {
         }
     }
 
-    pub fn subscribe_state(&self) -> Receiver<GameState> {
+    fn subscribe_state(&self) -> Receiver<GameState> {
         self.game_state_sender.subscribe()
     }
 
-    pub fn subscribe_key(&self) -> Receiver<KeyBinding> {
+    fn subscribe_key(&self) -> Receiver<KeyBinding> {
         self.key_sender.subscribe()
     }
 
-    pub fn update_operation(
+    fn update_operation(
         &self,
         operation: &mut Operation,
-        rotator: &mut Rotator,
+        rotator: &mut dyn Rotator,
         player: &mut PlayerState,
         settings: &Settings,
         halting: bool,
@@ -245,7 +287,7 @@ impl GameService {
         }
     }
 
-    pub fn update_actions<'a>(
+    fn update_actions<'a>(
         &mut self,
         minimap: Option<&'a Minimap>,
         preset: Option<String>,
@@ -261,7 +303,7 @@ impl GameService {
     }
 
     #[cfg_attr(test, concretize)]
-    pub fn update_buffs(&mut self, character: Option<&Character>) {
+    fn update_buffs(&mut self, character: Option<&Character>) {
         self.game_buffs = character.map(buffs_from).unwrap_or_default();
     }
 }
@@ -416,7 +458,7 @@ fn actions_from(character: &Character) -> Vec<Action> {
 
 // TODO: should only handle a single matched key binding
 #[inline]
-fn poll_key(service: &mut GameService, settings: &Settings) -> Option<GameEvent> {
+fn poll_key(service: &mut DefaultGameService, settings: &Settings) -> Option<GameEvent> {
     let received_key = service.input_receiver.try_recv().ok()?;
     debug!(target: "event", "received key {received_key:?}");
 
@@ -432,7 +474,7 @@ fn poll_key(service: &mut GameService, settings: &Settings) -> Option<GameEvent>
 
 #[inline]
 fn poll_database(
-    service: &mut GameService,
+    service: &mut DefaultGameService,
     minimap_id: Option<i64>,
     character_id: Option<i64>,
 ) -> Option<GameEvent> {
@@ -482,7 +524,7 @@ mod tests {
     use std::assert_matches::assert_matches;
 
     use super::*;
-    use crate::ActionConfiguration;
+    use crate::{ActionConfiguration, bridge::MockInputReceiver};
 
     #[test]
     fn update_combine_actions_and_fixed_actions() {
@@ -523,7 +565,7 @@ mod tests {
         };
         let mut minimap = Minimap::default();
         minimap.actions.insert("preset".to_string(), actions);
-        let mut service = GameService::new(InputReceiver::default());
+        let mut service = DefaultGameService::new(MockInputReceiver::default());
 
         service.update_actions(Some(&minimap), Some("preset".to_string()), Some(&character));
 
@@ -597,7 +639,7 @@ mod tests {
         };
         let mut minimap = Minimap::default();
         minimap.actions.insert("preset".to_string(), actions);
-        let mut service = GameService::new(InputReceiver::default());
+        let mut service = DefaultGameService::new(MockInputReceiver::default());
 
         service.update_actions(Some(&minimap), Some("preset".to_string()), Some(&character));
 
@@ -643,7 +685,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let mut service = GameService::new(InputReceiver::default());
+        let mut service = DefaultGameService::new(MockInputReceiver::default());
 
         service.update_actions(None, None, Some(&character));
 

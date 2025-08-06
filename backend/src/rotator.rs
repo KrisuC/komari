@@ -1,6 +1,7 @@
 use std::{
     assert_matches::debug_assert_matches,
     collections::{HashSet, VecDeque},
+    fmt::Debug,
     sync::atomic::{AtomicU32, Ordering},
     time::Instant,
 };
@@ -115,8 +116,45 @@ pub enum RotatorMode {
     PingPong(MobbingKey, Bound),
 }
 
+#[derive(Debug)]
+pub struct RotatorBuildArgs<'a> {
+    pub mode: RotatorMode,
+    pub actions: &'a [Action],
+    pub buffs: &'a [(BuffKind, KeyBinding)],
+    pub familiar_essence_key: KeyBinding,
+    pub familiar_swappable_slots: SwappableFamiliars,
+    pub familiar_swappable_rarities: &'a HashSet<FamiliarRarity>,
+    pub familiar_swap_check_millis: u64,
+    pub elite_boss_behavior: EliteBossBehavior,
+    pub elite_boss_behavior_key: KeyBinding,
+    pub enable_panic_mode: bool,
+    pub enable_rune_solving: bool,
+    pub enable_familiars_swapping: bool,
+    pub enable_reset_normal_actions_on_erda: bool,
+}
+
+#[cfg_attr(test, automock)]
+pub trait Rotator: Debug + 'static {
+    #[cfg_attr(test, concretize)]
+    fn build_actions(&mut self, args: RotatorBuildArgs<'_>);
+
+    fn reset_queue(&mut self);
+
+    /// Injects an action to be executed.
+    ///
+    /// This can be useful for one-time action that needs to be run in response to some external
+    /// event (e.g. chat). But should work co-operatively with previously built actions instead of
+    /// directly overwriting through [`PlayerState::set_priority_action`].
+    fn inject_action(&mut self, action: PlayerAction);
+
+    /// Rotates actions previously built with [`Self::build_actions`].
+    ///
+    /// If [`Operation`] is currently halting, it does nothing.
+    fn rotate_action(&mut self, context: &Context, player: &mut PlayerState);
+}
+
 #[derive(Default, Debug)]
-pub struct Rotator {
+pub struct DefaultRotator {
     // This is literally free postfix increment!
     id_counter: AtomicU32,
     normal_actions: Vec<(u32, RotatorAction)>,
@@ -149,188 +187,11 @@ pub struct Rotator {
     priority_actions_side_queue: VecDeque<RotatorAction>,
 }
 
-#[derive(Debug)]
-pub struct RotatorBuildArgs<'a> {
-    pub mode: RotatorMode,
-    pub actions: &'a [Action],
-    pub buffs: &'a [(BuffKind, KeyBinding)],
-    pub familiar_essence_key: KeyBinding,
-    pub familiar_swappable_slots: SwappableFamiliars,
-    pub familiar_swappable_rarities: &'a HashSet<FamiliarRarity>,
-    pub familiar_swap_check_millis: u64,
-    pub elite_boss_behavior: EliteBossBehavior,
-    pub elite_boss_behavior_key: KeyBinding,
-    pub enable_panic_mode: bool,
-    pub enable_rune_solving: bool,
-    pub enable_familiars_swapping: bool,
-    pub enable_reset_normal_actions_on_erda: bool,
-}
-
-#[cfg_attr(test, automock)]
-impl Rotator {
-    #[cfg_attr(test, concretize)]
-    pub fn build_actions(&mut self, args: RotatorBuildArgs<'_>) {
-        info!(target: "rotator", "preparing actions {args:?}");
-        let RotatorBuildArgs {
-            mode,
-            actions,
-            buffs,
-            familiar_essence_key,
-            familiar_swappable_slots,
-            familiar_swappable_rarities,
-            familiar_swap_check_millis,
-            elite_boss_behavior,
-            elite_boss_behavior_key,
-            enable_panic_mode,
-            enable_rune_solving,
-            enable_familiars_swapping,
-            enable_reset_normal_actions_on_erda,
-        } = args;
-        self.reset_queue();
-        self.normal_actions.clear();
-        self.normal_rotate_mode = mode;
-        self.normal_actions_reset_on_erda = enable_reset_normal_actions_on_erda;
-        self.priority_actions.clear();
-
-        let mut i = 0;
-        while i < actions.len() {
-            let action = actions[i];
-            let condition = action.condition();
-            let queue_to_front = match action {
-                Action::Move(_) => false,
-                Action::Key(ActionKey { queue_to_front, .. }) => queue_to_front.unwrap_or_default(),
-            };
-            let (action, offset) = rotator_action(action, i, actions);
-            debug_assert!(i != 0 || !matches!(condition, ActionCondition::Linked));
-            // Should not move i below the match because it could cause
-            // infinite loop due to auto mobbing ignoring Any condition
-            i += offset;
-            match condition {
-                ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
-                    self.priority_actions.insert(
-                        self.id_counter.fetch_add(1, Ordering::Relaxed),
-                        priority_action(action, condition, queue_to_front),
-                    );
-                }
-                ActionCondition::Any => {
-                    if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing(_, _)) {
-                        continue;
-                    }
-                    self.normal_actions
-                        .push((self.id_counter.fetch_add(1, Ordering::Relaxed), action))
-                }
-                ActionCondition::Linked => unreachable!(),
-            }
-        }
-
-        if buffs
-            .iter()
-            .any(|(buff, _)| matches!(buff, BuffKind::Familiar))
-        {
-            self.priority_actions.insert(
-                self.id_counter.fetch_add(1, Ordering::Relaxed),
-                familiar_essence_replenish_priority_action(familiar_essence_key),
-            );
-        }
-        if enable_rune_solving {
-            self.priority_actions.insert(
-                self.id_counter.fetch_add(1, Ordering::Relaxed),
-                solve_rune_priority_action(),
-            );
-        }
-        match elite_boss_behavior {
-            EliteBossBehavior::None => (),
-            EliteBossBehavior::CycleChannel => {
-                self.priority_actions.insert(
-                    self.id_counter.fetch_add(1, Ordering::Relaxed),
-                    elite_boss_change_channel_priority_action(),
-                );
-            }
-            EliteBossBehavior::UseKey => {
-                self.priority_actions.insert(
-                    self.id_counter.fetch_add(1, Ordering::Relaxed),
-                    elite_boss_use_key_priority_action(elite_boss_behavior_key),
-                );
-            }
-        }
-        if enable_familiars_swapping {
-            self.priority_actions.insert(
-                self.id_counter.fetch_add(1, Ordering::Relaxed),
-                priority_action(
-                    RotatorAction::Single(PlayerAction::FamiliarsSwapping(
-                        PlayerActionFamiliarsSwapping {
-                            swappable_slots: familiar_swappable_slots,
-                            swappable_rarities: Array::from_iter(
-                                familiar_swappable_rarities.clone(),
-                            ),
-                        },
-                    )),
-                    ActionCondition::EveryMillis(familiar_swap_check_millis),
-                    true,
-                ),
-            );
-        }
-        if enable_panic_mode {
-            self.priority_actions.insert(
-                self.id_counter.fetch_add(1, Ordering::Relaxed),
-                panic_priority_action(),
-            );
-        }
-        for (i, key) in buffs.iter().copied() {
-            self.priority_actions.insert(
-                self.id_counter.fetch_add(1, Ordering::Relaxed),
-                buff_priority_action(i, key),
-            );
-        }
-    }
-
-    #[inline]
-    pub fn reset_queue(&mut self) {
-        self.normal_actions_backward = false;
-        self.reset_normal_actions_queue();
-        self.priority_actions_queue.clear();
-        self.priority_actions_side_queue.clear();
-        self.priority_queuing_linked_action = None;
-        self.auto_mob_task = None;
-        self.auto_mob_quadrant_consecutive_count = None;
-    }
-
+impl DefaultRotator {
     #[inline]
     fn reset_normal_actions_queue(&mut self) {
         self.normal_index = 0;
         self.normal_queuing_linked_action = None;
-    }
-
-    /// Injects an action to be executed.
-    ///
-    /// This can be useful for one-time action that needs to be run in response to some external
-    /// event (e.g. chat). But should work co-operatively with previously built actions instead of
-    /// directly overwriting through [`PlayerState::set_priority_action`].
-    #[inline]
-    pub fn inject_action(&mut self, action: PlayerAction) {
-        self.priority_actions_side_queue
-            .push_back(RotatorAction::Single(action));
-    }
-
-    #[inline]
-    pub fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
-        if context.operation.halting() || matches!(context.player, Player::CashShopThenExit(_, _)) {
-            return;
-        }
-        self.rotate_priority_actions(context, player);
-        self.rotate_priority_actions_queue(context, player);
-        if !player.has_priority_action() && !player.has_normal_action() {
-            match self.normal_rotate_mode {
-                RotatorMode::StartToEnd => self.rotate_start_to_end(player),
-                RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
-                RotatorMode::AutoMobbing(key, bound) => {
-                    self.rotate_auto_mobbing(context, player, key, bound)
-                }
-                RotatorMode::PingPong(key, bound) => {
-                    self.rotate_ping_pong(context, player, key, bound)
-                }
-            }
-        }
     }
 
     /// Rotates the actions inside the [`Self::priority_actions`]
@@ -341,7 +202,7 @@ impl Rotator {
         /// Checks if the provided `id` is a priority linked action in queue or executing.
         #[inline]
         fn is_priority_linked_action_queuing_or_executing(
-            rotator: &Rotator,
+            rotator: &DefaultRotator,
             player: &PlayerState,
             id: u32,
         ) -> bool {
@@ -369,7 +230,10 @@ impl Rotator {
         /// Checks if the player or the queue has
         /// a [`ActionCondition::ErdaShowerOffCooldown`] action.
         #[inline]
-        fn has_erda_action_queuing_or_executing(rotator: &Rotator, player: &PlayerState) -> bool {
+        fn has_erda_action_queuing_or_executing(
+            rotator: &DefaultRotator,
+            player: &PlayerState,
+        ) -> bool {
             if let Some(id) = player.priority_action_id()
                 && let Some(action) = rotator.priority_actions.get(&id)
                 && matches!(
@@ -465,7 +329,7 @@ impl Rotator {
         /// linked action.
         #[inline]
         fn has_normal_linked_action_queuing_or_executing(
-            rotator: &Rotator,
+            rotator: &DefaultRotator,
             player: &PlayerState,
         ) -> bool {
             if rotator.normal_queuing_linked_action.is_some() {
@@ -483,7 +347,10 @@ impl Rotator {
         /// This does not check the queuing linked action because this check is to allow the linked
         /// action to be rotated in [`Self::rotate_priority_actions_queue`].
         #[inline]
-        fn has_priority_linked_action_executing(rotator: &Rotator, player: &PlayerState) -> bool {
+        fn has_priority_linked_action_executing(
+            rotator: &DefaultRotator,
+            player: &PlayerState,
+        ) -> bool {
             player.priority_action_id().is_some_and(|id| {
                 rotator
                     .priority_actions
@@ -802,6 +669,162 @@ impl Rotator {
             player.set_normal_action(Some(id), action.inner);
         }
         true
+    }
+}
+
+impl Rotator for DefaultRotator {
+    #[cfg_attr(test, concretize)]
+    fn build_actions(&mut self, args: RotatorBuildArgs<'_>) {
+        info!(target: "rotator", "preparing actions {args:?}");
+        let RotatorBuildArgs {
+            mode,
+            actions,
+            buffs,
+            familiar_essence_key,
+            familiar_swappable_slots,
+            familiar_swappable_rarities,
+            familiar_swap_check_millis,
+            elite_boss_behavior,
+            elite_boss_behavior_key,
+            enable_panic_mode,
+            enable_rune_solving,
+            enable_familiars_swapping,
+            enable_reset_normal_actions_on_erda,
+        } = args;
+        self.reset_queue();
+        self.normal_actions.clear();
+        self.normal_rotate_mode = mode;
+        self.normal_actions_reset_on_erda = enable_reset_normal_actions_on_erda;
+        self.priority_actions.clear();
+
+        let mut i = 0;
+        while i < actions.len() {
+            let action = actions[i];
+            let condition = action.condition();
+            let queue_to_front = match action {
+                Action::Move(_) => false,
+                Action::Key(ActionKey { queue_to_front, .. }) => queue_to_front.unwrap_or_default(),
+            };
+            let (action, offset) = rotator_action(action, i, actions);
+            debug_assert!(i != 0 || !matches!(condition, ActionCondition::Linked));
+            // Should not move i below the match because it could cause
+            // infinite loop due to auto mobbing ignoring Any condition
+            i += offset;
+            match condition {
+                ActionCondition::EveryMillis(_) | ActionCondition::ErdaShowerOffCooldown => {
+                    self.priority_actions.insert(
+                        self.id_counter.fetch_add(1, Ordering::Relaxed),
+                        priority_action(action, condition, queue_to_front),
+                    );
+                }
+                ActionCondition::Any => {
+                    if matches!(self.normal_rotate_mode, RotatorMode::AutoMobbing(_, _)) {
+                        continue;
+                    }
+                    self.normal_actions
+                        .push((self.id_counter.fetch_add(1, Ordering::Relaxed), action))
+                }
+                ActionCondition::Linked => unreachable!(),
+            }
+        }
+
+        if buffs
+            .iter()
+            .any(|(buff, _)| matches!(buff, BuffKind::Familiar))
+        {
+            self.priority_actions.insert(
+                self.id_counter.fetch_add(1, Ordering::Relaxed),
+                familiar_essence_replenish_priority_action(familiar_essence_key),
+            );
+        }
+        if enable_rune_solving {
+            self.priority_actions.insert(
+                self.id_counter.fetch_add(1, Ordering::Relaxed),
+                solve_rune_priority_action(),
+            );
+        }
+        match elite_boss_behavior {
+            EliteBossBehavior::None => (),
+            EliteBossBehavior::CycleChannel => {
+                self.priority_actions.insert(
+                    self.id_counter.fetch_add(1, Ordering::Relaxed),
+                    elite_boss_change_channel_priority_action(),
+                );
+            }
+            EliteBossBehavior::UseKey => {
+                self.priority_actions.insert(
+                    self.id_counter.fetch_add(1, Ordering::Relaxed),
+                    elite_boss_use_key_priority_action(elite_boss_behavior_key),
+                );
+            }
+        }
+        if enable_familiars_swapping {
+            self.priority_actions.insert(
+                self.id_counter.fetch_add(1, Ordering::Relaxed),
+                priority_action(
+                    RotatorAction::Single(PlayerAction::FamiliarsSwapping(
+                        PlayerActionFamiliarsSwapping {
+                            swappable_slots: familiar_swappable_slots,
+                            swappable_rarities: Array::from_iter(
+                                familiar_swappable_rarities.clone(),
+                            ),
+                        },
+                    )),
+                    ActionCondition::EveryMillis(familiar_swap_check_millis),
+                    true,
+                ),
+            );
+        }
+        if enable_panic_mode {
+            self.priority_actions.insert(
+                self.id_counter.fetch_add(1, Ordering::Relaxed),
+                panic_priority_action(),
+            );
+        }
+        for (i, key) in buffs.iter().copied() {
+            self.priority_actions.insert(
+                self.id_counter.fetch_add(1, Ordering::Relaxed),
+                buff_priority_action(i, key),
+            );
+        }
+    }
+
+    #[inline]
+    fn reset_queue(&mut self) {
+        self.normal_actions_backward = false;
+        self.reset_normal_actions_queue();
+        self.priority_actions_queue.clear();
+        self.priority_actions_side_queue.clear();
+        self.priority_queuing_linked_action = None;
+        self.auto_mob_task = None;
+        self.auto_mob_quadrant_consecutive_count = None;
+    }
+
+    #[inline]
+    fn inject_action(&mut self, action: PlayerAction) {
+        self.priority_actions_side_queue
+            .push_back(RotatorAction::Single(action));
+    }
+
+    #[inline]
+    fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
+        if context.operation.halting() || matches!(context.player, Player::CashShopThenExit(_, _)) {
+            return;
+        }
+        self.rotate_priority_actions(context, player);
+        self.rotate_priority_actions_queue(context, player);
+        if !player.has_priority_action() && !player.has_normal_action() {
+            match self.normal_rotate_mode {
+                RotatorMode::StartToEnd => self.rotate_start_to_end(player),
+                RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
+                RotatorMode::AutoMobbing(key, bound) => {
+                    self.rotate_auto_mobbing(context, player, key, bound)
+                }
+                RotatorMode::PingPong(key, bound) => {
+                    self.rotate_ping_pong(context, player, key, bound)
+                }
+            }
+        }
     }
 }
 
@@ -1216,7 +1239,7 @@ mod tests {
 
     #[test]
     fn rotator_build_actions() {
-        let mut rotator = Rotator::default();
+        let mut rotator = DefaultRotator::default();
         let actions = vec![NORMAL_ACTION, NORMAL_ACTION, PRIORITY_ACTION];
         let buffs = vec![(BuffKind::Rune, KeyBinding::default()); 4];
         let args = RotatorBuildArgs {
@@ -1242,7 +1265,7 @@ mod tests {
 
     #[test]
     fn rotator_rotate_action_start_to_end_then_reverse() {
-        let mut rotator = Rotator::default();
+        let mut rotator = DefaultRotator::default();
         let mut player = PlayerState::default();
         let context = Context::new(None, None);
         rotator.normal_rotate_mode = RotatorMode::StartToEndThenReverse;
@@ -1284,7 +1307,7 @@ mod tests {
 
     #[test]
     fn rotator_rotate_action_start_to_end() {
-        let mut rotator = Rotator::default();
+        let mut rotator = DefaultRotator::default();
         let mut player = PlayerState::default();
         let context = Context::new(None, None);
         rotator.normal_rotate_mode = RotatorMode::StartToEnd;
@@ -1309,7 +1332,7 @@ mod tests {
 
     #[test]
     fn rotator_priority_action_queue() {
-        let mut rotator = Rotator::default();
+        let mut rotator = DefaultRotator::default();
         let mut player = PlayerState::default();
         let mut minimap = MinimapIdle::default();
         minimap.set_rune(Point::default());
@@ -1341,7 +1364,7 @@ mod tests {
 
     #[test]
     fn rotator_priority_action_queue_to_front() {
-        let mut rotator = Rotator::default();
+        let mut rotator = DefaultRotator::default();
         let mut player = PlayerState::default();
         let context = Context::new(None, None);
         // queue 2 non-front priority actions
@@ -1418,7 +1441,7 @@ mod tests {
 
     #[test]
     fn rotator_priority_linked_action() {
-        let mut rotator = Rotator::default();
+        let mut rotator = DefaultRotator::default();
         let mut player = PlayerState::default();
         let context = Context::new(None, None);
         rotator.priority_actions.insert(
@@ -1475,7 +1498,7 @@ mod tests {
 
     #[test]
     fn rotate_ping_pong_direction() {
-        let mut rotator = Rotator::default();
+        let mut rotator = DefaultRotator::default();
         let mut player = PlayerState::default();
         let mut idle = MinimapIdle::default();
         idle.bbox = Rect::new(0, 0, 100, 100); // x: [0, 100]
@@ -1521,7 +1544,7 @@ mod tests {
 
     #[test]
     fn rotator_priority_action_is_ignored_when_executing() {
-        let mut rotator = Rotator::default();
+        let mut rotator = DefaultRotator::default();
         let mut player = PlayerState::default();
         let context = Context::new(None, None);
 
@@ -1556,7 +1579,7 @@ mod tests {
 
     #[test]
     fn rotator_priority_linked_action_is_ignored_when_executing() {
-        let mut rotator = Rotator::default();
+        let mut rotator = DefaultRotator::default();
         let mut player = PlayerState::default();
         let context = Context::new(None, None);
 
@@ -1590,7 +1613,7 @@ mod tests {
 
     #[test]
     fn rotator_erda_shower_action_ignored_if_another_erda_is_queued() {
-        let mut rotator = Rotator::default();
+        let mut rotator = DefaultRotator::default();
         let mut player = PlayerState::default();
         let context = Context::new(None, None);
 

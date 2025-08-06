@@ -1,42 +1,40 @@
-#[cfg(test)]
-use mockall::{automock, concretize};
+use std::fmt::Debug;
 
-use crate::{Character, PotionMode, database::Minimap as MinimapData, player::PlayerState};
+#[cfg(test)]
+use mockall::automock;
+
+use crate::{Character, PotionMode, player::PlayerState};
+
+/// A service to handle character-related incoming requests.
+#[cfg_attr(test, automock)]
+pub trait CharacterService: Debug {
+    /// Gets the currently in use [`Character`].
+    #[allow(clippy::needless_lifetimes)]
+    fn character<'a>(&'a self) -> Option<&'a Character>;
+
+    /// Sets a new `character` to be used.
+    fn set_character(&mut self, character: Option<Character>);
+
+    /// Updates `state` with information from the currently in use `[Character]`.
+    fn update(&self, state: &mut PlayerState);
+}
 
 #[derive(Debug, Default)]
-pub struct PlayerService {
+pub struct DefaultCharacterService {
     character: Option<Character>,
 }
 
-/// A service to handle player-related incoming requests.
-#[cfg_attr(test, automock)]
-impl PlayerService {
-    pub fn update(&mut self, character: Option<Character>) {
-        self.character = character;
-    }
-
-    #[allow(clippy::needless_lifetimes)]
-    pub fn current<'a>(&'a self) -> Option<&'a Character> {
+impl CharacterService for DefaultCharacterService {
+    fn character(&self) -> Option<&Character> {
         self.character.as_ref()
     }
 
-    /// Updates `state` from currently using `minimap`.
-    #[cfg_attr(test, concretize)]
-    pub fn update_from_minimap(&self, state: &mut PlayerState, minimap: Option<&MinimapData>) {
-        state.reset();
-        if let Some(minimap) = minimap {
-            state.config.rune_platforms_pathing = minimap.rune_platforms_pathing;
-            state.config.rune_platforms_pathing_up_jump_only =
-                minimap.rune_platforms_pathing_up_jump_only;
-            state.config.auto_mob_platforms_pathing = minimap.auto_mob_platforms_pathing;
-            state.config.auto_mob_platforms_pathing_up_jump_only =
-                minimap.auto_mob_platforms_pathing_up_jump_only;
-            state.config.auto_mob_platforms_bound = minimap.auto_mob_platforms_bound;
-        }
+    fn set_character(&mut self, character: Option<Character>) {
+        self.character = character;
     }
 
     /// Updates `state` from currently using `[Character]`.
-    pub fn update_from_character(&self, state: &mut PlayerState) {
+    fn update(&self, state: &mut PlayerState) {
         state.reset();
         if let Some(character) = self.character.as_ref() {
             state.config.class = character.class;
@@ -64,10 +62,7 @@ impl PlayerService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        Class, KeyBinding, KeyBindingConfiguration, bridge::KeyKind, database::Minimap,
-        player::PlayerState,
-    };
+    use crate::{Class, KeyBinding, KeyBindingConfiguration, bridge::KeyKind, player::PlayerState};
 
     fn mock_character() -> Character {
         Character {
@@ -119,72 +114,36 @@ mod tests {
         }
     }
 
-    fn mock_minimap() -> Minimap {
-        Minimap {
-            rune_platforms_pathing: true,
-            rune_platforms_pathing_up_jump_only: true,
-            auto_mob_platforms_pathing: true,
-            auto_mob_platforms_bound: true,
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn update_and_current() {
-        let mut service = PlayerService::default();
-        assert!(service.current().is_none());
+        let mut service = DefaultCharacterService::default();
+        assert!(service.character().is_none());
 
         let character = mock_character();
-        service.update(Some(character.clone()));
-        let current = service.current().unwrap();
+        service.set_character(Some(character.clone()));
+        let current = service.character().unwrap();
 
         assert_eq!(current, &mock_character());
     }
 
     #[test]
-    fn update_from_minimap_none() {
-        let service = PlayerService::default();
-        let mut state = PlayerState::default();
-        state.config.rune_platforms_pathing = true;
-        state.config.rune_platforms_pathing_up_jump_only = true;
-
-        service.update_from_minimap(&mut state, None);
-        assert!(state.config.rune_platforms_pathing); // Doesn't change
-        assert!(state.config.rune_platforms_pathing_up_jump_only); // Doesn't change
-    }
-
-    #[test]
-    fn update_from_minimap_some() {
-        let service = PlayerService::default();
-        let minimap = mock_minimap();
-        let mut state = PlayerState::default();
-
-        service.update_from_minimap(&mut state, Some(&minimap));
-
-        assert!(state.config.rune_platforms_pathing);
-        assert!(state.config.rune_platforms_pathing_up_jump_only);
-        assert!(state.config.auto_mob_platforms_pathing);
-        assert!(state.config.auto_mob_platforms_bound);
-    }
-
-    #[test]
     fn update_from_character_none() {
-        let service = PlayerService::default();
+        let service = DefaultCharacterService::default();
         let mut state = PlayerState::default();
         state.config.class = Class::Blaster;
 
-        service.update_from_character(&mut state);
+        service.update(&mut state);
         assert_eq!(state.config.class, Class::Blaster);
     }
 
     #[test]
     fn update_from_character_some() {
-        let mut service = PlayerService::default();
+        let mut service = DefaultCharacterService::default();
         let character = mock_character();
-        service.update(Some(character.clone()));
+        service.set_character(Some(character.clone()));
 
         let mut state = PlayerState::default();
-        service.update_from_character(&mut state);
+        service.update(&mut state);
 
         assert_eq!(state.config.class, character.class);
         assert_eq!(state.config.disable_adjusting, character.disable_adjusting);

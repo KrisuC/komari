@@ -457,22 +457,34 @@ impl From<KeyKind> for RpcKeyKind {
 
 /// A receiver to receive to platform keystroke event.
 ///
-/// This is a bridge struct for [`KeyKind`].
+/// This is a bridge trait for [`KeyKind`].
+#[cfg_attr(test, automock)]
+pub trait InputReceiver: Debug + 'static {
+    fn set_window_and_input_kind(&mut self, window: Window, kind: PlatformInputKind);
+
+    fn try_recv(&mut self) -> Result<KeyKind>;
+}
+
 #[derive(Debug)]
-pub struct InputReceiver {
+pub struct DefaultInputReceiver {
     inner: PlatformInputReceiver,
 }
 
-#[cfg_attr(test, automock)]
-impl InputReceiver {
+impl DefaultInputReceiver {
     pub fn new(window: Window, kind: PlatformInputKind) -> Self {
         Self {
             inner: PlatformInputReceiver::new(window, kind).expect("supported platform"),
         }
     }
+}
+
+impl InputReceiver for DefaultInputReceiver {
+    fn set_window_and_input_kind(&mut self, window: Window, kind: PlatformInputKind) {
+        self.inner = PlatformInputReceiver::new(window, kind).expect("supported platform")
+    }
 
     #[inline]
-    pub fn try_recv(&mut self) -> Result<KeyKind> {
+    fn try_recv(&mut self) -> Result<KeyKind> {
         Ok(self.inner.try_recv()?.into())
     }
 }
@@ -730,46 +742,60 @@ impl Input for DefaultInput {
     }
 }
 
-/// A struct for managing different capture modes.
+/// A trait for managing different capture modes.
 ///
-/// A bridge struct between platform-specific and database.
+/// A bridge trait between platform-specific and database.
+#[cfg_attr(test, automock)]
+pub trait Capture: Debug + 'static {
+    fn grab(&mut self) -> Result<Frame, Error>;
+
+    fn window(&self) -> Window;
+
+    fn set_window(&mut self, window: Window);
+
+    fn mode(&self) -> CaptureMode;
+
+    fn set_mode(&mut self, mode: CaptureMode);
+}
+
 #[derive(Debug)]
-pub struct Capture {
+pub struct DefaultCapture {
     inner: PlatformCapture,
     mode: CaptureMode,
 }
 
-#[cfg_attr(test, automock)]
-impl Capture {
+impl DefaultCapture {
     pub fn new(window: Window) -> Self {
         Self {
             inner: PlatformCapture::new(window).expect("supported platform"),
             mode: CaptureMode::BitBlt,
         }
     }
+}
 
+impl Capture for DefaultCapture {
     #[inline]
-    pub fn grab(&mut self) -> Result<Frame, Error> {
+    fn grab(&mut self) -> Result<Frame, Error> {
         self.inner.grab()
     }
 
     #[inline]
-    pub fn window(&self) -> Window {
+    fn window(&self) -> Window {
         self.inner.window().expect("supported platform")
     }
 
     #[inline]
-    pub fn set_window(&mut self, window: Window) {
+    fn set_window(&mut self, window: Window) {
         self.inner.set_window(window).expect("supported platform");
     }
 
     #[inline]
-    pub fn mode(&self) -> CaptureMode {
+    fn mode(&self) -> CaptureMode {
         self.mode
     }
 
     #[inline]
-    pub fn set_mode(&mut self, mode: CaptureMode) {
+    fn set_mode(&mut self, mode: CaptureMode) {
         self.mode = mode;
 
         if cfg!(windows) {

@@ -1,6 +1,6 @@
+use std::fmt::Debug;
+
 use base64::{Engine, prelude::BASE64_STANDARD};
-#[cfg(test)]
-use mockall::automock;
 use opencv::{
     core::{MatTraitConst, Rect, Vector},
     imgcodecs::imencode_def,
@@ -8,12 +8,23 @@ use opencv::{
 
 use crate::{NavigationPath, context::Context, minimap::Minimap};
 
-#[derive(Debug, Default)]
-pub struct NavigatorService;
+/// A service to handle navigation-related requests.
+pub trait NavigatorService: Debug {
+    /// Creates a new [`NavigationPath`] if minimap is currently [`Minimap::Idle`].
+    fn create_path(&self, context: &Context) -> Option<NavigationPath>;
 
-#[cfg_attr(test, automock)]
-impl NavigatorService {
-    pub fn create_path(&self, context: &Context) -> Option<NavigationPath> {
+    /// Recaptures `path` with new information if minimap is currently [`Minimap::Idle`].
+    ///
+    /// Returns the updated [`NavigationPath`] or the original.
+    fn recapture_path(&self, context: &Context, path: NavigationPath) -> NavigationPath;
+}
+
+/// Default implementation of [`NavigatorService`].
+#[derive(Debug, Default)]
+pub struct DefaultNavigatorService;
+
+impl NavigatorService for DefaultNavigatorService {
+    fn create_path(&self, context: &Context) -> Option<NavigationPath> {
         if let Some((minimap_base64, name_base64, name_bbox)) =
             extract_minimap_and_name_base64(context)
         {
@@ -29,7 +40,7 @@ impl NavigatorService {
         }
     }
 
-    pub fn recapture_path(&self, context: &Context, mut path: NavigationPath) -> NavigationPath {
+    fn recapture_path(&self, context: &Context, mut path: NavigationPath) -> NavigationPath {
         if let Some((minimap_base64, name_base64, name_bbox)) =
             extract_minimap_and_name_base64(context)
         {
