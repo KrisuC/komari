@@ -133,11 +133,15 @@ pub struct RotatorBuildArgs<'a> {
     pub enable_reset_normal_actions_on_erda: bool,
 }
 
+/// Handles rotating provided [`PlayerAction`]s.
 #[cfg_attr(test, automock)]
 pub trait Rotator: Debug + 'static {
     #[cfg_attr(test, concretize)]
     fn build_actions(&mut self, args: RotatorBuildArgs<'_>);
 
+    /// Resets priority and normal actions queues.
+    ///
+    /// This does not remove previously built actions.
     fn reset_queue(&mut self);
 
     /// Injects an action to be executed.

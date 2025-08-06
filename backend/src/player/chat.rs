@@ -200,4 +200,6 @@ fn to_key_kind(character: char) -> Option<KeyKind> {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    // TODO:
+}

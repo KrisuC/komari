@@ -36,7 +36,7 @@ use crate::{
     player::{PanicTo, Panicking, Player, PlayerState},
     rng::Rng,
     rotator::{DefaultRotator, Rotator},
-    services::{DefaultService, PollArgs, update_operation_with_halt_or_panic},
+    services::{DefaultService, PollArgs, halt_or_panic},
     skill::{Skill, SkillKind, SkillState},
 };
 #[cfg(test)]
@@ -433,13 +433,7 @@ fn update_loop() {
 
         // Go to town on stop cycle
         if was_running_cycle && did_cycled_to_stop {
-            update_operation_with_halt_or_panic(
-                &mut context,
-                &mut rotator,
-                &mut player_state,
-                false,
-                true,
-            );
+            halt_or_panic(&mut context, &mut rotator, &mut player_state, false, true);
         }
         if context.operation.halting() {
             pending_halt = None;
@@ -451,13 +445,7 @@ fn update_loop() {
             let player_died = was_player_alive && player_state.is_dead();
             // Unconditionally halt when player died
             if player_died {
-                update_operation_with_halt_or_panic(
-                    &mut context,
-                    &mut rotator,
-                    &mut player_state,
-                    true,
-                    false,
-                );
+                halt_or_panic(&mut context, &mut rotator, &mut player_state, true, false);
                 return;
             }
 
@@ -493,7 +481,7 @@ fn update_loop() {
                 } else {
                     info!(target: "context", "halting...");
                     pending_halt = None;
-                    update_operation_with_halt_or_panic(
+                    halt_or_panic(
                         &mut context,
                         &mut rotator,
                         &mut player_state,

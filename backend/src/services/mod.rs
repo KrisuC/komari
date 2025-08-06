@@ -1,11 +1,20 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
+use opencv::{
+    core::{ToInputArray, Vector},
+    imgcodecs::imencode_def,
+};
 use platforms::input::InputKind;
 use serenity::all::{CreateAttachment, EditInteractionResponse};
 use tokio::sync::broadcast::Receiver;
 
 use crate::{
-    Character, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler, Settings,
+    Character, CycleRunStopMode, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler,
+    Settings,
     bot::BotCommandKind,
     bridge::{Capture, DefaultCapture, DefaultInput, DefaultInputReceiver, InputMethod},
     buff::BuffState,
@@ -120,24 +129,6 @@ impl DefaultService {
     }
 }
 
-#[inline]
-pub fn update_operation_with_halt_or_panic(
-    context: &mut Context,
-    rotator: &mut dyn Rotator,
-    player: &mut PlayerState,
-    should_halt: bool,
-    should_panic: bool,
-) {
-    rotator.reset_queue();
-    player.clear_actions_aborted(!should_panic);
-    if should_halt {
-        context.operation = Operation::Halting;
-    }
-    if should_panic {
-        context.player = Player::Panicking(Panicking::new(PanicTo::Town));
-    }
-}
-
 #[derive(Debug)]
 struct DefaultRequestHandler<'a> {
     service: &'a mut DefaultService,
@@ -164,8 +155,7 @@ impl DefaultRequestHandler<'_> {
         for event in events {
             match event {
                 GameEvent::ToggleOperation => {
-                    let halting = !self.args.context.operation.halting();
-                    self.on_rotate_actions(halting);
+                    self.update_halting(!self.args.context.operation.halting());
                 }
                 GameEvent::MinimapUpdated(minimap) => {
                     self.on_update_minimap(self.service.minimap.preset(), minimap)
@@ -230,10 +220,10 @@ impl DefaultRequestHandler<'_> {
                     let _ = command
                         .sender
                         .send(EditInteractionResponse::new().content("Bot stopped running."));
-                    self.update_operation_halt_or_panic(true, go_to_town);
+                    self.halt_or_panic(true, go_to_town);
                 }
                 BotCommandKind::Status => {
-                    let (status, frame) = self.service.game.state_and_frame(self.args.context);
+                    let (status, frame) = state_and_frame(self.args.context);
                     let attachment = frame.map(|bytes| CreateAttachment::bytes(bytes, "image.png"));
 
                     let mut builder = EditInteractionResponse::new().content(status);
@@ -278,8 +268,32 @@ impl DefaultRequestHandler<'_> {
         );
     }
 
-    fn update_operation_halt_or_panic(&mut self, should_halt: bool, should_panic: bool) {
-        update_operation_with_halt_or_panic(
+    fn update_halting(&mut self, halting: bool) {
+        let settings = self.service.settings.settings();
+
+        self.args.context.operation = match (halting, settings.cycle_run_stop) {
+            (true, _) => Operation::Halting,
+            (false, CycleRunStopMode::Once | CycleRunStopMode::Repeat) => {
+                let duration = Duration::from_millis(settings.cycle_run_duration_millis);
+                let instant = Instant::now() + duration;
+
+                Operation::RunUntil {
+                    instant,
+                    run_duration_millis: settings.cycle_run_duration_millis,
+                    stop_duration_millis: settings.cycle_stop_duration_millis,
+                    once: matches!(settings.cycle_run_stop, CycleRunStopMode::Once),
+                }
+            }
+            (false, CycleRunStopMode::None) => Operation::Running,
+        };
+        if halting {
+            self.args.rotator.reset_queue();
+            self.args.player.clear_actions_aborted(true);
+        }
+    }
+
+    fn halt_or_panic(&mut self, should_halt: bool, should_panic: bool) {
+        halt_or_panic(
             self.args.context,
             self.args.rotator,
             self.args.player,
@@ -295,13 +309,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
         {
             return;
         }
-        self.service.game.update_operation(
-            &mut self.args.context.operation,
-            self.args.rotator,
-            self.args.player,
-            &self.service.settings.settings(),
-            halting,
-        );
+        self.update_halting(halting);
     }
 
     fn on_create_minimap(&self, name: String) -> Option<Minimap> {
@@ -441,6 +449,67 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     fn on_test_spin_rune(&self) {
         self.service.debug.test_spin_rune();
     }
+}
+
+#[inline]
+pub fn halt_or_panic(
+    context: &mut Context,
+    rotator: &mut dyn Rotator,
+    player: &mut PlayerState,
+    should_halt: bool,
+    should_panic: bool,
+) {
+    rotator.reset_queue();
+    player.clear_actions_aborted(!should_panic);
+    if should_halt {
+        context.operation = Operation::Halting;
+    }
+    if should_panic {
+        context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+    }
+}
+
+fn state_and_frame(context: &Context) -> (String, Option<Vec<u8>>) {
+    let frame = context
+        .detector
+        .as_ref()
+        .and_then(|detector| frame_from(detector.mat()));
+
+    let state = context.player.to_string();
+    let operation = match context.operation {
+        Operation::HaltUntil { instant, .. } => {
+            format!("Halting for {}", duration_from(instant))
+        }
+        Operation::Halting => "Halting".to_string(),
+        Operation::Running => "Running".to_string(),
+        Operation::RunUntil { instant, .. } => {
+            format!("Running for {}", duration_from(instant))
+        }
+    };
+    let info = [
+        format!("- State: ``{state}``"),
+        format!("- Operation: ``{operation}``"),
+    ]
+    .join("\n");
+
+    (info, frame)
+}
+
+#[inline]
+fn duration_from(instant: Instant) -> String {
+    let duration = instant.saturating_duration_since(Instant::now());
+    let seconds = duration.as_secs() % 60;
+    let minutes = (duration.as_secs() / 60) % 60;
+    let hours = (duration.as_secs() / 60) / 60;
+
+    format!("{hours:0>2}:{minutes:0>2}:{seconds:0>2}")
+}
+
+#[inline]
+fn frame_from(mat: &impl ToInputArray) -> Option<Vec<u8>> {
+    let mut vector = Vector::new();
+    imencode_def(".png", mat, &mut vector).ok()?;
+    Some(Vec::from_iter(vector))
 }
 
 #[cfg(test)]

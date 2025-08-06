@@ -1,15 +1,9 @@
-use std::{
-    fmt::Debug,
-    time::{Duration, Instant},
-};
+use std::fmt::Debug;
 
 use log::debug;
 #[cfg(test)]
 use mockall::{automock, concretize};
-use opencv::{
-    core::{MatTraitConst, MatTraitConstManual, Rect, ToInputArray, Vec4b, Vector},
-    imgcodecs::imencode_def,
-};
+use opencv::core::{MatTraitConst, MatTraitConstManual, Rect, Vec4b};
 use strum::IntoEnumIterator;
 use tokio::{
     spawn,
@@ -18,15 +12,14 @@ use tokio::{
 
 use crate::{
     Action, ActionCondition, ActionConfigurationCondition, ActionKey, BoundQuadrant, Character,
-    CycleRunStopMode, DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration,
-    Minimap, PotionMode, Settings,
+    DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration, Minimap,
+    PotionMode, Settings,
     array::Array,
     bridge::InputReceiver,
     buff::BuffKind,
     context::{Context, Operation},
     database_event_receiver, minimap,
     player::{PlayerState, Quadrant},
-    rotator::Rotator,
     skill::SkillKind,
 };
 
@@ -39,7 +32,7 @@ pub enum GameEvent {
     NavigationPathsUpdated,
 }
 
-/// A service to handle game-related incoming requests and event polling.
+/// A service to handle game-related incoming requests and events polling.
 #[cfg_attr(test, automock)]
 pub trait GameService: Debug {
     fn poll_events(
@@ -49,30 +42,10 @@ pub trait GameService: Debug {
         settings: &Settings,
     ) -> Array<GameEvent, 2>;
 
+    /// Gets the currently in use actions.
     fn actions(&self) -> &[Action];
 
-    fn buffs(&self) -> &[(BuffKind, KeyBinding)];
-
-    fn input_receiver_mut(&mut self) -> &mut dyn InputReceiver;
-
-    fn state_and_frame(&self, context: &Context) -> (String, Option<Vec<u8>>);
-
-    #[cfg_attr(test, concretize)]
-    fn broadcast_state(&self, context: &Context, player: &PlayerState, minimap: Option<&Minimap>);
-
-    fn subscribe_state(&self) -> Receiver<GameState>;
-
-    fn subscribe_key(&self) -> Receiver<KeyBinding>;
-
-    fn update_operation(
-        &self,
-        operation: &mut Operation,
-        rotator: &mut dyn Rotator,
-        player: &mut PlayerState,
-        settings: &Settings,
-        halting: bool,
-    );
-
+    /// Builds a new actions list to be used.
     fn update_actions<'a>(
         &mut self,
         minimap: Option<&'a Minimap>,
@@ -80,8 +53,25 @@ pub trait GameService: Debug {
         character: Option<&'a Character>,
     );
 
+    /// Gets the currently in use buffs.
+    fn buffs(&self) -> &[(BuffKind, KeyBinding)];
+
+    /// Builds a new buffs list to be used.
     #[cfg_attr(test, concretize)]
     fn update_buffs(&mut self, character: Option<&Character>);
+
+    /// Gets a mutable reference to [`InputReceiver`].
+    fn input_receiver_mut(&mut self) -> &mut dyn InputReceiver;
+
+    /// Broadcasts game state to listeners.
+    #[cfg_attr(test, concretize)]
+    fn broadcast_state(&self, context: &Context, player: &PlayerState, minimap: Option<&Minimap>);
+
+    /// Subscribes to game state.
+    fn subscribe_state(&self) -> Receiver<GameState>;
+
+    /// Subscribes to key event.
+    fn subscribe_key(&self) -> Receiver<KeyBinding>;
 }
 
 #[derive(Debug)]
@@ -130,38 +120,32 @@ impl GameService for DefaultGameService {
         &self.game_actions
     }
 
+    fn update_actions<'a>(
+        &mut self,
+        minimap: Option<&'a Minimap>,
+        preset: Option<String>,
+        character: Option<&'a Character>,
+    ) {
+        let character_actions = character.map(actions_from).unwrap_or_default();
+        let minimap_actions = minimap
+            .zip(preset)
+            .and_then(|(minimap, preset)| minimap.actions.get(&preset).cloned())
+            .unwrap_or_default();
+
+        self.game_actions = [character_actions, minimap_actions].concat();
+    }
+
     fn buffs(&self) -> &[(BuffKind, KeyBinding)] {
         &self.game_buffs
     }
 
-    fn input_receiver_mut(&mut self) -> &mut dyn InputReceiver {
-        self.input_receiver.as_mut()
+    #[cfg_attr(test, concretize)]
+    fn update_buffs(&mut self, character: Option<&Character>) {
+        self.game_buffs = character.map(buffs_from).unwrap_or_default();
     }
 
-    fn state_and_frame(&self, context: &Context) -> (String, Option<Vec<u8>>) {
-        let frame = context
-            .detector
-            .as_ref()
-            .and_then(|detector| frame_from(detector.mat()));
-
-        let state = context.player.to_string();
-        let operation = match context.operation {
-            Operation::HaltUntil { instant, .. } => {
-                format!("Halting for {}", duration_from(instant))
-            }
-            Operation::Halting => "Halting".to_string(),
-            Operation::Running => "Running".to_string(),
-            Operation::RunUntil { instant, .. } => {
-                format!("Running for {}", duration_from(instant))
-            }
-        };
-        let info = [
-            format!("- State: ``{state}``"),
-            format!("- Operation: ``{operation}``"),
-        ]
-        .join("\n");
-
-        (info, frame)
+    fn input_receiver_mut(&mut self) -> &mut dyn InputReceiver {
+        self.input_receiver.as_mut()
     }
 
     #[cfg_attr(test, concretize)]
@@ -257,72 +241,6 @@ impl GameService for DefaultGameService {
     fn subscribe_key(&self) -> Receiver<KeyBinding> {
         self.key_sender.subscribe()
     }
-
-    fn update_operation(
-        &self,
-        operation: &mut Operation,
-        rotator: &mut dyn Rotator,
-        player: &mut PlayerState,
-        settings: &Settings,
-        halting: bool,
-    ) {
-        *operation = match (halting, settings.cycle_run_stop) {
-            (true, _) => Operation::Halting,
-            (false, CycleRunStopMode::Once | CycleRunStopMode::Repeat) => {
-                let duration = Duration::from_millis(settings.cycle_run_duration_millis);
-                let instant = Instant::now() + duration;
-
-                Operation::RunUntil {
-                    instant,
-                    run_duration_millis: settings.cycle_run_duration_millis,
-                    stop_duration_millis: settings.cycle_stop_duration_millis,
-                    once: matches!(settings.cycle_run_stop, CycleRunStopMode::Once),
-                }
-            }
-            (false, CycleRunStopMode::None) => Operation::Running,
-        };
-        if halting {
-            rotator.reset_queue();
-            player.clear_actions_aborted(true);
-        }
-    }
-
-    fn update_actions<'a>(
-        &mut self,
-        minimap: Option<&'a Minimap>,
-        preset: Option<String>,
-        character: Option<&'a Character>,
-    ) {
-        let character_actions = character.map(actions_from).unwrap_or_default();
-        let minimap_actions = minimap
-            .zip(preset)
-            .and_then(|(minimap, preset)| minimap.actions.get(&preset).cloned())
-            .unwrap_or_default();
-
-        self.game_actions = [character_actions, minimap_actions].concat();
-    }
-
-    #[cfg_attr(test, concretize)]
-    fn update_buffs(&mut self, character: Option<&Character>) {
-        self.game_buffs = character.map(buffs_from).unwrap_or_default();
-    }
-}
-
-#[inline]
-fn duration_from(instant: Instant) -> String {
-    let duration = instant.saturating_duration_since(Instant::now());
-    let seconds = duration.as_secs() % 60;
-    let minutes = (duration.as_secs() / 60) % 60;
-    let hours = (duration.as_secs() / 60) / 60;
-
-    format!("{hours:0>2}:{minutes:0>2}:{seconds:0>2}")
-}
-
-#[inline]
-fn frame_from(mat: &impl ToInputArray) -> Option<Vec<u8>> {
-    let mut vector = Vector::new();
-    imencode_def(".png", mat, &mut vector).ok()?;
-    Some(Vec::from_iter(vector))
 }
 
 #[inline]

@@ -161,3 +161,8 @@ impl EventHandler for DefaultEventHandler {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // TODO
+}
