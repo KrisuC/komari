@@ -13,7 +13,7 @@ const MAX_RETRY: u32 = 3;
 #[derive(Debug, Clone, Copy)]
 enum ChattingStage {
     OpeningMenu(Timeout, u32),
-    Typing(usize),
+    Typing(Timeout, usize),
     Completing(Timeout, bool),
 }
 
@@ -37,9 +37,9 @@ impl Chatting {
     }
 
     #[inline]
-    fn stage_typing(self, index: usize) -> Chatting {
+    fn stage_typing(self, timeout: Timeout, index: usize) -> Chatting {
         Chatting {
-            stage: ChattingStage::Typing(index),
+            stage: ChattingStage::Typing(timeout, index),
         }
     }
 
@@ -60,7 +60,9 @@ pub fn update_chatting_context(
         ChattingStage::OpeningMenu(timeout, retry_count) => {
             update_opening_menu(context, chatting, timeout, retry_count)
         }
-        ChattingStage::Typing(index) => update_typing(context, state, chatting, index),
+        ChattingStage::Typing(timeout, index) => {
+            update_typing(context, state, chatting, timeout, index)
+        }
         ChattingStage::Completing(timeout, _) => update_completing(context, chatting, timeout),
     };
     let next = if matches!(chatting.stage, ChattingStage::Completing(_, true)) {
@@ -92,7 +94,7 @@ fn update_opening_menu(
         }
         Lifecycle::Ended => {
             if context.detector_unwrap().detect_chat_menu_opened() {
-                chatting.stage_typing(0)
+                chatting.stage_typing(Timeout::default(), 0)
             } else if retry_count < MAX_RETRY {
                 chatting.stage_opening_menu(timeout, retry_count + 1)
             } else {
@@ -107,26 +109,30 @@ fn update_typing(
     context: &Context,
     state: &PlayerState,
     chatting: Chatting,
+    timeout: Timeout,
     index: usize,
 ) -> Chatting {
-    if !context.input.all_keys_cleared() {
-        return chatting.stage_typing(index);
-    }
+    match next_timeout_lifecycle(timeout, 5) {
+        Lifecycle::Started(timeout) | Lifecycle::Updated(timeout) => {
+            chatting.stage_typing(timeout, index)
+        }
+        Lifecycle::Ended => {
+            let Some(key) = state
+                .chat_content()
+                .and_then(|content| content.chars().nth(index))
+                .and_then(to_key_kind)
+            else {
+                return chatting.stage_completing(Timeout::default(), false);
+            };
+            let _ = context.input.send_key(key);
 
-    let Some(key) = state
-        .chat_content()
-        .and_then(|content| content.chars().nth(index))
-        .and_then(to_key_kind)
-    else {
-        return chatting.stage_completing(Timeout::default(), false);
-    };
-    let _ = context.input.send_key(key);
-
-    if index + 1 < state.chat_content().expect("has value").chars().count() {
-        chatting.stage_typing(index + 1)
-    } else {
-        let _ = context.input.send_key(KeyKind::Enter);
-        chatting.stage_completing(Timeout::default(), false)
+            if index + 1 < state.chat_content().expect("has value").chars().count() {
+                chatting.stage_typing(Timeout::default(), index + 1)
+            } else {
+                let _ = context.input.send_key(KeyKind::Enter);
+                chatting.stage_completing(Timeout::default(), false)
+            }
+        }
     }
 }
 
@@ -201,5 +207,180 @@ fn to_key_kind(character: char) -> Option<KeyKind> {
 
 #[cfg(test)]
 mod tests {
-    // TODO:
+    use std::assert_matches::assert_matches;
+
+    use mockall::predicate::eq;
+
+    use super::*;
+    use crate::{bridge::MockInput, context::Context, detect::MockDetector, player::PlayerState};
+
+    #[test]
+    fn update_opening_menu_detects_chat_menu_and_transitions_to_typing() {
+        let mut detector = MockDetector::default();
+        detector.expect_detect_chat_menu_opened().returning(|| true);
+
+        let context = Context::new(None, Some(detector));
+        let chatting = Chatting::default();
+        let timeout = Timeout {
+            current: 35,
+            started: true,
+            ..Default::default()
+        };
+
+        let result = update_opening_menu(&context, chatting, timeout, 0);
+        assert_matches!(result.stage, ChattingStage::Typing(_, 0));
+    }
+
+    #[test]
+    fn update_opening_menu_retries_when_chat_menu_not_opened() {
+        let mut detector = MockDetector::default();
+        detector
+            .expect_detect_chat_menu_opened()
+            .returning(|| false);
+
+        let context = Context::new(None, Some(detector));
+        let chatting = Chatting::default();
+        let timeout = Timeout {
+            current: 35,
+            started: true,
+            ..Default::default()
+        };
+
+        let result = update_opening_menu(&context, chatting, timeout, 1);
+        assert_matches!(result.stage, ChattingStage::OpeningMenu(_, 2));
+    }
+
+    #[test]
+    fn update_opening_menu_fails_after_max_retries() {
+        let mut detector = MockDetector::default();
+        detector
+            .expect_detect_chat_menu_opened()
+            .returning(|| false);
+
+        let context = Context::new(None, Some(detector));
+        let chatting = Chatting::default();
+        let timeout = Timeout {
+            current: 35,
+            started: true,
+            ..Default::default()
+        };
+
+        let result = update_opening_menu(&context, chatting, timeout, MAX_RETRY);
+        assert_matches!(result.stage, ChattingStage::Completing(_, false));
+    }
+
+    #[test]
+    fn update_typing_sends_character_key_and_progresses() {
+        let mut state = PlayerState::default();
+        state.set_chat_content("abcd".to_string());
+
+        let mut keys = MockInput::default();
+        keys.expect_send_key()
+            .once()
+            .with(eq(KeyKind::A))
+            .returning(|_| Ok(()));
+        keys.expect_send_key()
+            .once()
+            .with(eq(KeyKind::B))
+            .returning(|_| Ok(()));
+        keys.expect_send_key()
+            .once()
+            .with(eq(KeyKind::C))
+            .returning(|_| Ok(()));
+        let context = Context::new(Some(keys), None);
+        let mut chatting = Chatting::default();
+
+        for i in 0..3 {
+            chatting = update_typing(
+                &context,
+                &state,
+                chatting,
+                Timeout {
+                    current: 5,
+                    started: true,
+                    ..Default::default()
+                },
+                i,
+            );
+            assert_matches!(chatting.stage, ChattingStage::Typing(_, index) if index == i + 1);
+        }
+    }
+
+    #[test]
+    fn update_typing_finishes_after_last_character() {
+        let mut state = PlayerState::default();
+        state.set_chat_content("a".into());
+
+        let mut keys = MockInput::default();
+        keys.expect_send_key()
+            .once()
+            .with(eq(KeyKind::A))
+            .returning(|_| Ok(()));
+        keys.expect_send_key()
+            .once()
+            .with(eq(KeyKind::Enter))
+            .returning(|_| Ok(()));
+        let context = Context::new(Some(keys), None);
+
+        let chatting = Chatting::default();
+        let result = update_typing(
+            &context,
+            &state,
+            chatting,
+            Timeout {
+                current: 5,
+                started: true,
+                ..Default::default()
+            },
+            0,
+        );
+        assert_matches!(result.stage, ChattingStage::Completing(_, false));
+    }
+
+    #[test]
+    fn update_typing_completes_if_char_not_found() {
+        let state = PlayerState::default(); // No chat_content
+
+        let context = Context::new(None, None);
+        let chatting = Chatting::default();
+
+        let result = update_typing(
+            &context,
+            &state,
+            chatting,
+            Timeout {
+                current: 5,
+                started: true,
+                ..Default::default()
+            },
+            0,
+        );
+        assert_matches!(result.stage, ChattingStage::Completing(_, false));
+    }
+
+    #[test]
+    fn update_completing_sends_esc_if_menu_open() {
+        let mut detector = MockDetector::default();
+        detector.expect_detect_chat_menu_opened().returning(|| true);
+
+        let mut keys = MockInput::default();
+        keys.expect_send_key()
+            .once()
+            .with(eq(KeyKind::Esc))
+            .returning(|_| Ok(()));
+
+        let context = Context::new(Some(keys), Some(detector));
+        let chatting = Chatting::default();
+
+        let result = update_completing(
+            &context,
+            chatting,
+            Timeout {
+                current: 35,
+                started: true,
+                ..Default::default()
+            },
+        );
+        assert_matches!(result.stage, ChattingStage::Completing(_, true));
+    }
 }
