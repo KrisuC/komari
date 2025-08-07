@@ -114,7 +114,7 @@ pub fn update_grappling_context(
                         }
                     }
                     PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => None,
-                    PlayerAction::Chatting
+                    PlayerAction::Chat(_)
                     | PlayerAction::Panic(_)
                     | PlayerAction::FamiliarsSwapping(_) => unreachable!(),
                 },

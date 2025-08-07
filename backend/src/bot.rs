@@ -3,12 +3,15 @@ use std::{sync::Arc, time::Duration};
 use anyhow::Result;
 use log::{debug, error};
 use serenity::all::{
-    CacheHttp, Command, CommandDataOption, CommandOptionType, Context, CreateCommand,
-    CreateCommandOption, CreateInteractionResponse, EditInteractionResponse, EventHandler,
-    GatewayIntents, Interaction, Ready, ShardManager,
+    CacheHttp, Command, CommandDataOption, CommandInteraction, CommandOptionType, Context,
+    CreateCommand, CreateCommandOption, EditInteractionResponse, EventHandler, GatewayIntents,
+    Interaction, Ready, ShardManager,
 };
 use serenity::{Client, async_trait};
 use strum::{Display, EnumIter, EnumMessage, EnumString, IntoEnumIterator};
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tokio::time::{self, Instant};
 use tokio::{
     runtime::Handle,
     spawn,
@@ -20,8 +23,16 @@ use tokio::{
     time::timeout,
 };
 
-#[derive(Debug, EnumIter, EnumString, EnumMessage, Display)]
+#[derive(Debug, Clone, Copy)]
 pub enum BotCommandKind {
+    Start,
+    Stop,
+    Status,
+    Chat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, EnumString, EnumMessage, Display)]
+enum BotCommandKindInner {
     #[strum(to_string = "start", message = "Start the bot actions")]
     Start,
     #[strum(to_string = "stop", message = "Stop the bot actions")]
@@ -30,6 +41,13 @@ pub enum BotCommandKind {
     Status,
     #[strum(to_string = "chat", message = "Send a message inside the game")]
     Chat,
+    #[strum(
+        to_string = "start-stream",
+        message = "Start streaming game images over time (15 minutes max)"
+    )]
+    StartStream,
+    #[strum(to_string = "stop-stream", message = "Stop streaming game images")]
+    StopStream,
 }
 
 #[derive(Debug)]
@@ -62,6 +80,7 @@ impl DiscordBot {
         let sender = self.command_sender.clone();
         let handler = DefaultEventHandler {
             command_sender: sender,
+            stream_handle: Arc::new(Mutex::new(None)),
         };
 
         let builder = Client::builder(token, GatewayIntents::empty()).event_handler(handler);
@@ -90,17 +109,18 @@ impl DiscordBot {
 #[derive(Debug)]
 struct DefaultEventHandler {
     command_sender: Sender<BotCommand>,
+    stream_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 #[async_trait]
 impl EventHandler for DefaultEventHandler {
     async fn ready(&self, context: Context, _: Ready) {
-        let commands = BotCommandKind::iter()
+        let commands = BotCommandKindInner::iter()
             .map(|kind| {
                 let command = CreateCommand::new(kind.to_string())
                     .description(kind.get_message().expect("message already set"));
                 match kind {
-                    BotCommandKind::Chat => command.add_option(
+                    BotCommandKindInner::Chat => command.add_option(
                         CreateCommandOption::new(
                             CommandOptionType::String,
                             "message",
@@ -109,12 +129,15 @@ impl EventHandler for DefaultEventHandler {
                         .required(true)
                         .min_length(1),
                     ),
-                    BotCommandKind::Stop => command.add_option(CreateCommandOption::new(
+                    BotCommandKindInner::Stop => command.add_option(CreateCommandOption::new(
                         CommandOptionType::Boolean,
                         "go-to-town",
                         "Whether to go to town when stopping",
                     )),
-                    BotCommandKind::Start | BotCommandKind::Status => command,
+                    BotCommandKindInner::StartStream
+                    | BotCommandKindInner::StopStream
+                    | BotCommandKindInner::Start
+                    | BotCommandKindInner::Status => command,
                 }
             })
             .collect::<Vec<_>>();
@@ -126,40 +149,155 @@ impl EventHandler for DefaultEventHandler {
     async fn interaction_create(&self, context: Context, interaction: Interaction) {
         if let Interaction::Command(command) = interaction {
             debug!(target: "discord_bot", "received slash command {:?}", command.data);
-            if let Err(error) = command.defer(context.http()).await {
-                error!(target: "discord_bot", "failed to defer command {error:?}");
+            if command.defer(context.http()).await.is_err() {
                 return;
             }
 
-            let (tx, rx) = oneshot::channel();
-            let inner = match command.data.name.parse::<BotCommandKind>() {
-                Ok(kind) => BotCommand {
-                    kind,
-                    options: command.data.options.clone(),
-                    sender: tx,
-                },
-                Err(_) => return,
-            };
-            if let Err(inner) = self.command_sender.send(inner).await {
-                error!(target: "discord_bot", "failed to send command {inner:?}");
-                let ack = CreateInteractionResponse::Acknowledge;
-                let _ = command.create_response(context.http(), ack).await;
-                return;
-            }
-
-            let builder = match timeout(Duration::from_secs(10), rx).await {
-                Ok(Ok(builder)) => builder,
-                _ => {
-                    error!(target: "discord_bot", "failed when waiting for command response");
-                    let _ = command.delete_response(context.http()).await;
+            let kind = match command.data.name.parse::<BotCommandKindInner>() {
+                Ok(kind) => kind,
+                Err(_) => {
+                    response_with(&context, &command, "Ignored an unknown command.").await;
                     return;
                 }
             };
-            if let Err(error) = command.edit_response(context.http(), builder).await {
-                error!(target: "discord_bot", "failed to response to command {error:?}");
+            match kind {
+                BotCommandKindInner::StartStream => {
+                    start_stream_command(self, context, command).await;
+                }
+                BotCommandKindInner::StopStream => {
+                    stop_stream_command(self, context, command).await;
+                }
+                BotCommandKindInner::Start => {
+                    single_command(self, context, command, BotCommandKind::Start).await;
+                }
+                BotCommandKindInner::Stop => {
+                    single_command(self, context, command, BotCommandKind::Stop).await;
+                }
+                BotCommandKindInner::Status => {
+                    single_command(self, context, command, BotCommandKind::Status).await;
+                }
+                BotCommandKindInner::Chat => {
+                    single_command(self, context, command, BotCommandKind::Chat).await;
+                }
             }
         }
     }
+}
+
+async fn single_command(
+    handler: &DefaultEventHandler,
+    context: Context,
+    command: CommandInteraction,
+    kind: BotCommandKind,
+) {
+    let (tx, rx) = oneshot::channel();
+    let inner = BotCommand {
+        kind,
+        options: command.data.options.clone(),
+        sender: tx,
+    };
+    if handler.command_sender.send(inner).await.is_err() {
+        response_with(&context, &command, "Command failed, please try again.").await;
+        return;
+    }
+
+    let builder = match timeout(Duration::from_secs(10), rx)
+        .await
+        .ok()
+        .and_then(|inner| inner.ok())
+    {
+        Some(builder) => builder,
+        None => {
+            response_with(&context, &command, "Command failed, please try again.").await;
+            return;
+        }
+    };
+    let _ = command.edit_response(context.http(), builder).await;
+}
+
+async fn start_stream_command(
+    handler: &DefaultEventHandler,
+    context: Context,
+    command: CommandInteraction,
+) {
+    let sender = handler.command_sender.clone();
+    let mut handle = handler.stream_handle.lock().await;
+    if handle.is_some() {
+        response_with(&context, &command, "Streaming already started.").await;
+        return;
+    }
+
+    let task = spawn(async move {
+        let start_time = Instant::now();
+        let max_duration = Duration::from_mins(15);
+        while start_time.elapsed() < max_duration {
+            let (tx, rx) = oneshot::channel();
+            let inner = BotCommand {
+                kind: BotCommandKind::Status,
+                options: command.data.options.clone(),
+                sender: tx,
+            };
+            if sender.send(inner).await.is_err() {
+                response_with(&context, &command, "Streaming failed abrubtly.").await;
+                break;
+            }
+
+            let builder = match timeout(Duration::from_secs(10), rx)
+                .await
+                .ok()
+                .and_then(|inner| inner.ok())
+            {
+                Some(builder) => builder,
+                None => {
+                    response_with(&context, &command, "Streaming failed abrubtly.").await;
+                    return;
+                }
+            };
+            if command
+                .edit_response(context.http(), builder)
+                .await
+                .is_err()
+            {
+                break;
+            }
+            time::sleep(Duration::from_millis(500)).await;
+        }
+
+        response_with(&context, &command, "Streaming finished.").await;
+    });
+
+    *handle = Some(task);
+}
+
+async fn stop_stream_command(
+    handler: &DefaultEventHandler,
+    context: Context,
+    command: CommandInteraction,
+) {
+    let mut stopped = false;
+    if let Some(handle) = handler.stream_handle.lock().await.take()
+        && !handle.is_finished()
+    {
+        handle.abort();
+        stopped = true;
+    }
+
+    let content = if stopped {
+        "Streaming stopped."
+    } else {
+        "No active stream to stop."
+    };
+    response_with(&context, &command, content).await;
+}
+
+#[inline]
+async fn response_with(
+    context: &Context,
+    command: &CommandInteraction,
+    content: impl Into<String>,
+) {
+    let builder = EditInteractionResponse::new().content(content);
+    let _ = command.edit_response(context.http(), builder).await;
 }
 
 #[cfg(test)]

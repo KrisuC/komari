@@ -11,8 +11,12 @@ use super::{
     use_key::UseKey,
 };
 use crate::{
-    ActionKeyDirection, ActionKeyWith, Position, bridge::KeyKind, context::Context,
-    minimap::Minimap, player::chat::Chatting, rng::Rng,
+    ActionKeyDirection, ActionKeyWith, Position,
+    bridge::KeyKind,
+    context::Context,
+    minimap::Minimap,
+    player::{ChattingContent, chat::Chatting},
+    rng::Rng,
 };
 
 /// Updates [`Player::Idle`] contextual state.
@@ -168,7 +172,10 @@ fn on_player_action(
             false,
         )),
         PlayerAction::Panic(panic) => Some((Player::Panicking(Panicking::new(panic.to)), false)),
-        PlayerAction::Chatting => Some((Player::Chatting(Chatting::default()), false)),
+        PlayerAction::Chat(chat) => Some((
+            Player::Chatting(Chatting::new(ChattingContent::from_string(chat.content))),
+            false,
+        )),
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::{
+    array::Array,
     bridge::KeyKind,
     context::Context,
     player::{
@@ -9,6 +10,18 @@ use crate::{
 };
 
 const MAX_RETRY: u32 = 3;
+const MAX_CONTENT_LENGTH: usize = 256;
+
+pub type ChattingContent = Array<char, MAX_CONTENT_LENGTH>;
+
+impl ChattingContent {
+    pub const MAX_LENGTH: usize = MAX_CONTENT_LENGTH;
+
+    #[inline]
+    pub fn from_string(content: String) -> ChattingContent {
+        ChattingContent::from_iter(content.into_chars())
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 enum ChattingStage {
@@ -17,22 +30,25 @@ enum ChattingStage {
     Completing(Timeout, bool),
 }
 
-impl Default for ChattingStage {
-    fn default() -> Self {
-        Self::OpeningMenu(Timeout::default(), 0)
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Chatting {
     stage: ChattingStage,
+    content: ChattingContent,
 }
 
 impl Chatting {
+    pub fn new(content: ChattingContent) -> Self {
+        Self {
+            stage: ChattingStage::OpeningMenu(Timeout::default(), 0),
+            content,
+        }
+    }
+
     #[inline]
     fn stage_opening_menu(self, timeout: Timeout, retry_count: u32) -> Chatting {
         Chatting {
             stage: ChattingStage::OpeningMenu(timeout, retry_count),
+            ..self
         }
     }
 
@@ -40,6 +56,7 @@ impl Chatting {
     fn stage_typing(self, timeout: Timeout, index: usize) -> Chatting {
         Chatting {
             stage: ChattingStage::Typing(timeout, index),
+            ..self
         }
     }
 
@@ -47,6 +64,7 @@ impl Chatting {
     fn stage_completing(self, timeout: Timeout, completed: bool) -> Chatting {
         Chatting {
             stage: ChattingStage::Completing(timeout, completed),
+            ..self
         }
     }
 }
@@ -60,9 +78,7 @@ pub fn update_chatting_context(
         ChattingStage::OpeningMenu(timeout, retry_count) => {
             update_opening_menu(context, chatting, timeout, retry_count)
         }
-        ChattingStage::Typing(timeout, index) => {
-            update_typing(context, state, chatting, timeout, index)
-        }
+        ChattingStage::Typing(timeout, index) => update_typing(context, chatting, timeout, index),
         ChattingStage::Completing(timeout, _) => update_completing(context, chatting, timeout),
     };
     let next = if matches!(chatting.stage, ChattingStage::Completing(_, true)) {
@@ -107,7 +123,6 @@ fn update_opening_menu(
 
 fn update_typing(
     context: &Context,
-    state: &PlayerState,
     chatting: Chatting,
     timeout: Timeout,
     index: usize,
@@ -117,16 +132,18 @@ fn update_typing(
             chatting.stage_typing(timeout, index)
         }
         Lifecycle::Ended => {
-            let Some(key) = state
-                .chat_content()
-                .and_then(|content| content.chars().nth(index))
+            let Some(key) = chatting
+                .content
+                .as_slice()
+                .get(index)
+                .copied()
                 .and_then(to_key_kind)
             else {
                 return chatting.stage_completing(Timeout::default(), false);
             };
             let _ = context.input.send_key(key);
 
-            if index + 1 < state.chat_content().expect("has value").chars().count() {
+            if index + 1 < chatting.content.len() {
                 chatting.stage_typing(Timeout::default(), index + 1)
             } else {
                 let _ = context.input.send_key(KeyKind::Enter);
@@ -199,7 +216,6 @@ fn to_key_kind(character: char) -> Option<KeyKind> {
         ',' => Some(KeyKind::Comma),
         '.' => Some(KeyKind::Period),
         '/' => Some(KeyKind::Slash),
-        '\x1B' => Some(KeyKind::Esc), // Escape character
 
         _ => None,
     }
@@ -212,7 +228,7 @@ mod tests {
     use mockall::predicate::eq;
 
     use super::*;
-    use crate::{bridge::MockInput, context::Context, detect::MockDetector, player::PlayerState};
+    use crate::{bridge::MockInput, context::Context, detect::MockDetector};
 
     #[test]
     fn update_opening_menu_detects_chat_menu_and_transitions_to_typing() {
@@ -220,7 +236,7 @@ mod tests {
         detector.expect_detect_chat_menu_opened().returning(|| true);
 
         let context = Context::new(None, Some(detector));
-        let chatting = Chatting::default();
+        let chatting = Chatting::new(Array::new());
         let timeout = Timeout {
             current: 35,
             started: true,
@@ -239,7 +255,7 @@ mod tests {
             .returning(|| false);
 
         let context = Context::new(None, Some(detector));
-        let chatting = Chatting::default();
+        let chatting = Chatting::new(Array::new());
         let timeout = Timeout {
             current: 35,
             started: true,
@@ -258,7 +274,7 @@ mod tests {
             .returning(|| false);
 
         let context = Context::new(None, Some(detector));
-        let chatting = Chatting::default();
+        let chatting = Chatting::new(Array::new());
         let timeout = Timeout {
             current: 35,
             started: true,
@@ -271,9 +287,6 @@ mod tests {
 
     #[test]
     fn update_typing_sends_character_key_and_progresses() {
-        let mut state = PlayerState::default();
-        state.set_chat_content("abcd".to_string());
-
         let mut keys = MockInput::default();
         keys.expect_send_key()
             .once()
@@ -288,12 +301,11 @@ mod tests {
             .with(eq(KeyKind::C))
             .returning(|_| Ok(()));
         let context = Context::new(Some(keys), None);
-        let mut chatting = Chatting::default();
+        let mut chatting = Chatting::new(Array::from_iter(['a', 'b', 'c', 'd']));
 
         for i in 0..3 {
             chatting = update_typing(
                 &context,
-                &state,
                 chatting,
                 Timeout {
                     current: 5,
@@ -308,9 +320,6 @@ mod tests {
 
     #[test]
     fn update_typing_finishes_after_last_character() {
-        let mut state = PlayerState::default();
-        state.set_chat_content("a".into());
-
         let mut keys = MockInput::default();
         keys.expect_send_key()
             .once()
@@ -322,10 +331,9 @@ mod tests {
             .returning(|_| Ok(()));
         let context = Context::new(Some(keys), None);
 
-        let chatting = Chatting::default();
+        let chatting = Chatting::new(Array::from_iter(['a']));
         let result = update_typing(
             &context,
-            &state,
             chatting,
             Timeout {
                 current: 5,
@@ -339,14 +347,11 @@ mod tests {
 
     #[test]
     fn update_typing_completes_if_char_not_found() {
-        let state = PlayerState::default(); // No chat_content
-
         let context = Context::new(None, None);
-        let chatting = Chatting::default();
+        let chatting = Chatting::new(Array::new());
 
         let result = update_typing(
             &context,
-            &state,
             chatting,
             Timeout {
                 current: 5,
@@ -370,7 +375,7 @@ mod tests {
             .returning(|_| Ok(()));
 
         let context = Context::new(Some(keys), Some(detector));
-        let chatting = Chatting::default();
+        let chatting = Chatting::new(Array::new());
 
         let result = update_completing(
             &context,

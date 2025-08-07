@@ -328,7 +328,7 @@ fn on_player_action(
         })
         | PlayerAction::SolveRune
         | PlayerAction::Move { .. } => None,
-        PlayerAction::Chatting | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwapping(_) => {
+        PlayerAction::Chat(_) | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwapping(_) => {
             unreachable!()
         }
     }
@@ -679,7 +679,7 @@ mod tests {
         let context = Context::new(Some(keys), None);
         let result = on_ping_pong_use_key_action(
             &context,
-            action,
+            action.clone(),
             cur_pos,
             bound,
             PingPongDirection::Right,

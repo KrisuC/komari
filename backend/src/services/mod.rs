@@ -22,7 +22,9 @@ use crate::{
     database::Seeds,
     minimap::MinimapState,
     navigator::Navigator,
-    player::{PanicTo, Panicking, Player, PlayerAction, PlayerState},
+    player::{
+        ChattingContent, PanicTo, Panicking, Player, PlayerAction, PlayerActionChat, PlayerState,
+    },
     poll_request,
     rotator::Rotator,
     services::{
@@ -224,7 +226,8 @@ impl DefaultRequestHandler<'_> {
                 }
                 BotCommandKind::Status => {
                     let (status, frame) = state_and_frame(self.args.context);
-                    let attachment = frame.map(|bytes| CreateAttachment::bytes(bytes, "image.png"));
+                    let attachment =
+                        frame.map(|bytes| CreateAttachment::bytes(bytes, "image.webp"));
 
                     let mut builder = EditInteractionResponse::new().content(status);
                     if let Some(attachment) = attachment {
@@ -242,18 +245,27 @@ impl DefaultRequestHandler<'_> {
                     else {
                         return;
                     };
+                    if content.chars().count() >= ChattingContent::MAX_LENGTH {
+                        let _ =
+                            command
+                                .sender
+                                .send(EditInteractionResponse::new().content(format!(
+                                    "Message length must be less than {} characters.",
+                                    ChattingContent::MAX_LENGTH
+                                )));
+                        return;
+                    }
+
                     let _ = command
                         .sender
                         .send(EditInteractionResponse::new().content("Queued a chat action."));
                     let is_halting = self.args.context.operation.halting();
+                    let action = PlayerAction::Chat(PlayerActionChat { content });
 
-                    self.args.player.set_chat_content(content);
                     if is_halting {
-                        self.args
-                            .player
-                            .set_priority_action(None, PlayerAction::Chatting);
+                        self.args.player.set_priority_action(None, action);
                     } else {
-                        self.args.rotator.inject_action(PlayerAction::Chatting);
+                        self.args.rotator.inject_action(action);
                     }
                 }
             }
@@ -508,7 +520,7 @@ fn duration_from(instant: Instant) -> String {
 #[inline]
 fn frame_from(mat: &impl ToInputArray) -> Option<Vec<u8>> {
     let mut vector = Vector::new();
-    imencode_def(".png", mat, &mut vector).ok()?;
+    imencode_def(".webp", mat, &mut vector).ok()?;
     Some(Vec::from_iter(vector))
 }
 

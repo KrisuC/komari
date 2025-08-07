@@ -149,7 +149,7 @@ impl UseKey {
             PlayerAction::FamiliarsSwapping(_)
             | PlayerAction::SolveRune
             | PlayerAction::Panic(_)
-            | PlayerAction::Chatting
+            | PlayerAction::Chat(_)
             | PlayerAction::Move { .. } => {
                 unreachable!()
             }
@@ -364,7 +364,7 @@ pub fn update_use_key_context(
             PlayerAction::Key(_) => Some((next, matches!(next, Player::Idle))),
             PlayerAction::Move(_) => None,
             PlayerAction::FamiliarsSwapping(_)
-            | PlayerAction::Chatting
+            | PlayerAction::Chat(_)
             | PlayerAction::SolveRune
             | PlayerAction::Panic(_) => unreachable!(),
         },

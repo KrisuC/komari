@@ -224,7 +224,7 @@ pub fn update_up_jumping_context(
                     })
                     | PlayerAction::Move(_)
                     | PlayerAction::SolveRune => None,
-                    PlayerAction::Chatting
+                    PlayerAction::Chat(_)
                     | PlayerAction::Panic(_)
                     | PlayerAction::FamiliarsSwapping(_) => unreachable!(),
                 },
