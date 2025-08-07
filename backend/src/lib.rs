@@ -5,6 +5,7 @@
 #![feature(iter_array_chunks)]
 #![feature(vec_deque_pop_if)]
 #![feature(associated_type_defaults)]
+#![feature(string_into_chars)]
 #![feature(assert_matches)]
 
 use std::{

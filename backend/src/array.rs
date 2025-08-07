@@ -1,17 +1,25 @@
-use std::ops::{Index, IndexMut};
+use std::{
+    mem,
+    ops::{Index, IndexMut},
+    slice::{Iter, IterMut},
+};
 
-/// A fixed size array.
-#[derive(Debug)]
-pub struct Array<T, const N: usize> {
-    inner: [Option<T>; N],
+/// A fixed size copy array.
+#[derive(Debug, Clone, Copy)]
+pub struct Array<T: Copy, const N: usize> {
+    /// Inner array.
+    ///
+    /// All items in the range `0..len` are valid and initialized.
+    inner: [T; N],
+    /// Length of this array.
     len: usize,
 }
 
-impl<T, const N: usize> Array<T, N> {
+impl<T: Copy, const N: usize> Array<T, N> {
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
-            inner: [const { None }; N],
+            inner: [unsafe { mem::zeroed() }; N],
             len: 0,
         }
     }
@@ -19,16 +27,18 @@ impl<T, const N: usize> Array<T, N> {
     #[inline]
     pub fn push(&mut self, value: T) {
         assert!(self.len < N);
+
         let index = self.len;
         self.len += 1;
-        self.inner[index] = Some(value);
+        self.inner[index] = value;
     }
 
     #[inline]
     pub fn remove(&mut self, index: usize) {
         assert!(index < self.len);
+
         for i in index..self.len - 1 {
-            self.inner[i] = self.inner[i + 1].take();
+            self.inner[i] = self.inner[i + 1];
         }
         self.len -= 1;
     }
@@ -44,91 +54,73 @@ impl<T, const N: usize> Array<T, N> {
     }
 
     /// Retrieves the slice from the array.
-    ///
-    /// Each element in the returned slice is guaranteed to be [`Some<T>`].
     #[inline]
-    pub fn as_slice(&self) -> &[Option<T>] {
+    pub fn as_slice(&self) -> &[T] {
         &self.inner[0..self.len]
     }
 
     #[inline]
-    pub fn iter(&self) -> Iter<'_, T, N> {
-        Iter {
-            array: self,
-            index: 0,
-        }
+    pub fn iter(&self) -> Iter<'_, T> {
+        self.as_slice().iter()
     }
 
     #[inline]
-    pub fn iter_mut(&mut self) -> IterMut<'_, T, N> {
-        IterMut {
-            array: self,
-            index: 0,
-        }
+    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
+        self.inner[0..self.len].iter_mut()
     }
 }
 
-impl<T: Clone, const N: usize> Clone for Array<T, N> {
-    fn clone(&self) -> Self {
-        let mut array = Array::<T, N>::new();
-        for item in self {
-            array.push(item.clone());
-        }
-        array
-    }
-}
-
-impl<T: Copy, const N: usize> Copy for Array<T, N> {}
-
-impl<T: PartialEq, const N: usize> PartialEq for Array<T, N> {
-    fn eq(&self, other: &Self) -> bool {
-        self.inner == other.inner
-    }
-}
-
-impl<T, const N: usize> Index<usize> for Array<T, N> {
-    type Output = T;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        self.inner[index].as_ref().unwrap()
-    }
-}
-
-impl<T, const N: usize> IndexMut<usize> for Array<T, N> {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        self.inner[index].as_mut().unwrap()
-    }
-}
-
-impl<T: Eq, const N: usize> Eq for Array<T, N> {}
-
-impl<T, const N: usize> Default for Array<T, N> {
+impl<T: Copy + PartialEq, const N: usize> Default for Array<T, N> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<A, const N: usize> FromIterator<A> for Array<A, N> {
+impl<T: Copy + PartialEq, const N: usize> PartialEq for Array<T, N> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl<T: Copy + Eq, const N: usize> Eq for Array<T, N> {}
+
+impl<T: Copy, const N: usize> Index<usize> for Array<T, N> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        assert!(index < self.len);
+        self.inner.get(index).unwrap()
+    }
+}
+
+impl<T: Copy, const N: usize> IndexMut<usize> for Array<T, N> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        assert!(index < self.len);
+        self.inner.get_mut(index).unwrap()
+    }
+}
+
+impl<A: Copy, const N: usize> FromIterator<A> for Array<A, N> {
     fn from_iter<T: IntoIterator<Item = A>>(iter: T) -> Self {
         let mut array = Array::new();
-        for elem in iter {
-            array.push(elem);
+        for item in iter {
+            array.push(item);
         }
         array
     }
 }
 
-impl<'a, T, const N: usize> IntoIterator for &'a Array<T, N> {
+impl<'a, T: Copy + 'a, const N: usize> IntoIterator for &'a Array<T, N> {
     type Item = &'a T;
 
-    type IntoIter = Iter<'a, T, N>;
+    type IntoIter = Iter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
 
-impl<T, const N: usize> IntoIterator for Array<T, N> {
+impl<T: Copy, const N: usize> IntoIterator for Array<T, N> {
     type Item = T;
 
     type IntoIter = IntoIter<T, N>;
@@ -141,45 +133,17 @@ impl<T, const N: usize> IntoIterator for Array<T, N> {
     }
 }
 
-pub struct Iter<'a, T: 'a, const N: usize> {
-    array: &'a Array<T, N>,
-    index: usize,
-}
-
-impl<'a, T, const N: usize> Iterator for Iter<'a, T, N> {
-    type Item = &'a T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let index = advance_iter_index(&mut self.index, self.array.len)?;
-        self.array.inner[index].as_ref()
-    }
-}
-
-pub struct IterMut<'a, T: 'a, const N: usize> {
-    array: &'a mut Array<T, N>,
-    index: usize,
-}
-
-impl<'a, T, const N: usize> Iterator for IterMut<'a, T, N> {
-    type Item = &'a mut T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let index = advance_iter_index(&mut self.index, self.array.len)?;
-        unsafe { &mut *self.array.inner.as_mut_ptr().add(index) }.as_mut()
-    }
-}
-
-pub struct IntoIter<T, const N: usize> {
+pub struct IntoIter<T: Copy, const N: usize> {
     array: Array<T, N>,
     index: usize,
 }
 
-impl<T, const N: usize> Iterator for IntoIter<T, N> {
+impl<T: Copy, const N: usize> Iterator for IntoIter<T, N> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
         let index = advance_iter_index(&mut self.index, self.array.len)?;
-        self.array.inner[index].take()
+        self.array.inner.get(index).copied()
     }
 }
 
@@ -292,7 +256,7 @@ mod tests {
         }
 
         let slice = array.as_slice();
-        let expected = vec![Some(0), Some(1), Some(2), Some(3)];
+        let expected = vec![0, 1, 2, 3];
 
         assert_eq!(slice.len(), 4);
         assert_eq!(slice, expected.as_slice());

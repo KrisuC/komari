@@ -49,8 +49,9 @@ mod use_key;
 
 pub use {
     actions::PanicTo, actions::PingPongDirection, actions::PlayerAction,
-    actions::PlayerActionAutoMob, actions::PlayerActionFamiliarsSwapping, actions::PlayerActionKey,
-    actions::PlayerActionMove, actions::PlayerActionPanic, actions::PlayerActionPingPong,
+    actions::PlayerActionAutoMob, actions::PlayerActionChat,
+    actions::PlayerActionFamiliarsSwapping, actions::PlayerActionKey, actions::PlayerActionMove,
+    actions::PlayerActionPanic, actions::PlayerActionPingPong, chat::ChattingContent,
     double_jump::DOUBLE_JUMP_THRESHOLD, grapple::GRAPPLING_MAX_THRESHOLD,
     grapple::GRAPPLING_THRESHOLD, panic::Panicking, state::PlayerState, state::Quadrant,
 };

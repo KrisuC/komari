@@ -231,7 +231,7 @@ fn on_player_action(
         })
         | PlayerAction::SolveRune
         | PlayerAction::Move(_) => None,
-        PlayerAction::Chatting
+        PlayerAction::Chat(_)
         | PlayerAction::PingPong(_)
         | PlayerAction::Panic(_)
         | PlayerAction::FamiliarsSwapping(_) => {

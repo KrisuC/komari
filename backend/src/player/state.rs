@@ -287,10 +287,6 @@ pub struct PlayerState {
     velocity_samples: Array<(Point, u64), VELOCITY_SAMPLES>,
     /// Approximated player velocity.
     pub(super) velocity: (f32, f32),
-    /// Chat content for [`Player::Chatting`].
-    ///
-    /// TODO: Consider making [`Player`] [`Clone`] instead.
-    chat_content: Option<String>,
 }
 
 impl PlayerState {
@@ -318,13 +314,13 @@ impl PlayerState {
 
     #[cfg(test)]
     pub fn normal_action(&self) -> Option<PlayerAction> {
-        self.normal_action
+        self.normal_action.clone()
     }
 
     /// The normal action name for displaying to UI.
     #[inline]
     pub fn normal_action_name(&self) -> Option<String> {
-        self.normal_action.map(|action| action.to_string())
+        self.normal_action.as_ref().map(|action| action.to_string())
     }
 
     /// The normal action id provided by [`Rotator`].
@@ -361,7 +357,9 @@ impl PlayerState {
     /// The priority action name for displaying to UI.
     #[inline]
     pub fn priority_action_name(&self) -> Option<String> {
-        self.priority_action.map(|action| action.to_string())
+        self.priority_action
+            .as_ref()
+            .map(|action| action.to_string())
     }
 
     /// The priority action id provided by [`Rotator`].
@@ -415,18 +413,6 @@ impl PlayerState {
         } else {
             None
         }
-    }
-
-    /// Gets the currently set chat content for [`Player::Chatting`].
-    #[inline]
-    pub(super) fn chat_content(&self) -> Option<&String> {
-        self.chat_content.as_ref()
-    }
-
-    /// Sets chat content to be used by [`Player::Chatting`].
-    #[inline]
-    pub fn set_chat_content(&mut self, content: String) {
-        self.chat_content = Some(content);
     }
 
     /// Whether the player is validating whether the rune is solved.
@@ -857,11 +843,11 @@ impl PlayerState {
             self.auto_mob_populate_ignore_xs(context);
         }
 
-        let (x, y) = match self.normal_action.unwrap() {
+        let (x, y) = match self.normal_action.clone().unwrap() {
             PlayerAction::AutoMob(mob) => (mob.position.x, mob.position.y),
             PlayerAction::FamiliarsSwapping(_)
             | PlayerAction::PingPong(_)
-            | PlayerAction::Chatting
+            | PlayerAction::Chat(_)
             | PlayerAction::Key(_)
             | PlayerAction::Move(_)
             | PlayerAction::Panic(_)
@@ -1058,8 +1044,8 @@ impl PlayerState {
                 .windows(2)
                 .enumerate()
                 .fold(((0.0, 0.0), 0.0), |(acc_sum, acc_weight), (i, window)| {
-                    let a = window[0].unwrap();
-                    let b = window[1].unwrap();
+                    let a = window[0];
+                    let b = window[1];
                     let dt = b.1 - a.1;
                     if dt == 0 {
                         return (acc_sum, acc_weight);

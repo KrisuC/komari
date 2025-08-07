@@ -46,9 +46,9 @@ pub fn update_stalling_context(
                 Some((next, matches!(next, Player::Idle)))
             }
             PlayerAction::SolveRune => None,
-            PlayerAction::Chatting
-            | PlayerAction::Panic(_)
-            | PlayerAction::FamiliarsSwapping(_) => unreachable!(),
+            PlayerAction::Chat(_) | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwapping(_) => {
+                unreachable!()
+            }
         },
         || next,
     )

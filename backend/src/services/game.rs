@@ -14,7 +14,6 @@ use crate::{
     Action, ActionCondition, ActionConfigurationCondition, ActionKey, BoundQuadrant, Character,
     DatabaseEvent, GameOperation, GameState, KeyBinding, KeyBindingConfiguration, Minimap,
     PotionMode, Settings,
-    array::Array,
     bridge::InputReceiver,
     buff::BuffKind,
     context::{Context, Operation},
@@ -40,7 +39,7 @@ pub trait GameService: Debug {
         minimap_id: Option<i64>,
         character_id: Option<i64>,
         settings: &Settings,
-    ) -> Array<GameEvent, 2>;
+    ) -> Vec<GameEvent>;
 
     /// Gets the currently in use actions.
     fn actions(&self) -> &[Action];
@@ -103,8 +102,8 @@ impl GameService for DefaultGameService {
         minimap_id: Option<i64>,
         character_id: Option<i64>,
         settings: &Settings,
-    ) -> Array<GameEvent, 2> {
-        let mut events = Array::new();
+    ) -> Vec<GameEvent> {
+        let mut events = Vec::new();
 
         if let Some(event) = poll_key(self, settings) {
             events.push(event);

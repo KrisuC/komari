@@ -167,8 +167,13 @@ pub enum PanicTo {
     Channel,
 }
 
+#[derive(Clone, Debug)]
+pub struct PlayerActionChat {
+    pub content: String,
+}
+
 /// Represents an action the [`Rotator`] can use.
-#[derive(Clone, Copy, Debug, Display)]
+#[derive(Clone, Debug, Display)]
 pub enum PlayerAction {
     /// Fixed key action provided by the user.
     Key(PlayerActionKey),
@@ -185,7 +190,7 @@ pub enum PlayerAction {
     FamiliarsSwapping(PlayerActionFamiliarsSwapping),
     /// Panicking to town or another channel action.
     Panic(PlayerActionPanic),
-    Chatting,
+    Chat(PlayerActionChat),
 }
 
 impl From<Action> for PlayerAction {
@@ -302,8 +307,11 @@ pub fn on_action_state_mut(
     on_action_context: impl FnOnce(&mut PlayerState, PlayerAction) -> Option<(Player, bool)>,
     on_default_context: impl FnOnce() -> Player,
 ) -> Player {
-    if let Some(action) = state.priority_action.or(state.normal_action)
-        && let Some((next, is_terminal)) = on_action_context(state, action)
+    if let Some(action) = state
+        .priority_action
+        .clone()
+        .or(state.normal_action.clone())
+        && let Some((next, is_terminal)) = on_action_context(state, action.clone())
     {
         debug_assert!(state.has_normal_action() || state.has_priority_action());
         if is_terminal {
@@ -320,7 +328,7 @@ pub fn on_action_state_mut(
                 PlayerAction::Panic(_)
                 | PlayerAction::FamiliarsSwapping(_)
                 | PlayerAction::AutoMob(_)
-                | PlayerAction::Chatting
+                | PlayerAction::Chat(_)
                 | PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
             }
             // FIXME: clear only when has position?

@@ -167,7 +167,7 @@ fn on_player_action(
         | PlayerAction::PingPong(_)
         | PlayerAction::Move(_)
         | PlayerAction::SolveRune => None,
-        PlayerAction::Chatting | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwapping(_) => {
+        PlayerAction::Chat(_) | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwapping(_) => {
             unreachable!()
         }
     }
