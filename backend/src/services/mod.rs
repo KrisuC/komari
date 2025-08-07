@@ -226,7 +226,8 @@ impl DefaultRequestHandler<'_> {
                 }
                 BotCommandKind::Status => {
                     let (status, frame) = state_and_frame(self.args.context);
-                    let attachment = frame.map(|bytes| CreateAttachment::bytes(bytes, "image.png"));
+                    let attachment =
+                        frame.map(|bytes| CreateAttachment::bytes(bytes, "image.webp"));
 
                     let mut builder = EditInteractionResponse::new().content(status);
                     if let Some(attachment) = attachment {
@@ -519,7 +520,7 @@ fn duration_from(instant: Instant) -> String {
 #[inline]
 fn frame_from(mat: &impl ToInputArray) -> Option<Vec<u8>> {
     let mut vector = Vector::new();
-    imencode_def(".png", mat, &mut vector).ok()?;
+    imencode_def(".webp", mat, &mut vector).ok()?;
     Some(Vec::from_iter(vector))
 }
 
