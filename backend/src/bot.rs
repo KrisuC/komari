@@ -9,18 +9,16 @@ use serenity::all::{
 };
 use serenity::{Client, async_trait};
 use strum::{Display, EnumIter, EnumMessage, EnumString, IntoEnumIterator};
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-use tokio::time::{self, Instant};
 use tokio::{
     runtime::Handle,
     spawn,
     sync::{
+        Mutex,
         mpsc::{Receiver, Sender, channel},
         oneshot,
     },
-    task::block_in_place,
-    time::timeout,
+    task::{JoinHandle, block_in_place},
+    time::{Instant, sleep, timeout},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -168,16 +166,40 @@ impl EventHandler for DefaultEventHandler {
                     stop_stream_command(self, context, command).await;
                 }
                 BotCommandKindInner::Start => {
-                    single_command(self, context, command, BotCommandKind::Start).await;
+                    single_command(
+                        &self.command_sender,
+                        &context,
+                        &command,
+                        BotCommandKind::Start,
+                    )
+                    .await;
                 }
                 BotCommandKindInner::Stop => {
-                    single_command(self, context, command, BotCommandKind::Stop).await;
+                    single_command(
+                        &self.command_sender,
+                        &context,
+                        &command,
+                        BotCommandKind::Stop,
+                    )
+                    .await;
                 }
                 BotCommandKindInner::Status => {
-                    single_command(self, context, command, BotCommandKind::Status).await;
+                    single_command(
+                        &self.command_sender,
+                        &context,
+                        &command,
+                        BotCommandKind::Status,
+                    )
+                    .await;
                 }
                 BotCommandKindInner::Chat => {
-                    single_command(self, context, command, BotCommandKind::Chat).await;
+                    single_command(
+                        &self.command_sender,
+                        &context,
+                        &command,
+                        BotCommandKind::Chat,
+                    )
+                    .await;
                 }
             }
         }
@@ -185,9 +207,9 @@ impl EventHandler for DefaultEventHandler {
 }
 
 async fn single_command(
-    handler: &DefaultEventHandler,
-    context: Context,
-    command: CommandInteraction,
+    sender: &Sender<BotCommand>,
+    context: &Context,
+    command: &CommandInteraction,
     kind: BotCommandKind,
 ) {
     let (tx, rx) = oneshot::channel();
@@ -196,8 +218,8 @@ async fn single_command(
         options: command.data.options.clone(),
         sender: tx,
     };
-    if handler.command_sender.send(inner).await.is_err() {
-        response_with(&context, &command, "Command failed, please try again.").await;
+    if sender.send(inner).await.is_err() {
+        response_with(context, command, "Command failed, please try again.").await;
         return;
     }
 
@@ -208,7 +230,7 @@ async fn single_command(
     {
         Some(builder) => builder,
         None => {
-            response_with(&context, &command, "Command failed, please try again.").await;
+            response_with(context, command, "Command failed, please try again.").await;
             return;
         }
     };
@@ -231,38 +253,9 @@ async fn start_stream_command(
         let start_time = Instant::now();
         let max_duration = Duration::from_mins(15);
         while start_time.elapsed() < max_duration {
-            let (tx, rx) = oneshot::channel();
-            let inner = BotCommand {
-                kind: BotCommandKind::Status,
-                options: command.data.options.clone(),
-                sender: tx,
-            };
-            if sender.send(inner).await.is_err() {
-                response_with(&context, &command, "Streaming failed abrubtly.").await;
-                break;
-            }
-
-            let builder = match timeout(Duration::from_secs(10), rx)
-                .await
-                .ok()
-                .and_then(|inner| inner.ok())
-            {
-                Some(builder) => builder,
-                None => {
-                    response_with(&context, &command, "Streaming failed abrubtly.").await;
-                    return;
-                }
-            };
-            if command
-                .edit_response(context.http(), builder)
-                .await
-                .is_err()
-            {
-                break;
-            }
-            time::sleep(Duration::from_millis(500)).await;
+            single_command(&sender, &context, &command, BotCommandKind::Status).await;
+            sleep(Duration::from_millis(500)).await;
         }
-
         response_with(&context, &command, "Streaming finished.").await;
     });
 
