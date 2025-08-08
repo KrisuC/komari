@@ -37,7 +37,10 @@ enum BotCommandKindInner {
     Stop,
     #[strum(to_string = "status", message = "See bot current status")]
     Status,
-    #[strum(to_string = "chat", message = "Send a message inside the game")]
+    #[strum(
+        to_string = "chat",
+        message = "Send a message inside the game (256 characters max)"
+    )]
     Chat,
     #[strum(
         to_string = "start-stream",

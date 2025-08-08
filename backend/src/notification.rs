@@ -10,11 +10,8 @@ use std::{
 use anyhow::{Error, Ok, bail};
 use bit_vec::BitVec;
 use log::{debug, error};
-use reqwest::{
-    Client, Url,
-    multipart::{Form, Part},
-};
-use serde::Serialize;
+use reqwest::Url;
+use serenity::all::{CreateAttachment, ExecuteWebhook, Http, Webhook};
 use tokio::{
     spawn,
     time::{Instant, sleep},
@@ -55,42 +52,35 @@ impl Index<NotificationKind> for BitVec {
     }
 }
 
+/// A notification scheduled to be sending.
 #[derive(Debug)]
 struct ScheduledNotification {
-    /// The instant it was scheduled
+    /// The instant it was scheduled.
     instant: Instant,
+    /// The kind of notification.
     kind: NotificationKind,
+    /// The webhook url.
     url: String,
-    body: DiscordWebhookBody,
-    /// Stores fixed size tuples of frame and frame deadline in seconds
+    /// The content of the message.
+    content: String,
+    /// The username of the message's owner.
+    username: &'static str,
+    /// Stores fixed size tuples of frame and frame deadline in seconds.
     ///
     /// During each [`DiscordNotification::update_schedule`], the first frame not passing the
     /// deadline will try to capture the image from current game state. This is useful for showing
-    /// `before and after` whnen map changes. So frame that cannot capture when the deadline is
+    /// `before and after` when map changes. So frame that cannot capture when the deadline is
     /// reached will be skipped.
     frames: Vec<(Option<Vec<u8>>, u32)>,
 }
 
-#[derive(Serialize, Debug)]
-struct DiscordWebhookBody {
-    content: String,
-    username: &'static str,
-    attachments: Vec<DiscordAttachment>,
-}
-
-#[derive(Serialize, Debug)]
-struct DiscordAttachment {
-    id: usize,
-    description: String,
-    filename: String,
-}
-
 #[derive(Debug)]
 pub struct DiscordNotification {
-    client: Client,
+    /// A reference to [`Settings`] for checking if a notification is enabled.
     settings: Rc<RefCell<Settings>>,
+    /// Stores pending notifications.
     scheduled: Arc<Mutex<Vec<ScheduledNotification>>>,
-    /// Storing currently incomplete / pending notifications
+    /// Storing currently incomplete / pending notification kinds.
     ///
     /// There can only be one unique [`NotificationKind`] scheduled at a time.
     pending: Arc<Mutex<BitVec>>,
@@ -99,7 +89,6 @@ pub struct DiscordNotification {
 impl DiscordNotification {
     pub fn new(settings: Rc<RefCell<Settings>>) -> Self {
         Self {
-            client: Client::new(),
             settings,
             scheduled: Arc::new(Mutex::new(vec![])),
             pending: Arc::new(Mutex::new(BitVec::from_elem(
@@ -181,11 +170,6 @@ impl DiscordNotification {
                 format!("{user_id}Bot has detected friend player(s)")
             }
         };
-        let body = DiscordWebhookBody {
-            content,
-            username: "maple-bot",
-            attachments: vec![],
-        };
         let frames = match kind {
             NotificationKind::FailOrMapChange => vec![(None, 2), (None, 4)],
             NotificationKind::EliteBossAppear
@@ -210,12 +194,12 @@ impl DiscordNotification {
             instant: Instant::now(),
             kind,
             url,
+            content,
+            username: "maple-bot",
             frames,
-            body,
         });
         pending.set(kind.into(), true);
 
-        let client = self.client.clone();
         let pending = self.pending.clone();
         let scheduled = self.scheduled.clone();
         spawn(async move {
@@ -243,7 +227,7 @@ impl DiscordNotification {
                     .unwrap()
             );
             pending.lock().unwrap().set(kind.into(), false);
-            let _ = post_notification(client, notification).await;
+            let _ = post_notification(notification).await;
         });
 
         Ok(())
@@ -268,46 +252,25 @@ impl DiscordNotification {
     }
 }
 
-async fn post_notification(
-    client: Client,
-    mut notification: ScheduledNotification,
-) -> Result<(), Error> {
-    for i in 0..notification
-        .frames
-        .iter()
-        .filter(|(frame, _)| frame.is_some())
-        .count()
-    {
-        notification.body.attachments.push(DiscordAttachment {
-            id: i,
-            description: format!("Game snapshot #{i}"),
-            filename: format!("image_{i}.png"),
-        });
-    }
-
-    let mut form = Form::new().text(
-        "payload_json",
-        serde_json::to_string(&notification.body).unwrap(),
-    );
-    for (i, frame) in notification
+async fn post_notification(notification: ScheduledNotification) -> Result<(), Error> {
+    let http = Http::new("");
+    let webhook = Webhook::from_url(&http, &notification.url).await?;
+    let files = notification
         .frames
         .into_iter()
         .filter_map(|(frame, _)| frame)
         .enumerate()
-    {
-        form = form.part(
-            format!("files[{i}]"),
-            Part::bytes(frame)
-                .mime_str("image/png")
-                .unwrap()
-                .file_name(format!("image_{i}.png")),
-        );
-    }
+        .map(|(index, frame)| {
+            CreateAttachment::bytes(frame, format!("image_{index}.png"))
+                .description(format!("Game snapshot #{index}"))
+        });
 
-    let _ = client
-        .post(notification.url)
-        .multipart(form)
-        .send()
+    let builder = ExecuteWebhook::new()
+        .content(notification.content)
+        .username(notification.username)
+        .files(files);
+    let _ = webhook
+        .execute(&http, false, builder)
         .await
         .inspect(|_| {
             debug!(target: "notification", "calling Webhook API {:?} succeeded", notification.kind);
@@ -325,7 +288,7 @@ mod test {
 
     use tokio::time::{Instant, advance};
 
-    use super::{DiscordNotification, DiscordWebhookBody, NotificationKind, ScheduledNotification};
+    use super::{DiscordNotification, NotificationKind, ScheduledNotification};
     use crate::{Notifications, Settings};
 
     #[tokio::test(start_paused = true)]
@@ -386,12 +349,9 @@ mod test {
             instant: Instant::now(),
             kind: NotificationKind::FailOrMapChange,
             url: "https://example.com".into(),
+            content: "content".into(),
+            username: "username",
             frames: vec![(None, 3), (None, 6), (None, 9)],
-            body: DiscordWebhookBody {
-                content: "content".into(),
-                username: "username",
-                attachments: vec![],
-            },
         });
 
         advance(Duration::from_secs(4)).await;
