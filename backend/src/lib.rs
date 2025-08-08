@@ -11,7 +11,7 @@
 
 use std::{
     sync::{LazyLock, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use strum::Display;
@@ -89,7 +89,7 @@ macro_rules! expect_variant {
 /// Represents request from UI.
 #[derive(Debug)]
 enum Request {
-    RotateActions(bool),
+    RotateActions(RotateKind),
     CreateMinimap(String),
     UpdateMinimap(Option<String>, Option<Minimap>),
     CreateNavigationPath,
@@ -153,7 +153,7 @@ enum Response {
 
 /// Request handler of incoming requests from UI.
 pub(crate) trait RequestHandler {
-    fn on_rotate_actions(&mut self, halting: bool);
+    fn on_rotate_actions(&mut self, kind: RotateKind);
 
     fn on_create_minimap(&self, name: String) -> Option<Minimap>;
 
@@ -236,15 +236,23 @@ pub struct GameState {
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum GameOperation {
     Halting,
+    TemporaryHalting(Duration),
     HaltUntil(Instant),
     Running,
     RunUntil(Instant),
 }
 
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum RotateKind {
+    Halt,
+    TemporaryHalt,
+    Run,
+}
+
 /// Starts or stops rotating the actions.
-pub async fn rotate_actions(halting: bool) {
+pub async fn rotate_actions(kind: RotateKind) {
     expect_variant!(
-        request(Request::RotateActions(halting)).await,
+        request(Request::RotateActions(kind)).await,
         Response::RotateActions
     )
 }

@@ -168,6 +168,9 @@ impl GameService for DefaultGameService {
                 .unwrap_or_default();
             let operation = match context.operation {
                 Operation::HaltUntil { instant, .. } => GameOperation::HaltUntil(instant),
+                Operation::TemporaryHalting { resume, .. } => {
+                    GameOperation::TemporaryHalting(resume)
+                }
                 Operation::Halting => GameOperation::Halting,
                 Operation::Running => GameOperation::Running,
                 Operation::RunUntil { instant, .. } => GameOperation::RunUntil(instant),

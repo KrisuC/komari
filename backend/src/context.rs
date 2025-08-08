@@ -199,6 +199,12 @@ pub enum Operation {
         run_duration_millis: u64,
         stop_duration_millis: u64,
     },
+    TemporaryHalting {
+        resume: Duration,
+        run_duration_millis: u64,
+        stop_duration_millis: u64,
+        once: bool,
+    },
     Halting,
     Running,
     RunUntil {
@@ -212,7 +218,10 @@ pub enum Operation {
 impl Operation {
     #[inline]
     pub fn halting(&self) -> bool {
-        matches!(self, Operation::Halting | Operation::HaltUntil { .. })
+        matches!(
+            self,
+            Operation::Halting | Operation::HaltUntil { .. } | Operation::TemporaryHalting { .. }
+        )
     }
 
     pub fn update_current(
@@ -222,12 +231,18 @@ impl Operation {
         stop_duration_millis: u64,
     ) -> Operation {
         match self {
-            Operation::HaltUntil { .. } => match cycle_run_stop {
+            Operation::HaltUntil {
+                stop_duration_millis: current_stop_duration_millis,
+                ..
+            } => match cycle_run_stop {
                 CycleRunStopMode::None | CycleRunStopMode::Once => Operation::Halting,
                 CycleRunStopMode::Repeat => {
+                    if current_stop_duration_millis == stop_duration_millis {
+                        return self;
+                    }
+
                     let duration = Duration::from_millis(stop_duration_millis);
                     let instant = Instant::now() + duration;
-
                     Operation::HaltUntil {
                         instant,
                         run_duration_millis,
@@ -235,6 +250,18 @@ impl Operation {
                     }
                 }
             },
+            Operation::TemporaryHalting {
+                run_duration_millis: current_run_duration_millis,
+                ..
+            } => {
+                if current_run_duration_millis != run_duration_millis
+                    || matches!(cycle_run_stop, CycleRunStopMode::None)
+                {
+                    Operation::Halting
+                } else {
+                    self
+                }
+            }
             Operation::Halting => Operation::Halting,
             Operation::Running | Operation::RunUntil { .. } => match cycle_run_stop {
                 CycleRunStopMode::None => Operation::Running,
@@ -275,8 +302,7 @@ impl Operation {
                     once: false,
                 }
             }
-            Operation::Halting => Operation::Halting,
-            Operation::Running => Operation::Running,
+            Operation::Halting | Operation::TemporaryHalting { .. } | Operation::Running => self,
             // Imply run/stop cycle enabled
             Operation::RunUntil {
                 instant,

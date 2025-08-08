@@ -14,7 +14,7 @@ use tokio::sync::broadcast::Receiver;
 
 use crate::{
     Character, CycleRunStopMode, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler,
-    Settings,
+    RotateKind, Settings,
     bot::BotCommandKind,
     bridge::{Capture, DefaultCapture, DefaultInput, DefaultInputReceiver, InputMethod},
     buff::BuffState,
@@ -157,7 +157,12 @@ impl DefaultRequestHandler<'_> {
         for event in events {
             match event {
                 GameEvent::ToggleOperation => {
-                    self.update_halting(!self.args.context.operation.halting());
+                    let kind = if self.args.context.operation.halting() {
+                        RotateKind::Run
+                    } else {
+                        RotateKind::Halt
+                    };
+                    self.update_halting(kind);
                 }
                 GameEvent::MinimapUpdated(minimap) => {
                     self.on_update_minimap(self.service.minimap.preset(), minimap)
@@ -210,7 +215,7 @@ impl DefaultRequestHandler<'_> {
                     let _ = command
                         .sender
                         .send(EditInteractionResponse::new().content("Bot started running."));
-                    self.on_rotate_actions(false);
+                    self.on_rotate_actions(RotateKind::Run);
                 }
                 BotCommandKind::Stop => {
                     let go_to_town = command
@@ -280,25 +285,61 @@ impl DefaultRequestHandler<'_> {
         );
     }
 
-    fn update_halting(&mut self, halting: bool) {
+    fn update_halting(&mut self, kind: RotateKind) {
         let settings = self.service.settings.settings();
+        let operation = self.args.context.operation;
 
-        self.args.context.operation = match (halting, settings.cycle_run_stop) {
-            (true, _) => Operation::Halting,
-            (false, CycleRunStopMode::Once | CycleRunStopMode::Repeat) => {
-                let duration = Duration::from_millis(settings.cycle_run_duration_millis);
-                let instant = Instant::now() + duration;
-
-                Operation::RunUntil {
+        self.args.context.operation = match (kind, settings.cycle_run_stop) {
+            (RotateKind::TemporaryHalt, CycleRunStopMode::None) | (RotateKind::Halt, _) => {
+                Operation::Halting
+            }
+            (RotateKind::TemporaryHalt, _) => {
+                if let Operation::RunUntil {
                     instant,
-                    run_duration_millis: settings.cycle_run_duration_millis,
-                    stop_duration_millis: settings.cycle_stop_duration_millis,
-                    once: matches!(settings.cycle_run_stop, CycleRunStopMode::Once),
+                    run_duration_millis,
+                    stop_duration_millis,
+                    once,
+                } = operation
+                {
+                    Operation::TemporaryHalting {
+                        resume: instant.saturating_duration_since(Instant::now()),
+                        run_duration_millis,
+                        stop_duration_millis,
+                        once,
+                    }
+                } else {
+                    Operation::Halting
                 }
             }
-            (false, CycleRunStopMode::None) => Operation::Running,
+            (RotateKind::Run, CycleRunStopMode::Once | CycleRunStopMode::Repeat) => {
+                if let Operation::TemporaryHalting {
+                    resume,
+                    run_duration_millis,
+                    stop_duration_millis,
+                    once,
+                } = operation
+                {
+                    Operation::RunUntil {
+                        instant: Instant::now() + resume,
+                        run_duration_millis,
+                        stop_duration_millis,
+                        once,
+                    }
+                } else {
+                    let duration = Duration::from_millis(settings.cycle_run_duration_millis);
+                    let instant = Instant::now() + duration;
+
+                    Operation::RunUntil {
+                        instant,
+                        run_duration_millis: settings.cycle_run_duration_millis,
+                        stop_duration_millis: settings.cycle_stop_duration_millis,
+                        once: matches!(settings.cycle_run_stop, CycleRunStopMode::Once),
+                    }
+                }
+            }
+            (RotateKind::Run, CycleRunStopMode::None) => Operation::Running,
         };
-        if halting {
+        if matches!(kind, RotateKind::Halt | RotateKind::TemporaryHalt) {
             self.args.rotator.reset_queue();
             self.args.player.clear_actions_aborted(true);
         }
@@ -316,12 +357,12 @@ impl DefaultRequestHandler<'_> {
 }
 
 impl RequestHandler for DefaultRequestHandler<'_> {
-    fn on_rotate_actions(&mut self, halting: bool) {
+    fn on_rotate_actions(&mut self, kind: RotateKind) {
         if self.service.minimap.minimap().is_none() || self.service.character.character().is_none()
         {
             return;
         }
-        self.update_halting(halting);
+        self.update_halting(kind);
     }
 
     fn on_create_minimap(&self, name: String) -> Option<Minimap> {
@@ -392,6 +433,7 @@ impl RequestHandler for DefaultRequestHandler<'_> {
 
     fn on_redetect_minimap(&mut self) {
         self.service.minimap.redetect(self.args.context);
+        self.args.navigator.mark_dirty(true);
     }
 
     fn on_game_state_receiver(&self) -> Receiver<GameState> {
@@ -490,12 +532,16 @@ fn state_and_frame(context: &Context) -> (String, Option<Vec<u8>>) {
     let state = context.player.to_string();
     let operation = match context.operation {
         Operation::HaltUntil { instant, .. } => {
-            format!("Halting for {}", duration_from(instant))
+            format!("Halting for {}", duration_from_instant(instant))
         }
+        Operation::TemporaryHalting { resume, .. } => format!(
+            "Halting temporarily with {} remaining",
+            duration_from(resume)
+        ),
         Operation::Halting => "Halting".to_string(),
         Operation::Running => "Running".to_string(),
         Operation::RunUntil { instant, .. } => {
-            format!("Running for {}", duration_from(instant))
+            format!("Running for {}", duration_from_instant(instant))
         }
     };
     let info = [
@@ -508,8 +554,12 @@ fn state_and_frame(context: &Context) -> (String, Option<Vec<u8>>) {
 }
 
 #[inline]
-fn duration_from(instant: Instant) -> String {
-    let duration = instant.saturating_duration_since(Instant::now());
+fn duration_from_instant(instant: Instant) -> String {
+    duration_from(instant.saturating_duration_since(Instant::now()))
+}
+
+#[inline]
+fn duration_from(duration: Duration) -> String {
     let seconds = duration.as_secs() % 60;
     let minutes = (duration.as_secs() / 60) % 60;
     let hours = (duration.as_secs() / 60) / 60;

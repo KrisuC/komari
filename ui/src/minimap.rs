@@ -7,8 +7,9 @@ use std::{
 
 use backend::{
     Action, ActionKey, ActionMove, DatabaseEvent, GameOperation, Minimap as MinimapData, Position,
-    RotationMode, create_minimap, database_event_receiver, delete_minimap, game_state_receiver,
-    query_minimaps, redetect_minimap, rotate_actions, update_minimap, upsert_minimap,
+    RotateKind, RotationMode, create_minimap, database_event_receiver, delete_minimap,
+    game_state_receiver, query_minimaps, redetect_minimap, rotate_actions, update_minimap,
+    upsert_minimap,
 };
 use dioxus::{document::EvalError, prelude::*};
 use futures_util::StreamExt;
@@ -622,12 +623,9 @@ fn Info(
             info.erda_shower_state = state.erda_shower_state;
             info.cycle_duration = match state.operation {
                 GameOperation::Halting | GameOperation::Running => "None".to_string(),
+                GameOperation::TemporaryHalting(duration) => duration_from(duration),
                 GameOperation::HaltUntil(instant) | GameOperation::RunUntil(instant) => {
-                    let duration = instant.saturating_duration_since(Instant::now());
-                    let seconds = duration.as_secs() % 60;
-                    let minutes = (duration.as_secs() / 60) % 60;
-                    let hours = (duration.as_secs() / 60) / 60;
-                    format!("{hours:0>2}:{minutes:0>2}:{seconds:0>2}")
+                    duration_from(instant.saturating_duration_since(Instant::now()))
                 }
             };
             if let Some((x, y)) = state.position {
@@ -678,22 +676,78 @@ fn Buttons(
     state: ReadOnlySignal<Option<MinimapState>>,
     minimap: ReadOnlySignal<Option<MinimapData>>,
 ) -> Element {
-    let halting = use_memo(move || {
+    let kind = use_memo(move || {
         state()
-            .map(|state| matches!(state.operation, GameOperation::Halting))
-            .unwrap_or_default()
+            .map(|state| match state.operation {
+                GameOperation::Halting => RotateKind::Halt,
+                GameOperation::TemporaryHalting(_) => RotateKind::TemporaryHalt,
+                GameOperation::HaltUntil(_)
+                | GameOperation::Running
+                | GameOperation::RunUntil(_) => RotateKind::Run,
+            })
+            .unwrap_or(RotateKind::Halt)
     });
     let character = use_context::<AppState>().character;
+    let disabled = use_memo(move || minimap().is_none() || character().is_none());
+
+    let start_stop_text = use_memo(move || {
+        if matches!(kind(), RotateKind::Run | RotateKind::TemporaryHalt) {
+            "Stop"
+        } else {
+            "Start"
+        }
+    });
+    let suspend_resume_text = use_memo(move || {
+        state()
+            .map(|state| match state.operation {
+                GameOperation::TemporaryHalting(_) => "Resume",
+                GameOperation::Halting
+                | GameOperation::HaltUntil(_)
+                | GameOperation::Running
+                | GameOperation::RunUntil(_) => "Suspend",
+            })
+            .unwrap_or("Suspend")
+    });
+    let suspend_resume_disabled = use_memo(move || {
+        if disabled() {
+            return true;
+        }
+        state()
+            .map(|state| {
+                !matches!(
+                    state.operation,
+                    GameOperation::TemporaryHalting(_) | GameOperation::RunUntil(_)
+                )
+            })
+            .unwrap_or_default()
+    });
 
     rsx! {
         div { class: "flex h-10 justify-center items-center gap-4",
             Button {
                 class: "w-20",
-                text: if halting() { "Start" } else { "Stop" },
+                text: start_stop_text(),
                 kind: ButtonKind::Primary,
-                disabled: minimap().is_none() || character().is_none(),
+                disabled: disabled(),
                 on_click: move || async move {
-                    rotate_actions(!*halting.peek()).await;
+                    let kind = match *kind.peek() {
+                        RotateKind::Halt => RotateKind::Run,
+                        RotateKind::TemporaryHalt | RotateKind::Run => RotateKind::Halt,
+                    };
+                    rotate_actions(kind).await;
+                },
+            }
+            Button {
+                class: "w-20",
+                text: suspend_resume_text(),
+                kind: ButtonKind::Primary,
+                disabled: suspend_resume_disabled(),
+                on_click: move || async move {
+                    let kind = match *kind.peek() {
+                        RotateKind::Run => RotateKind::TemporaryHalt,
+                        RotateKind::TemporaryHalt | RotateKind::Halt => RotateKind::Run,
+                    };
+                    rotate_actions(kind).await;
                 },
             }
             Button {
@@ -802,4 +856,13 @@ fn ImportExport(minimap: ReadOnlySignal<Option<MinimapData>>) -> Element {
             }
         }
     }
+}
+
+#[inline]
+fn duration_from(duration: Duration) -> String {
+    let seconds = duration.as_secs() % 60;
+    let minutes = (duration.as_secs() / 60) % 60;
+    let hours = (duration.as_secs() / 60) / 60;
+
+    format!("{hours:0>2}:{minutes:0>2}:{seconds:0>2}")
 }
