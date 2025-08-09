@@ -308,7 +308,7 @@ mod tests {
                 &context,
                 chatting,
                 Timeout {
-                    current: 5,
+                    current: 3,
                     started: true,
                     ..Default::default()
                 },
@@ -336,7 +336,7 @@ mod tests {
             &context,
             chatting,
             Timeout {
-                current: 5,
+                current: 3,
                 started: true,
                 ..Default::default()
             },
@@ -354,7 +354,7 @@ mod tests {
             &context,
             chatting,
             Timeout {
-                current: 5,
+                current: 3,
                 started: true,
                 ..Default::default()
             },

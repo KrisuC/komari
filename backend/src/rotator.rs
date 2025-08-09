@@ -665,9 +665,8 @@ impl DefaultRotator {
 
     #[inline]
     fn rotate_side_priority_action(&mut self, player: &mut PlayerState) -> bool {
-        debug_assert!(!player.has_priority_action());
-
         if let Some(action) = self.priority_actions_side_queue.pop_front() {
+            debug_assert!(!player.has_priority_action());
             match action {
                 RotatorAction::Single(action) => {
                     player.set_priority_action(None, action);
