@@ -47,12 +47,9 @@ mod unstuck;
 mod up_jump;
 mod use_key;
 
+pub use actions::*;
 pub use {
-    actions::PanicTo, actions::PingPongDirection, actions::PlayerAction,
-    actions::PlayerActionAutoMob, actions::PlayerActionChat,
-    actions::PlayerActionFamiliarsSwapping, actions::PlayerActionKey, actions::PlayerActionMove,
-    actions::PlayerActionPanic, actions::PlayerActionPingPong, chat::ChattingContent,
-    double_jump::DOUBLE_JUMP_THRESHOLD, grapple::GRAPPLING_MAX_THRESHOLD,
+    chat::ChattingContent, double_jump::DOUBLE_JUMP_THRESHOLD, grapple::GRAPPLING_MAX_THRESHOLD,
     grapple::GRAPPLING_THRESHOLD, panic::Panicking, state::PlayerState, state::Quadrant,
 };
 
@@ -105,7 +102,7 @@ pub enum Player {
 
 impl Player {
     #[inline]
-    pub fn can_action_override_current_state(&self, cur_pos: Option<Point>) -> bool {
+    pub fn can_override_current_state(&self, cur_pos: Option<Point>) -> bool {
         const OVERRIDABLE_DISTANCE: i32 = DOUBLE_JUMP_THRESHOLD / 2;
 
         match self {
@@ -174,7 +171,7 @@ impl Contextual for Player {
                 .then(|| state.last_known_pos.unwrap())
                 .is_some()
         };
-        if !has_position {
+        if !has_position && !context.operation.halting() {
             // When the player detection fails, the possible causes are:
             // - Player moved inside the edges of the minimap
             // - Other UIs overlapping the minimap
@@ -185,8 +182,7 @@ impl Contextual for Player {
             if let Some(next) = update_non_positional_context(self, context, state, true) {
                 return ControlFlow::Next(next);
             }
-            let next = if !context.operation.halting()
-                && let Minimap::Idle(idle) = context.minimap
+            let next = if let Minimap::Idle(idle) = context.minimap
                 && !idle.partially_overlapping
             {
                 Player::Unstucking(
@@ -223,7 +219,7 @@ impl Contextual for Player {
     }
 }
 
-/// Updates the contextual state that does not require the player current position
+/// Updates the contextual state that does not require the player current position.
 #[inline]
 fn update_non_positional_context(
     contextual: Player,
@@ -232,9 +228,7 @@ fn update_non_positional_context(
     failed_to_detect_player: bool,
 ) -> Option<Player> {
     match contextual {
-        Player::UseKey(use_key) => {
-            (!failed_to_detect_player).then(|| update_use_key_context(context, state, use_key))
-        }
+        Player::UseKey(use_key) => Some(update_use_key_context(context, state, use_key)),
         Player::FamiliarsSwapping(swapping) => {
             Some(update_familiars_swapping_context(context, state, swapping))
         }

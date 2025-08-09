@@ -138,15 +138,7 @@ pub fn update_solving_rune_context(
                 }
                 Some((next, is_terminal))
             }
-            PlayerAction::PingPong(_)
-            | PlayerAction::AutoMob(_)
-            | PlayerAction::Panic(_)
-            | PlayerAction::Key(_)
-            | PlayerAction::FamiliarsSwapping(_)
-            | PlayerAction::Chat(_)
-            | PlayerAction::Move(_) => {
-                unreachable!()
-            }
+            _ => unreachable!(),
         },
         || Player::Idle, // Force cancel if not initiated from action
     )

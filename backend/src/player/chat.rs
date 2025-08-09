@@ -127,7 +127,7 @@ fn update_typing(
     timeout: Timeout,
     index: usize,
 ) -> Chatting {
-    match next_timeout_lifecycle(timeout, 5) {
+    match next_timeout_lifecycle(timeout, 3) {
         Lifecycle::Started(timeout) | Lifecycle::Updated(timeout) => {
             chatting.stage_typing(timeout, index)
         }

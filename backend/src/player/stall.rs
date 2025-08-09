@@ -1,5 +1,5 @@
 use super::{
-    Player, PlayerAction, PlayerActionAutoMob, PlayerState,
+    AutoMob, Player, PlayerAction, PlayerState,
     actions::on_action_state_mut,
     timeout::{Lifecycle, Timeout, next_timeout_lifecycle},
 };
@@ -29,7 +29,7 @@ pub fn update_stalling_context(
     on_action_state_mut(
         state,
         |state, action| match action {
-            PlayerAction::AutoMob(PlayerActionAutoMob {
+            PlayerAction::AutoMob(AutoMob {
                 position: Position { y, .. },
                 ..
             }) => {
@@ -46,9 +46,7 @@ pub fn update_stalling_context(
                 Some((next, matches!(next, Player::Idle)))
             }
             PlayerAction::SolveRune => None,
-            PlayerAction::Chat(_) | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwapping(_) => {
-                unreachable!()
-            }
+            _ => unreachable!(),
         },
         || next,
     )

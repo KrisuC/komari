@@ -5,7 +5,7 @@ use opencv::core::Point;
 
 use super::{
     GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player, PlayerState,
-    actions::{PlayerAction, PlayerActionKey, PlayerActionMove},
+    actions::{Key, Move, PlayerAction},
     double_jump::{DOUBLE_JUMP_THRESHOLD, DoubleJumping},
     state::LastMovement,
     timeout::Timeout,
@@ -424,7 +424,7 @@ fn on_player_action(
     moving: Moving,
 ) -> Option<(Player, bool)> {
     match action {
-        PlayerAction::Move(PlayerActionMove {
+        PlayerAction::Move(Move {
             wait_after_move_ticks,
             ..
         }) => {
@@ -437,7 +437,7 @@ fn on_player_action(
                 Some((Player::Idle, true))
             }
         }
-        PlayerAction::Key(PlayerActionKey {
+        PlayerAction::Key(Key {
             with: ActionKeyWith::DoubleJump,
             direction,
             ..
@@ -451,7 +451,7 @@ fn on_player_action(
                 Some((Player::UseKey(UseKey::from_action(action)), false))
             }
         }
-        PlayerAction::Key(PlayerActionKey {
+        PlayerAction::Key(Key {
             with: ActionKeyWith::Any | ActionKeyWith::Stationary,
             ..
         }) => Some((Player::UseKey(UseKey::from_action(action)), false)),
@@ -461,8 +461,8 @@ fn on_player_action(
         )),
         PlayerAction::SolveRune => Some((Player::SolvingRune(SolvingRune::default()), false)),
         PlayerAction::PingPong(_) => Some((Player::Idle, true)),
-        PlayerAction::Chat(_) | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwapping(_) => {
-            unreachable!()
+        PlayerAction::Chat(_) | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwap(_) => {
+            panic!("unhandled action {action:?}")
         }
     }
 }

@@ -1,5 +1,5 @@
 use super::{
-    Player, PlayerActionKey, PlayerActionPingPong, PlayerState,
+    Key, PingPong, Player, PlayerState,
     actions::on_ping_pong_double_jump_action,
     moving::Moving,
     timeout::{MovingLifecycle, next_moving_lifecycle_with_axis},
@@ -190,7 +190,7 @@ pub fn update_up_jumping_context(
                         let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                         on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
                     }
-                    PlayerAction::Key(PlayerActionKey {
+                    PlayerAction::Key(Key {
                         with: ActionKeyWith::Any,
                         ..
                     }) => {
@@ -200,7 +200,7 @@ pub fn update_up_jumping_context(
                             Some((Player::UseKey(UseKey::from_action(action)), false))
                         }
                     }
-                    PlayerAction::PingPong(PlayerActionPingPong {
+                    PlayerAction::PingPong(PingPong {
                         bound, direction, ..
                     }) => {
                         if moving.completed
@@ -218,15 +218,13 @@ pub fn update_up_jumping_context(
                             None
                         }
                     }
-                    PlayerAction::Key(PlayerActionKey {
+                    PlayerAction::Key(Key {
                         with: ActionKeyWith::Stationary | ActionKeyWith::DoubleJump,
                         ..
                     })
                     | PlayerAction::Move(_)
                     | PlayerAction::SolveRune => None,
-                    PlayerAction::Chat(_)
-                    | PlayerAction::Panic(_)
-                    | PlayerAction::FamiliarsSwapping(_) => unreachable!(),
+                    _ => unreachable!(),
                 },
                 || Player::UpJumping(up_jumping.moving(moving)),
             )

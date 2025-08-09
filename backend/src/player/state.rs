@@ -845,15 +845,7 @@ impl PlayerState {
 
         let (x, y) = match self.normal_action.clone().unwrap() {
             PlayerAction::AutoMob(mob) => (mob.position.x, mob.position.y),
-            PlayerAction::FamiliarsSwapping(_)
-            | PlayerAction::PingPong(_)
-            | PlayerAction::Chat(_)
-            | PlayerAction::Key(_)
-            | PlayerAction::Move(_)
-            | PlayerAction::Panic(_)
-            | PlayerAction::SolveRune => {
-                unreachable!()
-            }
+            _ => unreachable!(),
         };
         if self.auto_mob_reachable_y_require_update(y) {
             return;
@@ -1141,7 +1133,6 @@ impl PlayerState {
                 let (current_bar, max_bar) =
                     detector.detect_player_current_max_health_bars(health_bar)?;
                 let health = detector.detect_player_health(current_bar, max_bar)?;
-                debug!(target: "player", "health updated {health:?}");
                 Ok(health)
             },
         ) else {
@@ -1216,7 +1207,7 @@ mod tests {
         context::Context,
         minimap::{Minimap, MinimapIdle},
         pathing::{Platform, find_neighbors},
-        player::{PlayerAction, PlayerActionAutoMob, PlayerState, Quadrant},
+        player::{AutoMob, PlayerAction, PlayerState, Quadrant},
         rng::Rng,
     };
 
@@ -1298,7 +1289,7 @@ mod tests {
         let y = 100;
         let context = Context::new(None, None);
         let mut player = PlayerState {
-            normal_action: Some(PlayerAction::AutoMob(PlayerActionAutoMob {
+            normal_action: Some(PlayerAction::AutoMob(AutoMob {
                 position: Position {
                     x: 50,
                     y,
@@ -1324,7 +1315,7 @@ mod tests {
         assert_eq!(ranges[0].0, (45..64).into());
 
         // Now test that they don’t merge if neither is solidified
-        player.normal_action = Some(PlayerAction::AutoMob(PlayerActionAutoMob {
+        player.normal_action = Some(PlayerAction::AutoMob(AutoMob {
             position: Position {
                 x: 60,
                 y,

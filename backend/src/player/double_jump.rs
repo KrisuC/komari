@@ -4,8 +4,8 @@ use log::debug;
 use opencv::core::{Point, Rect};
 
 use super::{
-    PingPongDirection, Player, PlayerAction, PlayerActionKey, PlayerState,
-    actions::{PlayerActionPingPong, on_action_state, on_auto_mob_use_key_action},
+    Key, PingPongDirection, Player, PlayerAction, PlayerState,
+    actions::{PingPong, on_action_state, on_auto_mob_use_key_action},
     moving::Moving,
     timeout::{
         Lifecycle, MovingLifecycle, next_moving_lifecycle_with_axis, next_timeout_lifecycle,
@@ -289,7 +289,7 @@ fn on_player_action(
     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
 
     match action {
-        PlayerAction::PingPong(PlayerActionPingPong {
+        PlayerAction::PingPong(PingPong {
             bound, direction, ..
         }) => on_ping_pong_use_key_action(
             context,
@@ -303,7 +303,7 @@ fn on_player_action(
         PlayerAction::AutoMob(_) => {
             on_auto_mob_use_key_action(context, action, moving.pos, x_distance, y_distance)
         }
-        PlayerAction::Key(PlayerActionKey {
+        PlayerAction::Key(Key {
             with: ActionKeyWith::DoubleJump | ActionKeyWith::Any,
             ..
         }) => {
@@ -322,15 +322,13 @@ fn on_player_action(
                 None
             }
         }
-        PlayerAction::Key(PlayerActionKey {
+        PlayerAction::Key(Key {
             with: ActionKeyWith::Stationary,
             ..
         })
         | PlayerAction::SolveRune
         | PlayerAction::Move { .. } => None,
-        PlayerAction::Chat(_) | PlayerAction::Panic(_) | PlayerAction::FamiliarsSwapping(_) => {
-            unreachable!()
-        }
+        _ => unreachable!(),
     }
 }
 
@@ -444,7 +442,7 @@ mod tests {
         bridge::{KeyKind, MockInput},
         context::Context,
         player::{
-            PingPongDirection, Player, PlayerAction, PlayerActionPingPong,
+            PingPong, PingPongDirection, Player, PlayerAction,
             double_jump::DoubleJumping,
             moving::Moving,
             state::{LastMovement, PlayerState},
@@ -622,7 +620,7 @@ mod tests {
     fn ping_pong_hits_left_bound_transitions_to_idle() {
         let cur_pos = Point::new(10, 100);
         let bound = Rect::new(20, 90, 40, 20); // left = 20
-        let action = PlayerAction::PingPong(PlayerActionPingPong {
+        let action = PlayerAction::PingPong(PingPong {
             bound,
             direction: PingPongDirection::Left,
             ..Default::default()
@@ -645,7 +643,7 @@ mod tests {
     fn ping_pong_before_double_jump_returns_none() {
         let cur_pos = Point::new(30, 100);
         let bound = Rect::new(20, 90, 40, 20);
-        let action = PlayerAction::PingPong(PlayerActionPingPong {
+        let action = PlayerAction::PingPong(PingPong {
             bound,
             direction: PingPongDirection::Right,
             ..Default::default()
@@ -668,7 +666,7 @@ mod tests {
     fn ping_pong_transition_to_upjumping_or_grappling() {
         let cur_pos = Point::new(30, 79); // below y
         let bound = Rect::new(20, 80, 40, 20);
-        let action = PlayerAction::PingPong(PlayerActionPingPong {
+        let action = PlayerAction::PingPong(PingPong {
             bound,
             direction: PingPongDirection::Right,
             ..Default::default()
@@ -704,7 +702,7 @@ mod tests {
     fn ping_pong_transition_to_falling() {
         let cur_pos = Point::new(30, 101); // above y
         let bound = Rect::new(20, 80, 40, 20);
-        let action = PlayerAction::PingPong(PlayerActionPingPong {
+        let action = PlayerAction::PingPong(PingPong {
             bound,
             direction: PingPongDirection::Right,
             ..Default::default()

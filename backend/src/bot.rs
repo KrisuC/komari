@@ -1,11 +1,13 @@
+use std::str::FromStr;
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use log::{debug, error};
+use rand_distr::num_traits::ToPrimitive;
 use serenity::all::{
-    CacheHttp, Command, CommandDataOption, CommandInteraction, CommandOptionType, Context,
-    CreateCommand, CreateCommandOption, EditInteractionResponse, EventHandler, GatewayIntents,
-    Interaction, Ready, ShardManager,
+    CacheHttp, Command, CommandInteraction, CommandOptionType, Context, CreateCommand,
+    CreateCommandOption, EditInteractionResponse, EventHandler, GatewayIntents, Interaction, Ready,
+    ShardManager,
 };
 use serenity::{Client, async_trait};
 use strum::{Display, EnumIter, EnumMessage, EnumString, IntoEnumIterator};
@@ -21,12 +23,13 @@ use tokio::{
     time::{Instant, sleep, timeout},
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum BotCommandKind {
     Start,
-    Stop,
+    Stop { go_to_town: bool },
     Status,
-    Chat,
+    Chat { content: String },
+    Action { action: BotAction, count: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, EnumString, EnumMessage, Display)]
@@ -49,12 +52,23 @@ enum BotCommandKindInner {
     StartStream,
     #[strum(to_string = "stop-stream", message = "Stop streaming game images")]
     StopStream,
+    #[strum(to_string = "action", message = "Perform an action")]
+    Action,
+}
+
+#[derive(Debug, Clone, Copy, EnumIter, EnumString, EnumMessage, Display)]
+pub enum BotAction {
+    #[strum(to_string = "jump", message = "Jump")]
+    Jump,
+    #[strum(to_string = "double-jump", message = "Double Jump")]
+    DoubleJump,
+    #[strum(to_string = "crouch", message = "Crouch")]
+    Crouch,
 }
 
 #[derive(Debug)]
 pub struct BotCommand {
     pub kind: BotCommandKind,
-    pub options: Vec<CommandDataOption>,
     pub sender: oneshot::Sender<EditInteractionResponse>,
 }
 
@@ -135,6 +149,31 @@ impl EventHandler for DefaultEventHandler {
                         "go-to-town",
                         "Whether to go to town when stopping",
                     )),
+
+                    BotCommandKindInner::Action => {
+                        let kind = BotAction::iter().fold(
+                            CreateCommandOption::new(
+                                CommandOptionType::String,
+                                "kind",
+                                "Type of action to perform",
+                            )
+                            .required(true),
+                            |option, action| {
+                                option.add_string_choice(
+                                    action.get_message().expect("message set"),
+                                    action.to_string(),
+                                )
+                            },
+                        );
+                        let count = CreateCommandOption::new(
+                            CommandOptionType::Integer,
+                            "count",
+                            "Number of times to do the action",
+                        )
+                        .min_int_value(1);
+
+                        command.add_option(kind).add_option(count)
+                    }
                     BotCommandKindInner::StartStream
                     | BotCommandKindInner::StopStream
                     | BotCommandKindInner::Start
@@ -178,11 +217,17 @@ impl EventHandler for DefaultEventHandler {
                     .await;
                 }
                 BotCommandKindInner::Stop => {
+                    let go_to_town = command
+                        .data
+                        .options
+                        .first()
+                        .and_then(|option| option.value.as_bool())
+                        .unwrap_or_default();
                     single_command(
                         &self.command_sender,
                         &context,
                         &command,
-                        BotCommandKind::Stop,
+                        BotCommandKind::Stop { go_to_town },
                     )
                     .await;
                 }
@@ -196,11 +241,35 @@ impl EventHandler for DefaultEventHandler {
                     .await;
                 }
                 BotCommandKindInner::Chat => {
+                    let content = command.data.options[0]
+                        .value
+                        .as_str()
+                        .expect("has option")
+                        .to_string();
                     single_command(
                         &self.command_sender,
                         &context,
                         &command,
-                        BotCommandKind::Chat,
+                        BotCommandKind::Chat { content },
+                    )
+                    .await;
+                }
+                BotCommandKindInner::Action => {
+                    let action = BotAction::from_str(
+                        command.data.options[0].value.as_str().expect("has option"),
+                    )
+                    .expect("valid action");
+                    let count = command
+                        .data
+                        .options
+                        .get(1)
+                        .and_then(|option| option.value.as_i64()?.to_u32())
+                        .unwrap_or(1);
+                    single_command(
+                        &self.command_sender,
+                        &context,
+                        &command,
+                        BotCommandKind::Action { action, count },
                     )
                     .await;
                 }
@@ -216,11 +285,7 @@ async fn single_command(
     kind: BotCommandKind,
 ) {
     let (tx, rx) = oneshot::channel();
-    let inner = BotCommand {
-        kind,
-        options: command.data.options.clone(),
-        sender: tx,
-    };
+    let inner = BotCommand { kind, sender: tx };
     if sender.send(inner).await.is_err() {
         response_with(context, command, "Command failed, please try again.").await;
         return;

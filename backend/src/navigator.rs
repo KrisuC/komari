@@ -22,7 +22,7 @@ use crate::{
     database::{NavigationPath, NavigationTransition, query_navigation_paths},
     detect::Detector,
     minimap::Minimap,
-    player::{PlayerAction, PlayerActionKey, PlayerState},
+    player::{Key, PlayerAction, PlayerState},
 };
 
 /// A data source to query [`NavigationPath`].
@@ -320,10 +320,10 @@ impl Default for DefaultNavigator {
 impl Navigator for DefaultNavigator {
     /// Navigates the player to the currently set [`Self::destination_path_id`].
     ///
-    /// Returns `true` if the player has reached the destination.
+    /// Returns `true` if the player has reached the destination or operation is currently halting.
     fn navigate_player(&mut self, context: &Context, player: &mut PlayerState) -> bool {
         if context.operation.halting() {
-            return false;
+            return true;
         }
 
         let next_point_state = self.compute_next_point();
@@ -350,7 +350,7 @@ impl Navigator for DefaultNavigator {
                                 x_random_range: 0,
                                 allow_adjusting: true,
                             };
-                            let key = PlayerActionKey {
+                            let key = Key {
                                 key: KeyBinding::Up,
                                 link_key: None,
                                 count: 1,

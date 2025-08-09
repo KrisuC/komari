@@ -3,10 +3,8 @@ use std::cmp::Ordering;
 use opencv::core::Point;
 
 use super::{
-    PingPongDirection, PlayerActionAutoMob, PlayerState, Timeout,
-    actions::{
-        PlayerAction, PlayerActionKey, PlayerActionPingPong, on_ping_pong_double_jump_action,
-    },
+    AutoMob, PingPongDirection, PlayerState, Timeout,
+    actions::{Key, PingPong, PlayerAction, on_ping_pong_double_jump_action},
     double_jump::DoubleJumping,
     timeout::{Lifecycle, next_timeout_lifecycle},
 };
@@ -66,7 +64,7 @@ impl UseKey {
 
     pub fn from_action_pos(action: PlayerAction, pos: Option<Point>) -> Self {
         match action {
-            PlayerAction::Key(PlayerActionKey {
+            PlayerAction::Key(Key {
                 key,
                 link_key,
                 count,
@@ -100,20 +98,21 @@ impl UseKey {
                     random_wait_ticks(mob.wait_before_ticks, mob.wait_before_ticks_random_range);
                 let wait_after =
                     random_wait_ticks(mob.wait_after_ticks, mob.wait_after_ticks_random_range);
+                let direction = match pos {
+                    Some(pos) => match pos.x.cmp(&mob.position.x) {
+                        Ordering::Less => ActionKeyDirection::Right,
+                        Ordering::Equal => ActionKeyDirection::Any,
+                        Ordering::Greater => ActionKeyDirection::Left,
+                    },
+                    None => unreachable!(),
+                };
 
                 Self {
                     key: mob.key,
                     link_key: mob.link_key,
                     count: mob.count,
                     current_count: 0,
-                    direction: match pos {
-                        Some(pos) => match pos.x.cmp(&mob.position.x) {
-                            Ordering::Less => ActionKeyDirection::Right,
-                            Ordering::Equal => ActionKeyDirection::Any,
-                            Ordering::Greater => ActionKeyDirection::Left,
-                        },
-                        None => unreachable!(),
-                    },
+                    direction,
                     with: mob.with,
                     wait_before_use_ticks: wait_before,
                     wait_after_use_ticks: wait_after,
@@ -129,30 +128,25 @@ impl UseKey {
                     ping_pong.wait_after_ticks,
                     ping_pong.wait_after_ticks_random_range,
                 );
+                let direction = if matches!(ping_pong.direction, PingPongDirection::Left) {
+                    ActionKeyDirection::Left
+                } else {
+                    ActionKeyDirection::Right
+                };
 
                 Self {
                     key: ping_pong.key,
                     link_key: ping_pong.link_key,
                     count: ping_pong.count,
                     current_count: 0,
-                    direction: if matches!(ping_pong.direction, PingPongDirection::Left) {
-                        ActionKeyDirection::Left
-                    } else {
-                        ActionKeyDirection::Right
-                    },
+                    direction,
                     with: ping_pong.with,
                     wait_before_use_ticks: wait_before,
                     wait_after_use_ticks: wait_after,
                     stage: UseKeyStage::Precondition,
                 }
             }
-            PlayerAction::FamiliarsSwapping(_)
-            | PlayerAction::SolveRune
-            | PlayerAction::Panic(_)
-            | PlayerAction::Chat(_)
-            | PlayerAction::Move { .. } => {
-                unreachable!()
-            }
+            _ => unreachable!(),
         }
     }
 }
@@ -246,7 +240,7 @@ pub fn update_use_key_context(
                 Player::UseKey(UseKey { stage, ..use_key })
             }
             ActionKeyWith::DoubleJump => {
-                let pos = state.last_known_pos.unwrap();
+                let pos = state.last_known_pos.expect("in positional context");
                 Player::DoubleJumping(DoubleJumping::new(
                     Moving::new(pos, pos, false, None),
                     true,
@@ -332,7 +326,7 @@ pub fn update_use_key_context(
     on_action_state_mut(
         state,
         |state, action| match action {
-            PlayerAction::AutoMob(PlayerActionAutoMob {
+            PlayerAction::AutoMob(AutoMob {
                 position: Position { y, .. },
                 ..
             }) => {
@@ -345,14 +339,14 @@ pub fn update_use_key_context(
                 }
                 Some((next, is_terminal))
             }
-            PlayerAction::PingPong(PlayerActionPingPong {
+            PlayerAction::PingPong(PingPong {
                 bound, direction, ..
             }) => {
                 if matches!(next, Player::Idle) {
                     state.clear_unstucking(true);
                     Some(on_ping_pong_double_jump_action(
                         context,
-                        state.last_known_pos.unwrap(),
+                        state.last_known_pos.expect("in positional context"),
                         bound,
                         direction,
                     ))
@@ -360,13 +354,9 @@ pub fn update_use_key_context(
                     None
                 }
             }
-
             PlayerAction::Key(_) => Some((next, matches!(next, Player::Idle))),
             PlayerAction::Move(_) => None,
-            PlayerAction::FamiliarsSwapping(_)
-            | PlayerAction::Chat(_)
-            | PlayerAction::SolveRune
-            | PlayerAction::Panic(_) => unreachable!(),
+            _ => unreachable!(),
         },
         || next,
     )

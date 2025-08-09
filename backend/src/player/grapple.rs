@@ -1,5 +1,5 @@
 use super::{
-    Player, PlayerAction, PlayerActionPingPong, PlayerState,
+    PingPong, Player, PlayerAction, PlayerState,
     actions::{on_action_state, on_auto_mob_use_key_action, on_ping_pong_double_jump_action},
     moving::Moving,
     state::LastMovement,
@@ -95,7 +95,7 @@ pub fn update_grappling_context(
                         let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
                         on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
                     }
-                    PlayerAction::PingPong(PlayerActionPingPong {
+                    PlayerAction::PingPong(PingPong {
                         bound, direction, ..
                     }) => {
                         if cur_pos.y >= bound.y
@@ -114,9 +114,7 @@ pub fn update_grappling_context(
                         }
                     }
                     PlayerAction::Key(_) | PlayerAction::Move(_) | PlayerAction::SolveRune => None,
-                    PlayerAction::Chat(_)
-                    | PlayerAction::Panic(_)
-                    | PlayerAction::FamiliarsSwapping(_) => unreachable!(),
+                    _ => unreachable!(),
                 },
                 || Player::Grappling(moving),
             )

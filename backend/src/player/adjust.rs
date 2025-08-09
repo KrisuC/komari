@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use super::{
-    PlayerAction, PlayerActionKey, PlayerState,
+    Key, PlayerAction, PlayerState,
     moving::Moving,
     timeout::{Lifecycle, next_timeout_lifecycle},
     use_key::UseKey,
@@ -189,7 +189,7 @@ fn on_player_action(
     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
 
     match action {
-        PlayerAction::Key(PlayerActionKey {
+        PlayerAction::Key(Key {
             with: ActionKeyWith::DoubleJump,
             direction,
             ..
@@ -212,7 +212,7 @@ fn on_player_action(
                 Some((Player::UseKey(UseKey::from_action(action)), false))
             }
         }
-        PlayerAction::Key(PlayerActionKey {
+        PlayerAction::Key(Key {
             with: ActionKeyWith::Any,
             ..
         }) => {
@@ -225,18 +225,13 @@ fn on_player_action(
         PlayerAction::AutoMob(_) => {
             on_auto_mob_use_key_action(context, action, moving.pos, x_distance, y_distance)
         }
-        PlayerAction::Key(PlayerActionKey {
+        PlayerAction::Key(Key {
             with: ActionKeyWith::Stationary,
             ..
         })
         | PlayerAction::SolveRune
         | PlayerAction::Move(_) => None,
-        PlayerAction::Chat(_)
-        | PlayerAction::PingPong(_)
-        | PlayerAction::Panic(_)
-        | PlayerAction::FamiliarsSwapping(_) => {
-            unreachable!()
-        }
+        _ => unreachable!(),
     }
 }
 

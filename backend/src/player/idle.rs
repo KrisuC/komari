@@ -2,8 +2,8 @@ use log::debug;
 use opencv::core::Point;
 
 use super::{
-    Player, PlayerAction, PlayerActionAutoMob, PlayerActionKey, PlayerActionMove, PlayerState,
-    actions::{PlayerActionPingPong, on_action_state_mut, on_ping_pong_double_jump_action},
+    AutoMob, Key, Move, Player, PlayerAction, PlayerState,
+    actions::{PingPong, on_action_state_mut, on_ping_pong_double_jump_action},
     double_jump::DoubleJumping,
     familiars_swap::FamiliarsSwapping,
     moving::{Moving, find_intermediate_points},
@@ -44,9 +44,8 @@ fn on_player_action(
     state: &mut PlayerState,
     action: PlayerAction,
 ) -> Option<(Player, bool)> {
-    let cur_pos = state.last_known_pos.unwrap();
     match action {
-        PlayerAction::AutoMob(PlayerActionAutoMob { position, .. }) => {
+        PlayerAction::AutoMob(AutoMob { position, .. }) => {
             let point = Point::new(position.x, position.y);
             let intermediates = if state.config.auto_mob_platforms_pathing {
                 match context.minimap {
@@ -81,7 +80,7 @@ fn on_player_action(
                 .or(Some(vec![point]));
             Some((next, false))
         }
-        PlayerAction::Move(PlayerActionMove { position, .. }) => {
+        PlayerAction::Move(Move { position, .. }) => {
             let x = get_x_destination(&context.rng, position);
             debug!(target: "player", "handling move: {} {}", x, position.y);
             Some((
@@ -89,7 +88,7 @@ fn on_player_action(
                 false,
             ))
         }
-        PlayerAction::Key(PlayerActionKey {
+        PlayerAction::Key(Key {
             position: Some(position),
             ..
         }) => {
@@ -100,7 +99,7 @@ fn on_player_action(
                 false,
             ))
         }
-        PlayerAction::Key(PlayerActionKey {
+        PlayerAction::Key(Key {
             position: None,
             with: ActionKeyWith::DoubleJump,
             direction,
@@ -111,7 +110,12 @@ fn on_player_action(
             {
                 Some((
                     Player::DoubleJumping(DoubleJumping::new(
-                        Moving::new(cur_pos, cur_pos, false, None),
+                        Moving::new(
+                            state.last_known_pos.unwrap(),
+                            state.last_known_pos.unwrap(),
+                            false,
+                            None,
+                        ),
                         true,
                         true,
                     )),
@@ -121,7 +125,7 @@ fn on_player_action(
                 Some((Player::UseKey(UseKey::from_action(action)), false))
             }
         }
-        PlayerAction::Key(PlayerActionKey {
+        PlayerAction::Key(Key {
             position: None,
             with: ActionKeyWith::Any | ActionKeyWith::Stationary,
             ..
@@ -136,7 +140,7 @@ fn on_player_action(
                     }
                     let intermediates = find_intermediate_points(
                         &idle.platforms,
-                        cur_pos,
+                        state.last_known_pos.unwrap(),
                         rune,
                         true,
                         state.config.rune_platforms_pathing_up_jump_only,
@@ -159,12 +163,15 @@ fn on_player_action(
             }
             Some((Player::Idle, true))
         }
-        PlayerAction::PingPong(PlayerActionPingPong {
+        PlayerAction::PingPong(PingPong {
             bound, direction, ..
         }) => Some(on_ping_pong_double_jump_action(
-            context, cur_pos, bound, direction,
+            context,
+            state.last_known_pos.unwrap(),
+            bound,
+            direction,
         )),
-        PlayerAction::FamiliarsSwapping(swapping) => Some((
+        PlayerAction::FamiliarsSwap(swapping) => Some((
             Player::FamiliarsSwapping(FamiliarsSwapping::new(
                 swapping.swappable_slots,
                 swapping.swappable_rarities,

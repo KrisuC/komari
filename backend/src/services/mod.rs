@@ -10,21 +10,20 @@ use opencv::{
 };
 use platforms::input::InputKind;
 use serenity::all::{CreateAttachment, EditInteractionResponse};
+use strum::EnumMessage;
 use tokio::sync::broadcast::Receiver;
 
 use crate::{
-    Character, CycleRunStopMode, GameState, KeyBinding, Minimap, NavigationPath, RequestHandler,
-    RotateKind, Settings,
-    bot::BotCommandKind,
+    ActionKeyDirection, ActionKeyWith, Character, CycleRunStopMode, GameState, KeyBinding,
+    LinkKeyBinding, Minimap, NavigationPath, RequestHandler, RotateKind, Settings,
+    bot::{BotAction, BotCommandKind},
     bridge::{Capture, DefaultCapture, DefaultInput, DefaultInputReceiver, InputMethod},
     buff::BuffState,
     context::{Context, Operation},
     database::Seeds,
     minimap::MinimapState,
     navigator::Navigator,
-    player::{
-        ChattingContent, PanicTo, Panicking, Player, PlayerAction, PlayerActionChat, PlayerState,
-    },
+    player::{Chat, ChattingContent, Key, Panic, PanicTo, PlayerAction, PlayerState},
     poll_request,
     rotator::Rotator,
     services::{
@@ -217,13 +216,7 @@ impl DefaultRequestHandler<'_> {
                         .send(EditInteractionResponse::new().content("Bot started running."));
                     self.on_rotate_actions(RotateKind::Run);
                 }
-                BotCommandKind::Stop => {
-                    let go_to_town = command
-                        .options
-                        .into_iter()
-                        .next()
-                        .and_then(|option| option.value.as_bool())
-                        .unwrap_or_default();
+                BotCommandKind::Stop { go_to_town } => {
                     let _ = command
                         .sender
                         .send(EditInteractionResponse::new().content("Bot stopped running."));
@@ -241,37 +234,75 @@ impl DefaultRequestHandler<'_> {
 
                     let _ = command.sender.send(builder);
                 }
-                BotCommandKind::Chat => {
-                    let Some(content) = command
-                        .options
-                        .into_iter()
-                        .next()
-                        .and_then(|option| Some(option.value.as_str()?.to_string()))
-                    else {
-                        return;
-                    };
+                BotCommandKind::Chat { content } => {
                     if content.chars().count() >= ChattingContent::MAX_LENGTH {
-                        let _ =
-                            command
-                                .sender
-                                .send(EditInteractionResponse::new().content(format!(
-                                    "Message length must be less than {} characters.",
-                                    ChattingContent::MAX_LENGTH
-                                )));
+                        let builder = EditInteractionResponse::new().content(format!(
+                            "Message length must be less than {} characters.",
+                            ChattingContent::MAX_LENGTH
+                        ));
+                        let _ = command.sender.send(builder);
                         return;
                     }
 
                     let _ = command
                         .sender
                         .send(EditInteractionResponse::new().content("Queued a chat action."));
-                    let is_halting = self.args.context.operation.halting();
-                    let action = PlayerAction::Chat(PlayerActionChat { content });
-
-                    if is_halting {
-                        self.args.player.set_priority_action(None, action);
-                    } else {
-                        self.args.rotator.inject_action(action);
-                    }
+                    let action = PlayerAction::Chat(Chat { content });
+                    self.args.rotator.inject_action(action);
+                }
+                BotCommandKind::Action { action, count } => {
+                    // Emulate these actions through keys instead to avoid requiring position
+                    let player_action = match action {
+                        BotAction::Jump => PlayerAction::Key(Key {
+                            key: self.args.player.config.jump_key.into(),
+                            link_key: None,
+                            count,
+                            position: None,
+                            direction: ActionKeyDirection::Any, // Must always be Any
+                            with: ActionKeyWith::Any,           // Must always be Any
+                            wait_before_use_ticks: 0,
+                            wait_before_use_ticks_random_range: 5,
+                            wait_after_use_ticks: 15,
+                            wait_after_use_ticks_random_range: 0,
+                        }),
+                        BotAction::DoubleJump => {
+                            PlayerAction::Key(Key {
+                                key: self.args.player.config.jump_key.into(),
+                                link_key: Some(LinkKeyBinding::Before(
+                                    self.args.player.config.jump_key.into(),
+                                )),
+                                count,
+                                position: None,
+                                direction: ActionKeyDirection::Any, // Must always be Any
+                                with: ActionKeyWith::Any,           // Must always be Any
+                                wait_before_use_ticks: 0,
+                                wait_before_use_ticks_random_range: 0,
+                                wait_after_use_ticks: 0,
+                                wait_after_use_ticks_random_range: 55,
+                            })
+                        }
+                        BotAction::Crouch => {
+                            PlayerAction::Key(Key {
+                                key: KeyBinding::Down,
+                                link_key: Some(LinkKeyBinding::Along(KeyBinding::Down)),
+                                count,
+                                position: None,
+                                direction: ActionKeyDirection::Any, // Must always be Any
+                                with: ActionKeyWith::Any,           // Must always be Any
+                                wait_before_use_ticks: 0,
+                                wait_before_use_ticks_random_range: 0,
+                                wait_after_use_ticks: 10,
+                                wait_after_use_ticks_random_range: 0,
+                            })
+                        }
+                    };
+                    self.args.rotator.inject_action(player_action.clone());
+                    let _ = command
+                        .sender
+                        .send(EditInteractionResponse::new().content(format!(
+                            "Queued `{}` x {count}",
+                            action.get_message().expect("has message")
+                        )));
                 }
             }
         }
@@ -519,7 +550,7 @@ pub fn halt_or_panic(
         context.operation = Operation::Halting;
     }
     if should_panic {
-        context.player = Player::Panicking(Panicking::new(PanicTo::Town));
+        rotator.inject_action(PlayerAction::Panic(Panic { to: PanicTo::Town }));
     }
 }
 

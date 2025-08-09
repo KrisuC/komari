@@ -1,3 +1,5 @@
+use std::fmt;
+
 use opencv::core::{Point, Rect};
 use strum::Display;
 
@@ -22,7 +24,7 @@ const AUTO_MOB_USE_KEY_Y_THRESHOLD: i32 = 8;
 ///
 /// Converted from [`ActionKey`] without fields used by [`Rotator`]
 #[derive(Clone, Copy, Debug)]
-pub struct PlayerActionKey {
+pub struct Key {
     pub key: KeyBinding,
     pub link_key: Option<LinkKeyBinding>,
     pub count: u32,
@@ -35,7 +37,7 @@ pub struct PlayerActionKey {
     pub wait_after_use_ticks_random_range: u32,
 }
 
-impl From<ActionKey> for PlayerActionKey {
+impl From<ActionKey> for Key {
     fn from(
         ActionKey {
             key,
@@ -51,19 +53,25 @@ impl From<ActionKey> for PlayerActionKey {
             ..
         }: ActionKey,
     ) -> Self {
+        let count = count.max(1);
+        let wait_before_use_ticks = (wait_before_use_millis / MS_PER_TICK) as u32;
+        let wait_before_use_ticks_random_range =
+            (wait_before_use_millis_random_range / MS_PER_TICK) as u32;
+        let wait_after_use_ticks = (wait_after_use_millis / MS_PER_TICK) as u32;
+        let wait_after_use_ticks_random_range =
+            (wait_after_use_millis_random_range / MS_PER_TICK) as u32;
+
         Self {
             key,
             link_key,
-            count: count.max(1),
+            count,
             position,
             direction,
             with,
-            wait_before_use_ticks: (wait_before_use_millis / MS_PER_TICK) as u32,
-            wait_before_use_ticks_random_range: (wait_before_use_millis_random_range / MS_PER_TICK)
-                as u32,
-            wait_after_use_ticks: (wait_after_use_millis / MS_PER_TICK) as u32,
-            wait_after_use_ticks_random_range: (wait_after_use_millis_random_range / MS_PER_TICK)
-                as u32,
+            wait_before_use_ticks,
+            wait_before_use_ticks_random_range,
+            wait_after_use_ticks,
+            wait_after_use_ticks_random_range,
         }
     }
 }
@@ -72,12 +80,12 @@ impl From<ActionKey> for PlayerActionKey {
 ///
 /// Converted from [`ActionMove`] without fields used by [`Rotator`].
 #[derive(Clone, Copy, Debug)]
-pub struct PlayerActionMove {
+pub struct Move {
     pub position: Position,
     pub wait_after_move_ticks: u32,
 }
 
-impl From<ActionMove> for PlayerActionMove {
+impl From<ActionMove> for Move {
     fn from(
         ActionMove {
             position,
@@ -94,7 +102,7 @@ impl From<ActionMove> for PlayerActionMove {
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(test, derive(Default))]
-pub struct PlayerActionAutoMob {
+pub struct AutoMob {
     pub key: KeyBinding,
     pub link_key: Option<LinkKeyBinding>,
     pub count: u32,
@@ -106,8 +114,8 @@ pub struct PlayerActionAutoMob {
     pub position: Position,
 }
 
-impl std::fmt::Display for PlayerActionAutoMob {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for AutoMob {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}, {}", self.position.x, self.position.y)
     }
 }
@@ -121,7 +129,7 @@ impl std::fmt::Display for PlayerActionAutoMob {
 /// This action forces the player to always stay inside the bound.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(test, derive(Default))]
-pub struct PlayerActionPingPong {
+pub struct PingPong {
     pub key: KeyBinding,
     pub link_key: Option<LinkKeyBinding>,
     pub count: u32,
@@ -151,13 +159,13 @@ impl Default for PingPongDirection {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct PlayerActionFamiliarsSwapping {
+pub struct FamiliarsSwap {
     pub swappable_slots: SwappableFamiliars,
     pub swappable_rarities: Array<FamiliarRarity, 2>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct PlayerActionPanic {
+pub struct Panic {
     pub to: PanicTo,
 }
 
@@ -168,7 +176,7 @@ pub enum PanicTo {
 }
 
 #[derive(Clone, Debug)]
-pub struct PlayerActionChat {
+pub struct Chat {
     pub content: String,
 }
 
@@ -176,21 +184,22 @@ pub struct PlayerActionChat {
 #[derive(Clone, Debug, Display)]
 pub enum PlayerAction {
     /// Fixed key action provided by the user.
-    Key(PlayerActionKey),
+    Key(Key),
     /// Fixed move action provided by the user.
-    Move(PlayerActionMove),
-    /// Solve rune action.
+    Move(Move),
+    /// Solves rune action.
     SolveRune,
     /// Auto-mobbing action.
     #[strum(to_string = "AutoMob({0})")]
-    AutoMob(PlayerActionAutoMob),
+    AutoMob(AutoMob),
     /// Ping pong action.
-    PingPong(PlayerActionPingPong),
-    /// Familiars swapping action.
-    FamiliarsSwapping(PlayerActionFamiliarsSwapping),
-    /// Panicking to town or another channel action.
-    Panic(PlayerActionPanic),
-    Chat(PlayerActionChat),
+    PingPong(PingPong),
+    /// Swaps familiars action.
+    FamiliarsSwap(FamiliarsSwap),
+    /// Panics to town or another channel action.
+    Panic(Panic),
+    /// Chats in-game action.
+    Chat(Chat),
 }
 
 impl From<Action> for PlayerAction {
@@ -203,7 +212,7 @@ impl From<Action> for PlayerAction {
 }
 
 #[inline]
-pub fn on_ping_pong_double_jump_action(
+pub(super) fn on_ping_pong_double_jump_action(
     context: &Context,
     cur_pos: Point,
     bound: Rect,
@@ -237,7 +246,7 @@ pub fn on_ping_pong_double_jump_action(
 ///
 /// This is common logics shared with other contextual states when there is auto mob action.
 #[inline]
-pub fn on_auto_mob_use_key_action(
+pub(super) fn on_auto_mob_use_key_action(
     context: &Context,
     action: PlayerAction,
     cur_pos: Point,
@@ -262,7 +271,7 @@ pub fn on_auto_mob_use_key_action(
 ///
 /// This version does not require [`PlayerState`] in the callbacks arguments.
 #[inline]
-pub fn on_action(
+pub(super) fn on_action(
     state: &mut PlayerState,
     on_action_context: impl FnOnce(PlayerAction) -> Option<(Player, bool)>,
     on_default_context: impl FnOnce() -> Player,
@@ -278,7 +287,7 @@ pub fn on_action(
 ///
 /// This version requires a shared reference [`PlayerState`] in the callbacks arguments.
 #[inline]
-pub fn on_action_state(
+pub(super) fn on_action_state(
     state: &mut PlayerState,
     on_action_context: impl FnOnce(&PlayerState, PlayerAction) -> Option<(Player, bool)>,
     on_default_context: impl FnOnce() -> Player,
@@ -302,7 +311,7 @@ pub fn on_action_state(
 /// Because this function passes a mutable reference of `PlayerState` to `on_action_context`,
 /// caller should be aware not to clear the action but let this function handles it.
 #[inline]
-pub fn on_action_state_mut(
+pub(super) fn on_action_state_mut(
     state: &mut PlayerState,
     on_action_context: impl FnOnce(&mut PlayerState, PlayerAction) -> Option<(Player, bool)>,
     on_default_context: impl FnOnce() -> Player,
@@ -319,17 +328,13 @@ pub fn on_action_state_mut(
                 PlayerAction::SolveRune
                 | PlayerAction::PingPong(_)
                 | PlayerAction::Move(_)
-                | PlayerAction::Key(PlayerActionKey {
+                | PlayerAction::Key(Key {
                     position: Some(Position { .. }),
                     ..
                 }) => {
                     state.clear_unstucking(false);
                 }
-                PlayerAction::Panic(_)
-                | PlayerAction::FamiliarsSwapping(_)
-                | PlayerAction::AutoMob(_)
-                | PlayerAction::Chat(_)
-                | PlayerAction::Key(PlayerActionKey { position: None, .. }) => (),
+                _ => (),
             }
             // FIXME: clear only when has position?
             state.clear_action_completed();

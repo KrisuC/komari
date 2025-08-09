@@ -22,9 +22,8 @@ use crate::{
     database::{Action, ActionCondition, ActionKey, ActionMove, EliteBossBehavior},
     minimap::Minimap,
     player::{
-        GRAPPLING_THRESHOLD, PanicTo, PingPongDirection, Player, PlayerAction, PlayerActionAutoMob,
-        PlayerActionFamiliarsSwapping, PlayerActionKey, PlayerActionPanic, PlayerActionPingPong,
-        PlayerState, Quadrant,
+        AutoMob, FamiliarsSwap, GRAPPLING_THRESHOLD, Key, Panic, PanicTo, PingPong,
+        PingPongDirection, PlayerAction, PlayerState, Quadrant,
     },
     skill::{Skill, SkillKind},
     task::{Task, Update, update_detection_task},
@@ -153,7 +152,8 @@ pub trait Rotator: Debug + 'static {
 
     /// Rotates actions previously built with [`Self::build_actions`].
     ///
-    /// If [`Operation`] is currently halting, it does nothing.
+    /// If [`Operation`] is currently halting, it does not rotate the built actions but only the
+    /// side-loaded actions added by [`Self::inject_action`].
     fn rotate_action(&mut self, context: &Context, player: &mut PlayerState);
 }
 
@@ -363,11 +363,6 @@ impl DefaultRotator {
             })
         }
 
-        #[inline]
-        fn has_side_loaded_action_executing(player: &PlayerState) -> bool {
-            player.has_priority_action() && player.priority_action_id().is_none()
-        }
-
         if self.priority_actions_queue.is_empty()
             && self.priority_actions_side_queue.is_empty()
             && self.priority_queuing_linked_action.is_none()
@@ -376,7 +371,7 @@ impl DefaultRotator {
         }
         if !context
             .player
-            .can_action_override_current_state(player.last_known_pos)
+            .can_override_current_state(player.last_known_pos)
             || has_normal_linked_action_queuing_or_executing(self, player)
             || has_priority_linked_action_executing(self, player)
             || has_side_loaded_action_executing(player)
@@ -387,14 +382,7 @@ impl DefaultRotator {
         if self.rotate_queuing_linked_action(player, true) {
             return;
         }
-        // Check for side-loaded actions
-        if let Some(action) = self.priority_actions_side_queue.pop_front() {
-            match action {
-                RotatorAction::Single(action) => {
-                    player.set_priority_action(None, action);
-                }
-                RotatorAction::Linked(_) => unreachable!(),
-            }
+        if self.rotate_side_priority_action(player) {
             return;
         }
 
@@ -530,7 +518,7 @@ impl DefaultRotator {
 
         player.set_normal_action(
             None,
-            PlayerAction::AutoMob(PlayerActionAutoMob {
+            PlayerAction::AutoMob(AutoMob {
                 key: key.key,
                 link_key: key.link_key,
                 count: key.count.max(1),
@@ -576,7 +564,7 @@ impl DefaultRotator {
 
         player.set_normal_action(
             None,
-            PlayerAction::PingPong(PlayerActionPingPong {
+            PlayerAction::PingPong(PingPong {
                 key: key.key,
                 link_key: key.link_key,
                 count: key.count.max(1),
@@ -674,6 +662,23 @@ impl DefaultRotator {
         }
         true
     }
+
+    #[inline]
+    fn rotate_side_priority_action(&mut self, player: &mut PlayerState) -> bool {
+        debug_assert!(!player.has_priority_action());
+
+        if let Some(action) = self.priority_actions_side_queue.pop_front() {
+            match action {
+                RotatorAction::Single(action) => {
+                    player.set_priority_action(None, action);
+                }
+                RotatorAction::Linked(_) => unreachable!(),
+            }
+            return true;
+        }
+
+        false
+    }
 }
 
 impl Rotator for DefaultRotator {
@@ -766,14 +771,10 @@ impl Rotator for DefaultRotator {
             self.priority_actions.insert(
                 self.id_counter.fetch_add(1, Ordering::Relaxed),
                 priority_action(
-                    RotatorAction::Single(PlayerAction::FamiliarsSwapping(
-                        PlayerActionFamiliarsSwapping {
-                            swappable_slots: familiar_swappable_slots,
-                            swappable_rarities: Array::from_iter(
-                                familiar_swappable_rarities.clone(),
-                            ),
-                        },
-                    )),
+                    RotatorAction::Single(PlayerAction::FamiliarsSwap(FamiliarsSwap {
+                        swappable_slots: familiar_swappable_slots,
+                        swappable_rarities: Array::from_iter(familiar_swappable_rarities.clone()),
+                    })),
                     ActionCondition::EveryMillis(familiar_swap_check_millis),
                     true,
                 ),
@@ -798,7 +799,6 @@ impl Rotator for DefaultRotator {
         self.normal_actions_backward = false;
         self.reset_normal_actions_queue();
         self.priority_actions_queue.clear();
-        self.priority_actions_side_queue.clear();
         self.priority_queuing_linked_action = None;
         self.auto_mob_task = None;
         self.auto_mob_quadrant_consecutive_count = None;
@@ -812,7 +812,10 @@ impl Rotator for DefaultRotator {
 
     #[inline]
     fn rotate_action(&mut self, context: &Context, player: &mut PlayerState) {
-        if context.operation.halting() || matches!(context.player, Player::CashShopThenExit(_, _)) {
+        if context.operation.halting() {
+            if !has_side_loaded_action_executing(player) {
+                self.rotate_side_priority_action(player);
+            }
             return;
         }
         self.rotate_priority_actions(context, player);
@@ -830,6 +833,11 @@ impl Rotator for DefaultRotator {
             }
         }
     }
+}
+
+#[inline]
+fn has_side_loaded_action_executing(player: &PlayerState) -> bool {
+    player.has_priority_action() && player.priority_action_id().is_none()
 }
 
 /// Creates a [`RotatorAction`] with `start_action` as the initial action
@@ -943,7 +951,7 @@ fn familiar_essence_replenish_priority_action(key: KeyBinding) -> PriorityAction
             }
         })),
         condition_kind: None,
-        inner: RotatorAction::Single(PlayerAction::Key(PlayerActionKey {
+        inner: RotatorAction::Single(PlayerAction::Key(Key {
             key,
             link_key: None,
             count: 1,
@@ -1018,7 +1026,7 @@ fn buff_priority_action(buff: BuffKind, key: KeyBinding) -> PriorityAction {
             }
         })),
         condition_kind: None,
-        inner: RotatorAction::Single(PlayerAction::Key(PlayerActionKey {
+        inner: RotatorAction::Single(PlayerAction::Key(Key {
             key,
             link_key: None,
             count: 1,
@@ -1055,7 +1063,7 @@ fn panic_priority_action() -> PriorityAction {
             }
         })),
         condition_kind: None,
-        inner: RotatorAction::Single(PlayerAction::Panic(PlayerActionPanic {
+        inner: RotatorAction::Single(PlayerAction::Panic(Panic {
             to: PanicTo::Channel,
         })),
         queue_to_front: true,
@@ -1080,7 +1088,7 @@ fn elite_boss_change_channel_priority_action() -> PriorityAction {
             }
         })),
         condition_kind: None,
-        inner: RotatorAction::Single(PlayerAction::Panic(PlayerActionPanic {
+        inner: RotatorAction::Single(PlayerAction::Panic(Panic {
             to: PanicTo::Channel,
         })),
         queue_to_front: true,
@@ -1105,7 +1113,7 @@ fn elite_boss_use_key_priority_action(key: KeyBinding) -> PriorityAction {
             }
         })),
         condition_kind: None,
-        inner: RotatorAction::Single(PlayerAction::Key(PlayerActionKey {
+        inner: RotatorAction::Single(PlayerAction::Key(Key {
             key,
             link_key: None,
             count: 1,
@@ -1521,7 +1529,7 @@ mod tests {
 
         assert_matches!(
             player.normal_action(),
-            Some(PlayerAction::PingPong(PlayerActionPingPong {
+            Some(PlayerAction::PingPong(PingPong {
                 direction: PingPongDirection::Left,
                 ..
             }))
@@ -1539,7 +1547,7 @@ mod tests {
 
         assert_matches!(
             player.normal_action(),
-            Some(PlayerAction::PingPong(PlayerActionPingPong {
+            Some(PlayerAction::PingPong(PingPong {
                 direction: PingPongDirection::Right,
                 ..
             }))
