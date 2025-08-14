@@ -483,8 +483,8 @@ fn update_loop() {
             let mut pending_halt_reached = pending_halt.is_some_and(|instant| {
                 Instant::now().duration_since(instant).as_secs() >= PENDING_HALT_SECS
             });
-            if context.tick_changed_minimap || (pending_halt_reached && was_player_navigating) {
-                info!(target: "context", "halt cancelled due to minimap changed or navigating");
+            if pending_halt_reached && was_player_navigating {
+                info!(target: "context", "halt cancelled due to navigating");
                 pending_halt_reached = false;
                 pending_halt = None;
             }

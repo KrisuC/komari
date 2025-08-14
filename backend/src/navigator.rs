@@ -75,6 +75,7 @@ struct Point {
 enum PointState {
     Dirty,
     Completed,
+    NoDestination,
     Unreachable,
     Next(i32, i32, NavigationTransition, Option<Rc<RefCell<Path>>>),
 }
@@ -189,12 +190,17 @@ impl DefaultNavigator {
         // Re-use cached point
         if matches!(
             self.last_point_state,
-            Some(PointState::Next(_, _, _, _) | PointState::Completed | PointState::Unreachable)
+            Some(
+                PointState::Next(_, _, _, _)
+                    | PointState::Completed
+                    | PointState::Unreachable
+                    | PointState::NoDestination
+            )
         ) {
             return self.last_point_state.clone().expect("has value");
         }
         if self.destination_path_id.is_none() {
-            return PointState::Completed;
+            return PointState::NoDestination;
         }
 
         let path_id = self.destination_path_id.clone().expect("has value");
@@ -339,7 +345,7 @@ impl Navigator for DefaultNavigator {
                 }
                 false
             }
-            PointState::Completed | PointState::Unreachable => true,
+            PointState::NoDestination | PointState::Completed | PointState::Unreachable => true,
             PointState::Next(x, y, transition, _) => {
                 match transition {
                     NavigationTransition::Portal => {
