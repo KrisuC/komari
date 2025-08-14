@@ -22,6 +22,8 @@ pub enum Error {
     KeyNotFound,
     #[error("key not received because there is no key event")]
     KeyNotReceived,
+    #[error("key state currently cannot be retrieved")]
+    KeyStateNotAvailable,
     #[error("mouse was not sent due to the window not focused or other error")]
     MouseNotSent,
 

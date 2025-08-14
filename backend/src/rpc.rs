@@ -3,13 +3,15 @@ use std::time::Duration;
 use anyhow::{Error, Ok, bail};
 use bit_vec::BitVec;
 use input::key_input_client::KeyInputClient;
-pub use input::{Coordinate, Key, MouseAction};
+pub use input::{Coordinate, Key, KeyState, MouseAction};
 use input::{KeyDownRequest, KeyInitRequest, KeyRequest, KeyUpRequest, MouseRequest};
 use tokio::runtime::Handle;
 use tokio::task::block_in_place;
 use tokio::time::timeout;
 use tonic::Request;
 use tonic::transport::{Channel, Endpoint};
+
+use crate::rpc::input::KeyStateRequest;
 
 mod input {
     tonic::include_proto!("input");
@@ -68,6 +70,15 @@ impl InputService {
 
     pub fn mouse_coordinate(&self) -> Coordinate {
         self.mouse_coordinate
+    }
+
+    pub fn key_state(&mut self, key: Key) -> Result<KeyState, Error> {
+        block_future(async move {
+            let request = Request::new(KeyStateRequest { key: key.into() });
+            let response = self.client.key_state(request).await?.into_inner();
+
+            Ok(KeyState::try_from(response.state)?)
+        })
     }
 
     pub fn send_mouse(

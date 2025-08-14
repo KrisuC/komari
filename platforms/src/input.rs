@@ -10,6 +10,12 @@ pub enum MouseKind {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum KeyState {
+    Pressed,
+    Released,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum KeyKind {
     A,
     B,
@@ -119,6 +125,15 @@ impl Input {
     pub fn send_mouse(&self, x: i32, y: i32, kind: MouseKind) -> Result<()> {
         if cfg!(windows) {
             return self.windows.send_mouse(x, y, kind);
+        }
+
+        Err(Error::PlatformNotSupported)
+    }
+
+    /// Retrieves the current state of key `kind`.
+    pub fn key_state(&self, kind: KeyKind) -> Result<KeyState> {
+        if cfg!(windows) {
+            return self.windows.key_state(kind);
         }
 
         Err(Error::PlatformNotSupported)

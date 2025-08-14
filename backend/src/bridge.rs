@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, fmt::Debug};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 #[cfg(test)]
 use mockall::automock;
 #[cfg(windows)]
@@ -11,7 +11,7 @@ use platforms::{
     input::{
         Input as PlatformInput, InputKind as PlatformInputKind,
         InputReceiver as PlatformInputReceiver, KeyKind as PlatformKeyKind,
-        MouseKind as PlatformMouseKind,
+        KeyState as PlatformKeyState, MouseKind as PlatformMouseKind,
     },
 };
 
@@ -20,7 +20,9 @@ use crate::{
     context::{MS_PER_TICK, MS_PER_TICK_F32},
     database::Seeds,
     rng::Rng,
-    rpc::{self, InputService, Key as RpcKeyKind, MouseAction as RpcMouseKind},
+    rpc::{
+        self, InputService, Key as RpcKeyKind, KeyState as RpcKeyState, MouseAction as RpcMouseKind,
+    },
 };
 
 /// Base mean in milliseconds to generate a pair from.
@@ -35,6 +37,30 @@ const MEAN_STD_REVERSION_RATE: f32 = 0.2;
 
 /// The rate at which generated mean will revert to the base [`BASE_MEAN_MS_DELAY`] over time.
 const MEAN_STD_VOLATILITY: f32 = 3.0;
+
+#[derive(Debug)]
+pub enum KeyState {
+    Pressed,
+    Released,
+}
+
+impl From<PlatformKeyState> for KeyState {
+    fn from(value: PlatformKeyState) -> Self {
+        match value {
+            PlatformKeyState::Pressed => KeyState::Pressed,
+            PlatformKeyState::Released => KeyState::Released,
+        }
+    }
+}
+
+impl From<RpcKeyState> for KeyState {
+    fn from(value: RpcKeyState) -> Self {
+        match value {
+            RpcKeyState::Pressed => KeyState::Pressed,
+            RpcKeyState::Released => KeyState::Released,
+        }
+    }
+}
 
 /// The kind of mouse movement/action to perform.
 ///
@@ -548,7 +574,7 @@ pub struct DefaultInput {
     kind: InputMethodInner,
     delay_rng: Rng,
     delay_mean_std_pair: (f32, f32),
-    delay_map: RefCell<HashMap<KeyKind, u32>>,
+    delay_map: RefCell<HashMap<KeyKind, (u32, bool)>>,
 }
 
 impl DefaultInput {
@@ -558,6 +584,20 @@ impl DefaultInput {
             delay_rng: Rng::new(seeds.seed),
             delay_mean_std_pair: (BASE_MEAN_MS_DELAY, BASE_STD_MS_DELAY),
             delay_map: RefCell::new(HashMap::new()),
+        }
+    }
+
+    #[inline]
+    fn key_state(&self, kind: KeyKind) -> Result<KeyState> {
+        match &self.kind {
+            InputMethodInner::Rpc(_, service) => {
+                if let Some(cell) = service {
+                    Ok(cell.borrow_mut().key_state(kind.into())?.into())
+                } else {
+                    bail!("service not connected")
+                }
+            }
+            InputMethodInner::Default(input) => Ok(input.key_state(kind.into())?.into()),
         }
     }
 
@@ -638,7 +678,7 @@ impl DefaultInput {
 
         let (_, delay_tick_count) = self.random_input_delay_tick_count();
         if delay_tick_count > 0 {
-            let _ = map.insert(kind, delay_tick_count);
+            let _ = map.insert(kind, (delay_tick_count, false));
             InputDelay::Tracked
         } else {
             InputDelay::Untracked
@@ -666,12 +706,20 @@ impl DefaultInput {
         if map.is_empty() {
             return;
         }
-        map.retain(|kind, delay| {
+        map.retain(|kind, (delay, did_send_up)| {
             *delay = delay.saturating_sub(1);
             if *delay == 0 {
-                let _ = self.send_key_up_inner(*kind, true);
+                if !*did_send_up {
+                    *did_send_up = true;
+                    let _ = self.send_key_up_inner(*kind, true);
+                }
+
+                self.key_state(*kind)
+                    .ok()
+                    .is_none_or(|state| matches!(state, KeyState::Released))
+            } else {
+                true
             }
-            *delay != 0
         });
     }
 
@@ -861,7 +909,10 @@ mod tests {
     #[test]
     fn track_input_delay_already_tracked() {
         let sender = test_key_sender();
-        sender.delay_map.borrow_mut().insert(KeyKind::Ctrl, 3);
+        sender
+            .delay_map
+            .borrow_mut()
+            .insert(KeyKind::Ctrl, (3, false));
 
         let result = sender.track_input_delay(KeyKind::Ctrl);
         assert_matches!(result, InputDelay::AlreadyTracked);
@@ -871,7 +922,10 @@ mod tests {
     fn update_input_delay_decrement_and_release_key() {
         let mut sender = test_key_sender();
         let count = 50;
-        sender.delay_map.borrow_mut().insert(KeyKind::Ctrl, count);
+        sender
+            .delay_map
+            .borrow_mut()
+            .insert(KeyKind::Ctrl, (count, false));
 
         for _ in 0..count {
             sender.update_input_delay(0);

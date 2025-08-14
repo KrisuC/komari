@@ -403,21 +403,20 @@ fn update_loop() {
             .grab()
             .map(OwnedMat::new_from_frame)
             .map(CachedDetector::new);
-        let was_player_alive = !player_state.is_dead();
-        let was_player_navigating = navigator.was_last_point_available_or_completed();
-        let was_running_cycle = matches!(context.operation, Operation::RunUntil { .. });
         let was_capturing_normally = did_capture_normally;
 
         did_capture_normally = detector.is_ok();
         context.tick += 1;
         context.tick_failed_capturing =
             was_capturing_normally && !did_capture_normally && detector.is_err();
-        context.operation = context.operation.update();
 
-        let did_cycled_to_stop = context.operation.halting();
         if let Ok(detector) = detector {
+            let was_player_alive = !player_state.is_dead();
+            let was_player_navigating = navigator.was_last_point_available_or_completed();
+            let was_running_cycle = matches!(context.operation, Operation::RunUntil { .. });
             let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
 
+            context.operation = context.operation.update();
             context.detector = Some(Box::new(detector));
             context.minimap = fold_context(&context, context.minimap, &mut minimap_state);
             context.tick_changed_minimap =
@@ -439,14 +438,79 @@ fn update_loop() {
             if navigator.navigate_player(&context, &mut player_state) {
                 rotator.rotate_action(&context, &mut player_state);
             }
+
+            let did_cycled_to_stop = context.operation.halting();
+            // Go to town on stop cycle
+            if was_running_cycle && did_cycled_to_stop {
+                halt_or_panic(&mut context, &mut rotator, &mut player_state, false, true);
+            }
+            if context.operation.halting() {
+                pending_halt = None;
+            }
+
+            // Upon accidental or white roomed causing map to change,
+            // abort actions and send notification
+            if service.has_minimap_data() && !context.operation.halting() {
+                let player_died = was_player_alive && player_state.is_dead();
+                // Unconditionally halt when player died
+                if player_died {
+                    halt_or_panic(&mut context, &mut rotator, &mut player_state, true, false);
+                    return;
+                }
+
+                let stop_on_fail_or_change_map = settings.borrow().stop_on_fail_or_change_map;
+                if !stop_on_fail_or_change_map {
+                    return;
+                }
+
+                let mut pending_halt_reached = pending_halt.is_some_and(|instant| {
+                    Instant::now().duration_since(instant).as_secs() >= PENDING_HALT_SECS
+                });
+                if pending_halt_reached && was_player_navigating {
+                    info!(target: "context", "halt cancelled due to navigating");
+                    pending_halt_reached = false;
+                    pending_halt = None;
+                }
+
+                // Do not halt if player changed map due to switching channel
+                let player_panicking = matches!(
+                    context.player,
+                    Player::Panicking(Panicking {
+                        to: PanicTo::Channel,
+                        ..
+                    })
+                );
+                let can_halt_or_notify = pending_halt_reached
+                    || (pending_halt.is_none()
+                        && context.tick_changed_minimap
+                        && !player_panicking)
+                    || (pending_halt.is_none() && context.tick_failed_capturing);
+                if can_halt_or_notify {
+                    if pending_halt.is_none() {
+                        info!(target: "context", "queued a halt due to minimap changed or detection failed");
+                        pending_halt = Some(Instant::now());
+                    } else {
+                        info!(target: "context", "halting...");
+                        pending_halt = None;
+                        halt_or_panic(
+                            &mut context,
+                            &mut rotator,
+                            &mut player_state,
+                            true,
+                            did_capture_normally,
+                        );
+                        let _ = context
+                            .notification
+                            .schedule_notification(NotificationKind::FailOrMapChange);
+                    }
+                }
+            }
         }
 
         context.input.update(context.tick);
         context.notification.update_scheduled_frames(|| {
             to_png(context.detector.as_ref().map(|detector| detector.mat()))
         });
-
-        // Poll requests, keys and update scheduled notifications frames
         service.poll(PollArgs {
             context: &mut context,
             player: &mut player_state,
@@ -456,70 +520,6 @@ fn update_loop() {
             navigator: &mut navigator,
             capture: &mut capture,
         });
-
-        // Go to town on stop cycle
-        if was_running_cycle && did_cycled_to_stop {
-            halt_or_panic(&mut context, &mut rotator, &mut player_state, false, true);
-        }
-        if context.operation.halting() {
-            pending_halt = None;
-        }
-
-        // Upon accidental or white roomed causing map to change,
-        // abort actions and send notification
-        if service.has_minimap_data() && !context.operation.halting() {
-            let player_died = was_player_alive && player_state.is_dead();
-            // Unconditionally halt when player died
-            if player_died {
-                halt_or_panic(&mut context, &mut rotator, &mut player_state, true, false);
-                return;
-            }
-
-            let stop_on_fail_or_change_map = settings.borrow().stop_on_fail_or_change_map;
-            if !stop_on_fail_or_change_map {
-                return;
-            }
-
-            let mut pending_halt_reached = pending_halt.is_some_and(|instant| {
-                Instant::now().duration_since(instant).as_secs() >= PENDING_HALT_SECS
-            });
-            if pending_halt_reached && was_player_navigating {
-                info!(target: "context", "halt cancelled due to navigating");
-                pending_halt_reached = false;
-                pending_halt = None;
-            }
-
-            // Do not halt if player changed map due to switching channel
-            let player_panicking = matches!(
-                context.player,
-                Player::Panicking(Panicking {
-                    to: PanicTo::Channel,
-                    ..
-                })
-            );
-            let can_halt_or_notify = pending_halt_reached
-                || (pending_halt.is_none() && context.tick_changed_minimap && !player_panicking)
-                || (pending_halt.is_none() && context.tick_failed_capturing);
-            if can_halt_or_notify {
-                if pending_halt.is_none() {
-                    info!(target: "context", "queued a halt due to minimap changed or detection failed");
-                    pending_halt = Some(Instant::now());
-                } else {
-                    info!(target: "context", "halting...");
-                    pending_halt = None;
-                    halt_or_panic(
-                        &mut context,
-                        &mut rotator,
-                        &mut player_state,
-                        true,
-                        did_capture_normally,
-                    );
-                    let _ = context
-                        .notification
-                        .schedule_notification(NotificationKind::FailOrMapChange);
-                }
-            }
-        }
     });
 }
 

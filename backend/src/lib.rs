@@ -6,7 +6,6 @@
 #![feature(vec_deque_pop_if)]
 #![feature(associated_type_defaults)]
 #![feature(string_into_chars)]
-#![feature(duration_constructors_lite)]
 #![feature(assert_matches)]
 
 use std::{
