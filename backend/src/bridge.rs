@@ -1,4 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Debug};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, hash_map::Entry},
+    fmt::Debug,
+};
 
 use anyhow::{Result, bail};
 #[cfg(test)]
@@ -21,7 +25,8 @@ use crate::{
     database::Seeds,
     rng::Rng,
     rpc::{
-        self, InputService, Key as RpcKeyKind, KeyState as RpcKeyState, MouseAction as RpcMouseKind,
+        Coordinate as RpcCoordinate, InputService, Key as RpcKeyKind, KeyState as RpcKeyState,
+        MouseAction as RpcMouseKind,
     },
 };
 
@@ -38,6 +43,9 @@ const MEAN_STD_REVERSION_RATE: f32 = 0.2;
 /// The rate at which generated mean will revert to the base [`BASE_MEAN_MS_DELAY`] over time.
 const MEAN_STD_VOLATILITY: f32 = 3.0;
 
+/// The current of key state.
+///
+/// This is a bridge enum between platform-specific and gRPC.
 #[derive(Debug)]
 pub enum KeyState {
     Pressed,
@@ -672,22 +680,23 @@ impl DefaultInput {
     /// by the external caller.
     fn track_input_delay(&self, kind: KeyKind) -> InputDelay {
         let mut map = self.delay_map.borrow_mut();
-        if map.contains_key(&kind) {
+        let entry = map.entry(kind);
+        if matches!(entry, Entry::Occupied(_)) {
             return InputDelay::AlreadyTracked;
         }
 
         let (_, delay_tick_count) = self.random_input_delay_tick_count();
-        if delay_tick_count > 0 {
-            let _ = map.insert(kind, (delay_tick_count, false));
-            InputDelay::Tracked
-        } else {
-            InputDelay::Untracked
+        if delay_tick_count == 0 {
+            return InputDelay::Untracked;
         }
+
+        let _ = entry.insert_entry((delay_tick_count, false));
+        InputDelay::Tracked
     }
 
     /// Updates the input delay (key up timing) for held down keys and delay std/mean pair.
     #[inline]
-    pub fn update_input_delay(&mut self, game_tick: u64) {
+    fn update(&mut self, game_tick: u64) {
         const UPDATE_MEAN_STD_PAIR_INTERVAL: u64 = 200;
 
         if game_tick > 0 && game_tick.is_multiple_of(UPDATE_MEAN_STD_PAIR_INTERVAL) {
@@ -716,7 +725,7 @@ impl DefaultInput {
 
                 self.key_state(*kind)
                     .ok()
-                    .is_none_or(|state| matches!(state, KeyState::Released))
+                    .is_some_and(|state| matches!(state, KeyState::Pressed))
             } else {
                 true
             }
@@ -732,7 +741,7 @@ impl DefaultInput {
 
 impl Input for DefaultInput {
     fn update(&mut self, tick: u64) {
-        self.update_input_delay(tick);
+        self.update(tick);
     }
 
     fn set_method(&mut self, method: InputMethod) {
@@ -745,8 +754,8 @@ impl Input for DefaultInput {
                 if let Some(cell) = service {
                     let mut borrow = cell.borrow_mut();
                     let relative = match borrow.mouse_coordinate() {
-                        rpc::Coordinate::Screen => CoordinateRelative::Monitor,
-                        rpc::Coordinate::Relative => CoordinateRelative::Window,
+                        RpcCoordinate::Screen => CoordinateRelative::Monitor,
+                        RpcCoordinate::Relative => CoordinateRelative::Window,
                     };
                     let coordinates = window.convert_coordinate(x, y, relative)?;
 
@@ -928,7 +937,7 @@ mod tests {
             .insert(KeyKind::Ctrl, (count, false));
 
         for _ in 0..count {
-            sender.update_input_delay(0);
+            sender.update(0);
         }
         // After `count` updates, key should be released and removed
         assert!(!sender.has_input_delay(KeyKind::Ctrl));
@@ -940,11 +949,11 @@ mod tests {
         let original_pair = sender.delay_mean_std_pair;
 
         // Simulate tick before the interval: should NOT update
-        sender.update_input_delay(199);
+        sender.update(199);
         assert_eq!(sender.delay_mean_std_pair, original_pair);
 
         // Simulate tick AT the interval: should update
-        sender.update_input_delay(200);
+        sender.update(200);
         assert_ne!(sender.delay_mean_std_pair, original_pair);
     }
 }

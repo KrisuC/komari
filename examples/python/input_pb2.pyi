@@ -78,6 +78,11 @@ class Key(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     Shift: _ClassVar[Key]
     Alt: _ClassVar[Key]
 
+class KeyState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    Pressed: _ClassVar[KeyState]
+    Released: _ClassVar[KeyState]
+
 class MouseAction(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     Move: _ClassVar[MouseAction]
@@ -158,6 +163,8 @@ Slash: Key
 Esc: Key
 Shift: Key
 Alt: Key
+Pressed: KeyState
+Released: KeyState
 Move: MouseAction
 Click: MouseAction
 ScrollDown: MouseAction
@@ -175,6 +182,18 @@ class KeyInitResponse(_message.Message):
     MOUSE_COORDINATE_FIELD_NUMBER: _ClassVar[int]
     mouse_coordinate: Coordinate
     def __init__(self, mouse_coordinate: _Optional[_Union[Coordinate, str]] = ...) -> None: ...
+
+class KeyStateRequest(_message.Message):
+    __slots__ = ("key",)
+    KEY_FIELD_NUMBER: _ClassVar[int]
+    key: Key
+    def __init__(self, key: _Optional[_Union[Key, str]] = ...) -> None: ...
+
+class KeyStateResponse(_message.Message):
+    __slots__ = ("state",)
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    state: KeyState
+    def __init__(self, state: _Optional[_Union[KeyState, str]] = ...) -> None: ...
 
 class MouseRequest(_message.Message):
     __slots__ = ("width", "height", "x", "y", "action")

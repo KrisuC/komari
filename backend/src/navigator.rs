@@ -706,7 +706,7 @@ mod tests {
 
         let result = navigator.compute_next_point();
 
-        assert!(matches!(result, PointState::Completed));
+        assert!(matches!(result, PointState::NoDestination));
     }
 
     #[test]

@@ -39,6 +39,11 @@ class KeyInputStub(object):
                 request_serializer=input__pb2.KeyInitRequest.SerializeToString,
                 response_deserializer=input__pb2.KeyInitResponse.FromString,
                 _registered_method=True)
+        self.KeyState = channel.unary_unary(
+                '/input.KeyInput/KeyState',
+                request_serializer=input__pb2.KeyStateRequest.SerializeToString,
+                response_deserializer=input__pb2.KeyStateResponse.FromString,
+                _registered_method=True)
         self.SendMouse = channel.unary_unary(
                 '/input.KeyInput/SendMouse',
                 request_serializer=input__pb2.MouseRequest.SerializeToString,
@@ -65,6 +70,12 @@ class KeyInputServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def Init(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def KeyState(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -101,6 +112,11 @@ def add_KeyInputServicer_to_server(servicer, server):
                     servicer.Init,
                     request_deserializer=input__pb2.KeyInitRequest.FromString,
                     response_serializer=input__pb2.KeyInitResponse.SerializeToString,
+            ),
+            'KeyState': grpc.unary_unary_rpc_method_handler(
+                    servicer.KeyState,
+                    request_deserializer=input__pb2.KeyStateRequest.FromString,
+                    response_serializer=input__pb2.KeyStateResponse.SerializeToString,
             ),
             'SendMouse': grpc.unary_unary_rpc_method_handler(
                     servicer.SendMouse,
@@ -150,6 +166,33 @@ class KeyInput(object):
             '/input.KeyInput/Init',
             input__pb2.KeyInitRequest.SerializeToString,
             input__pb2.KeyInitResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def KeyState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/input.KeyInput/KeyState',
+            input__pb2.KeyStateRequest.SerializeToString,
+            input__pb2.KeyStateResponse.FromString,
             options,
             channel_credentials,
             insecure,

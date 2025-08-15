@@ -433,7 +433,6 @@ fn update_loop() {
                 context.buffs[i] = fold_context(&context, context.buffs[i], state);
             }
 
-            // This must always be done last
             navigator.update(&context);
             if navigator.navigate_player(&context, &mut player_state) {
                 rotator.rotate_action(&context, &mut player_state);
@@ -508,9 +507,9 @@ fn update_loop() {
         }
 
         context.input.update(context.tick);
-        context.notification.update_scheduled_frames(|| {
-            to_png(context.detector.as_ref().map(|detector| detector.mat()))
-        });
+        context
+            .notification
+            .update(|| to_png(context.detector.as_ref().map(|detector| detector.mat())));
         service.poll(PollArgs {
             context: &mut context,
             player: &mut player_state,

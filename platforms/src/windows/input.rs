@@ -178,10 +178,6 @@ impl WindowsInput {
 
     pub fn key_state(&self, kind: KeyKind) -> Result<KeyState> {
         let result = unsafe { GetAsyncKeyState(VIRTUAL_KEY::from(kind).0 as i32) } as u16;
-        if result == 0 {
-            return Err(Error::KeyStateNotAvailable);
-        }
-
         let is_down = result & 0x8000 != 0;
         let state = if is_down {
             KeyState::Pressed
