@@ -233,11 +233,12 @@ impl DiscordNotification {
         Ok(())
     }
 
-    pub fn update_scheduled_frames(&self, frame: impl Fn() -> Option<Vec<u8>>) {
+    pub fn update(&self, frame: impl Fn() -> Option<Vec<u8>>) {
         let mut scheduled = self.scheduled.lock().unwrap();
         if scheduled.is_empty() {
             return;
         }
+
         for item in scheduled.iter_mut() {
             let elapsed_secs = item.instant.elapsed().as_secs() as u32;
             for (item_frame, deadline) in item.frames.iter_mut() {
@@ -356,7 +357,7 @@ mod test {
 
         advance(Duration::from_secs(4)).await;
         // Skip frame 1 because deadline passed to frame 2
-        noti.update_scheduled_frames(|| Some(vec![]));
+        noti.update(|| Some(vec![]));
         let scheduled_guard = noti.scheduled.lock().unwrap();
         let scheduled = scheduled_guard.first().unwrap();
         assert!(scheduled.frames[0].0.is_none());
@@ -366,7 +367,7 @@ mod test {
 
         // Frame 3
         advance(Duration::from_secs(4)).await;
-        noti.update_scheduled_frames(|| Some(vec![]));
+        noti.update(|| Some(vec![]));
         let scheduled = noti.scheduled.lock().unwrap();
         let scheduled = scheduled.first().unwrap();
         assert!(scheduled.frames[0].0.is_none());

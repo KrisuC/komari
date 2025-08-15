@@ -13,7 +13,10 @@ use crate::{
     task::{Task, Update, update_detection_task},
 };
 
-const BUFF_FAIL_MAX_COUNT: u32 = 3;
+const COMMON_FAIL_COUNT: u32 = 3;
+const WEALTH_LUCK_EXP_FAIL_COUNT: u32 = 5;
+const FAMILIAR_FAIL_COUNT: u32 = 2;
+const RUNE_FAIL_COUNT: u32 = 1;
 
 /// Stores persistent state of a buff.
 #[derive(Debug)]
@@ -38,20 +41,20 @@ impl BuffState {
             task: None,
             fail_count: 0,
             max_fail_count: match kind {
-                BuffKind::Rune => 1,
-                BuffKind::Familiar => 2,
-                BuffKind::WealthAcquisitionPotion
-                | BuffKind::ExpAccumulationPotion
-                | BuffKind::SayramElixir
+                BuffKind::Rune => RUNE_FAIL_COUNT,
+                BuffKind::Familiar => FAMILIAR_FAIL_COUNT,
+                BuffKind::LegionWealth
+                | BuffKind::LegionLuck
+                | BuffKind::WealthAcquisitionPotion
+                | BuffKind::ExpAccumulationPotion => WEALTH_LUCK_EXP_FAIL_COUNT,
+                BuffKind::SayramElixir
                 | BuffKind::AureliaElixir
                 | BuffKind::ExpCouponX3
                 | BuffKind::BonusExpCoupon
-                | BuffKind::LegionWealth
-                | BuffKind::LegionLuck
                 | BuffKind::ExtremeRedPotion
                 | BuffKind::ExtremeBluePotion
                 | BuffKind::ExtremeGreenPotion
-                | BuffKind::ExtremeGoldPotion => BUFF_FAIL_MAX_COUNT,
+                | BuffKind::ExtremeGoldPotion => COMMON_FAIL_COUNT,
             },
             enabled: true,
         }

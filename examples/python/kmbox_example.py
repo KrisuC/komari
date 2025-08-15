@@ -6,10 +6,29 @@ import time
 from random import Random
 from threading import Timer
 from concurrent import futures
+
 # The two imports below is generated from:
-# python -m grpc_tools.protoc --python_out=. --pyi_out=. --grpc_python_out=. -I../../backend/proto ../..
-# /backend/proto/input.proto
-from input_pb2 import Key, KeyRequest, KeyResponse, KeyDownRequest, KeyDownResponse, KeyUpRequest, KeyUpResponse, KeyInitRequest, KeyInitResponse, MouseRequest, MouseResponse, MouseAction, Coordinate
+# python -m grpc_tools.protoc --python_out=. --pyi_out=. --grpc_python_out=. \
+#     -I../../backend/proto \
+#     ../../backend/proto/input.proto
+from input_pb2 import (
+    Key,
+    KeyRequest,
+    KeyResponse,
+    KeyDownRequest,
+    KeyDownResponse,
+    KeyUpRequest,
+    KeyUpResponse,
+    KeyInitRequest,
+    KeyInitResponse,
+    MouseRequest,
+    MouseResponse,
+    MouseAction,
+    Coordinate,
+    KeyState,
+    KeyStateRequest,
+    KeyStateResponse,
+)
 from input_pb2_grpc import KeyInputServicer, add_KeyInputServicer_to_server
 
 
@@ -43,6 +62,14 @@ class KeyInput(KeyInputServicer):
         # You should return the one appropriate for your setup in this Init() function.
         # return KeyInitResponse(mouse_coordinate=Coordinate.Screen)
         return KeyInitResponse(mouse_coordinate=Coordinate.Relative)
+
+    def KeyState(self, request: KeyStateRequest, context):
+        key = self.keys_map[request.key]
+        if kmNet.isdown_keyboard(key):
+            return KeyStateResponse(KeyState.Pressed)
+        else:
+            return KeyStateResponse(KeyState.Released)
+            
 
     def SendMouse(self, request: MouseRequest, context):
         # Regardless of the type of Coordinate return in Init(), the coordinates are always based on
@@ -99,10 +126,8 @@ class KeyInput(KeyInputServicer):
         # Map coordinates from bot PC to input PC
         crop_left_px = 0  # Change this until it feels correct
         crop_top_px = 30  # Change this until it feels correct
-        scaled_x = int(
-            ((x - crop_left_px) / (width - crop_left_px)) * screen_width)
-        scaled_y = int(
-            ((y - crop_top_px) / (height - crop_top_px)) * screen_height)
+        scaled_x = int(((x - crop_left_px) / (width - crop_left_px)) * screen_width)
+        scaled_y = int(((y - crop_top_px) / (height - crop_top_px)) * screen_height)
 
         dx = scaled_x - position.x
         dy = scaled_y - position.y
@@ -171,7 +196,6 @@ if __name__ == "__main__":
         # Letters A-Z
         # A=0 -> HID 4, ..., Z=25 -> HID 29
         **{Key.Value(Key.Name(i)): 4 + i for i in range(26)},
-
         # Digits 0–9
         Key.Zero: 39,
         Key.One: 30,
@@ -183,7 +207,6 @@ if __name__ == "__main__":
         Key.Seven: 36,
         Key.Eight: 37,
         Key.Nine: 38,
-
         # Function keys
         Key.F1: 58,
         Key.F2: 59,
@@ -197,7 +220,6 @@ if __name__ == "__main__":
         Key.F10: 67,
         Key.F11: 68,
         Key.F12: 69,
-
         # Arrows & navigation
         Key.Up: 82,
         Key.Down: 81,
@@ -209,7 +231,6 @@ if __name__ == "__main__":
         Key.PageDown: 78,
         Key.Insert: 73,
         Key.Delete: 76,
-
         # Modifiers and special characters
         Key.Ctrl: 224,
         Key.Enter: 40,

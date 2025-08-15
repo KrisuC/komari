@@ -75,6 +75,11 @@ enum Key {
     Alt = 69;
 }
 
+enum KeyState {
+  Pressed = 0;
+  Released = 1;
+}
+
 enum MouseAction {
   Move = 0;
   Click = 1;
@@ -88,6 +93,7 @@ enum Coordinate {
 
 service KeyInput {
   rpc Init (KeyInitRequest) returns (KeyInitResponse);
+  rpc KeyState (KeyStateRequest) returns (KeyStateResponse);
   rpc SendMouse (MouseRequest) returns (MouseResponse);
   rpc Send (KeyRequest) returns (KeyResponse);
   rpc SendUp (KeyUpRequest) returns (KeyUpResponse);
@@ -100,6 +106,14 @@ message KeyInitRequest {
 
 message KeyInitResponse {
   Coordinate mouse_coordinate = 1;
+} 
+
+message KeyStateRequest {
+  Key key = 1;
+}
+
+message KeyStateResponse {
+  KeyState state = 1;
 } 
 
 message MouseRequest {
