@@ -18,14 +18,37 @@ use crate::{
     },
 };
 
+/// Number of ticks to wait before spamming jump key.
 const SPAM_DELAY: u32 = 7;
+
+/// Number of ticks to wait before spamming jump key for lesser travel distance.
 const SOFT_SPAM_DELAY: u32 = 12;
+
 const TIMEOUT: u32 = MOVE_TIMEOUT + 3;
+
+/// Player's `y` velocity to be considered as up jumped.
 const UP_JUMPED_Y_VELOCITY_THRESHOLD: f32 = 1.3;
+
+/// Player's `x` velocity to be considered as near stationary.
 const X_NEAR_STATIONARY_THRESHOLD: f32 = 0.28;
-const TELEPORT_UP_JUMP_THRESHOLD: i32 = 14;
+
+/// Minimum distance required to perform an up jump using teleport key with jump.
+const TELEPORT_WITH_JUMP_THRESHOLD: i32 = 20;
+
+/// Minimum distance required to perform an up jump and then teleport.
+const UP_JUMP_AND_TELEPORT_THRESHOLD: i32 = 23;
+
 const SOFT_UP_JUMP_THRESHOLD: i32 = 16;
 
+#[derive(Debug, Clone, Copy)]
+enum UpJumpingKind {
+    Mage,
+    UpArrow,
+    JumpKey,
+    SpecificKey,
+}
+
+// TODO: Reorganize states
 #[derive(Debug, Clone, Copy)]
 pub struct UpJumping {
     pub moving: Moving,
@@ -33,11 +56,14 @@ pub struct UpJumping {
     spam_delay: u32,
     /// Whether auto-mobbing should wait for up jump completion in non-intermediate destination.
     ///
-    /// This is false initially but randomized in on start lifecycle.
+    /// This is false initially but randomized on start lifecycle.
     auto_mob_wait_completion: bool,
+    mage_did_up_jump: bool,
+    mage_use_teleport_after_up_jump: bool,
 }
 
 impl UpJumping {
+    // TODO: Compute `UpJumpingKind` upon construction?
     pub fn new(moving: Moving) -> Self {
         let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
         let spam_delay = if y_distance <= SOFT_UP_JUMP_THRESHOLD {
@@ -45,10 +71,13 @@ impl UpJumping {
         } else {
             SPAM_DELAY
         };
+
         Self {
             moving,
             spam_delay,
             auto_mob_wait_completion: false,
+            mage_did_up_jump: false,
+            mage_use_teleport_after_up_jump: false,
         }
     }
 
@@ -80,7 +109,9 @@ pub fn update_up_jumping_context(
 ) -> Player {
     let up_jump_key = state.config.upjump_key;
     let jump_key = state.config.jump_key;
-    let has_teleport_key = state.config.teleport_key.is_some();
+    let teleport_key = state.config.teleport_key;
+    let has_teleport_key = teleport_key.is_some();
+    let kind = up_jumping_kind(up_jump_key, has_teleport_key);
 
     match next_moving_lifecycle_with_axis(
         up_jumping.moving,
@@ -102,21 +133,31 @@ pub fn update_up_jumping_context(
             }
             state.last_movement = Some(LastMovement::UpJumping);
 
-            // Only send Up key when the key is not of a Demon Slayer
-            if !matches!(up_jump_key, Some(KeyKind::Up)) {
-                let _ = context.input.send_key_down(KeyKind::Up);
-            }
-            match (up_jump_key, has_teleport_key) {
-                // This is a generic class, a mage or a Demon Slayer
-                (None, _) | (Some(_), true) | (Some(KeyKind::Up), false) => {
-                    // This if is for mage. It means if the player is a mage and the y distance
-                    // is less than `TELEPORT_UP_JUMP_THRESHOLD`, do not send jump key.
-                    let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
-                    if !can_mage_skip_jump_key(up_jump_key, has_teleport_key, y_distance) {
+            let mut up_jumping = up_jumping;
+            let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
+            match kind {
+                UpJumpingKind::Mage => {
+                    up_jumping.mage_use_teleport_after_up_jump =
+                        y_distance >= UP_JUMP_AND_TELEPORT_THRESHOLD;
+
+                    let _ = context.input.send_key_down(KeyKind::Up);
+                    if y_distance >= TELEPORT_WITH_JUMP_THRESHOLD {
+                        // TODO: If a dedicated up jump key is set, a jump should not be performed.
+                        // TODO: But what mage class has a dedicated up jump that is not
+                        // TODO: a normal jump key/space?
                         let _ = context.input.send_key(jump_key);
                     }
                 }
-                _ => (),
+                UpJumpingKind::UpArrow => {
+                    let _ = context.input.send_key(jump_key);
+                }
+                UpJumpingKind::JumpKey => {
+                    let _ = context.input.send_key_down(KeyKind::Up);
+                    let _ = context.input.send_key(jump_key);
+                }
+                UpJumpingKind::SpecificKey => {
+                    let _ = context.input.send_key_down(KeyKind::Up);
+                }
             }
 
             // TODO: Should be fine to not check auto-mob action only?
@@ -131,41 +172,43 @@ pub fn update_up_jumping_context(
             Player::Moving(moving.dest, moving.exact, moving.intermediates)
         }
         MovingLifecycle::Updated(mut moving) => {
+            let mut up_jumping = up_jumping;
             let cur_pos = moving.pos;
             let (y_distance, y_direction) = moving.y_distance_direction_from(true, moving.pos);
 
-            match (moving.completed, up_jump_key, has_teleport_key) {
-                (false, None, true) | (false, Some(KeyKind::Up), false) | (false, None, false) => {
-                    if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
-                        // Spam jump key until the player y changes
-                        // above a threshold as sending jump key twice
-                        // doesn't work
-                        if moving.timeout.total >= up_jumping.spam_delay {
-                            // This up jump key is Up for Demon Slayer
-                            if let Some(key) = up_jump_key {
-                                let _ = context.input.send_key(key);
-                            } else {
-                                let _ = context.input.send_key(jump_key);
+            if moving.completed {
+                let _ = context.input.send_key_up(KeyKind::Up);
+            } else {
+                match kind {
+                    UpJumpingKind::Mage => {
+                        perform_mage_up_jump(
+                            context,
+                            state,
+                            &mut moving,
+                            &mut up_jumping,
+                            y_distance,
+                        );
+                    }
+                    UpJumpingKind::UpArrow | UpJumpingKind::JumpKey => {
+                        if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
+                            // Spam jump/up arrow key until the player y changes
+                            // above a threshold as sending jump key twice
+                            // doesn't work.
+                            if moving.timeout.total >= up_jumping.spam_delay {
+                                if matches!(kind, UpJumpingKind::UpArrow) {
+                                    let _ = context.input.send_key(KeyKind::Up);
+                                } else {
+                                    let _ = context.input.send_key(jump_key);
+                                }
                             }
+                        } else {
+                            moving = moving.completed(true);
                         }
-                    } else {
+                    }
+                    UpJumpingKind::SpecificKey => {
+                        let _ = context.input.send_key(up_jump_key.expect("has up jum key"));
                         moving = moving.completed(true);
                     }
-                }
-                (false, Some(key), _) => {
-                    // TODO: Support soft up jump?
-                    // If the player is a mage and y distance is less
-                    // than `TELEPORT_UP_JUMP_THRESHOLD`, send the teleport key immediately.
-                    if !has_teleport_key
-                        || (y_distance <= TELEPORT_UP_JUMP_THRESHOLD
-                            || moving.timeout.total >= SPAM_DELAY)
-                    {
-                        let _ = context.input.send_key(key);
-                        moving = moving.completed(true);
-                    }
-                }
-                (true, _, _) => {
-                    let _ = context.input.send_key_up(KeyKind::Up);
                 }
             }
 
@@ -232,15 +275,42 @@ pub fn update_up_jumping_context(
     }
 }
 
-#[inline]
-fn can_mage_skip_jump_key(
-    up_jump_key: Option<KeyKind>,
-    has_teleport_key: bool,
+fn perform_mage_up_jump(
+    context: &Context,
+    state: &PlayerState,
+    moving: &mut Moving,
+    up_jumping: &mut UpJumping,
     y_distance: i32,
-) -> bool {
-    // It means if the player is a mage and the y distance
-    // is less than `TELEPORT_UP_JUMP_THRESHOLD`, do not send jump key or wait for stationary.
-    up_jump_key.is_some() && has_teleport_key && y_distance <= TELEPORT_UP_JUMP_THRESHOLD
+) {
+    let jump_key = state.config.jump_key;
+    let teleport_key = state.config.teleport_key.expect("has teleport key");
+
+    if y_distance < TELEPORT_WITH_JUMP_THRESHOLD {
+        let _ = context.input.send_key(teleport_key);
+        *moving = moving.completed(true);
+        return;
+    }
+
+    if !up_jumping.mage_use_teleport_after_up_jump || up_jumping.mage_did_up_jump {
+        return;
+    }
+    if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
+        if moving.timeout.total >= up_jumping.spam_delay {
+            let _ = context.input.send_key(jump_key);
+        }
+    } else {
+        up_jumping.mage_did_up_jump = true;
+    }
+}
+
+#[inline]
+fn up_jumping_kind(up_jump_key: Option<KeyKind>, has_teleport_key: bool) -> UpJumpingKind {
+    match (up_jump_key, has_teleport_key) {
+        (Some(_), true) | (None, true) => UpJumpingKind::Mage,
+        (Some(KeyKind::Up), false) => UpJumpingKind::UpArrow,
+        (None, false) => UpJumpingKind::JumpKey,
+        (Some(_), false) => UpJumpingKind::SpecificKey,
+    }
 }
 
 #[cfg(test)]
@@ -307,7 +377,7 @@ mod tests {
             .returning(|_| Ok(()));
         keys.expect_send_key()
             .withf(|key| matches!(key, KeyKind::Space))
-            .once()
+            .never()
             .returning(|_| Ok(()));
         context.input = Box::new(keys);
         // Space + Up
@@ -406,9 +476,6 @@ mod tests {
             ..Default::default()
         };
         let mut state = PlayerState::default();
-        // Setting up jump key the same as teleport key
-        // means that the mage doesn't have a dedicated up jump like up arrow + space
-        state.config.upjump_key = Some(KeyKind::Shift);
         state.config.teleport_key = Some(KeyKind::Shift);
         state.config.jump_key = KeyKind::Space;
         state.last_known_pos = Some(pos);
@@ -458,6 +525,7 @@ mod tests {
             .once()
             .returning(|_| Ok(()));
         context.input = Box::new(keys);
+        state.last_known_pos = Some(Point { y: 17, ..pos });
         assert_matches!(
             update_up_jumping_context(&context, &mut state, UpJumping::new(moving)),
             Player::UpJumping(UpJumping {

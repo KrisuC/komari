@@ -315,7 +315,8 @@ pub fn update_moving_context(
     // Check to grapple
     if !skip_destination
         && y_direction > 0
-        && y_distance >= GRAPPLING_THRESHOLD
+        && ((state.config.teleport_key.is_none() && y_distance >= GRAPPLING_THRESHOLD)
+            || state.config.teleport_key.is_some() && y_distance >= GRAPPLING_MAX_THRESHOLD)
         && !state.should_disable_grappling()
     {
         return abort_action_on_state_repeat(Player::Grappling(moving), context, state);
