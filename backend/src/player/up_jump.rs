@@ -32,6 +32,9 @@ const UP_JUMPED_Y_VELOCITY_THRESHOLD: f32 = 1.3;
 /// Player's `x` velocity to be considered as near stationary.
 const X_NEAR_STATIONARY_THRESHOLD: f32 = 0.28;
 
+/// Player's `y` velocity to be considered as near stationary.
+const Y_NEAR_STATIONARY_VELOCITY_THRESHOLD: f32 = 0.4;
+
 /// Minimum distance required to perform an up jump using teleport key with jump.
 const TELEPORT_WITH_JUMP_THRESHOLD: i32 = 20;
 
@@ -121,7 +124,9 @@ pub fn update_up_jumping_context(
     ) {
         MovingLifecycle::Started(moving) => {
             // Stall until near stationary
-            if state.velocity.0 > X_NEAR_STATIONARY_THRESHOLD {
+            if state.velocity.0 > X_NEAR_STATIONARY_THRESHOLD
+                || state.velocity.1 > Y_NEAR_STATIONARY_VELOCITY_THRESHOLD
+            {
                 return Player::UpJumping(up_jumping.moving(moving.timeout_started(false)));
             }
 
