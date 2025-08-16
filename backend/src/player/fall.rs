@@ -32,7 +32,7 @@ const TIMEOUT: u32 = MOVE_TIMEOUT + 3;
 
 /// Maximum y distance from the destination allowed to skip normal falling and use teleportation
 /// for mage.
-const TELEPORT_FALL_THRESHOLD: i32 = 15;
+const TELEPORT_FALL_THRESHOLD: i32 = 16;
 
 /// Updates the [`Player::Falling`] contextual state.
 ///
