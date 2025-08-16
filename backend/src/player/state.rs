@@ -1060,7 +1060,6 @@ impl PlayerState {
                 let smoothed_dy = 0.5 * avg_dy + 0.5 * self.velocity.1;
 
                 self.velocity = (smoothed_dx, smoothed_dy);
-                println!("{smoothed_dy}");
             }
         }
     }
