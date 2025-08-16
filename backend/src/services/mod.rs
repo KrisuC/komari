@@ -13,7 +13,7 @@ use serenity::all::{CreateAttachment, EditInteractionResponse};
 use strum::EnumMessage;
 use tokio::{
     sync::broadcast::Receiver,
-    task::{JoinHandle, spawn_local},
+    task::{JoinHandle, spawn},
     time::sleep,
 };
 
@@ -244,7 +244,7 @@ impl DefaultRequestHandler<'_> {
                 if player_panicking {
                     return;
                 }
-                self.service.pending_halt = Some(spawn_local(async {
+                self.service.pending_halt = Some(spawn(async move {
                     sleep(Duration::from_secs(PENDING_HALT_SECS)).await;
                 }));
             }
