@@ -10,7 +10,6 @@ use std::{
 use dyn_clone::clone_box;
 #[cfg(debug_assertions)]
 use log::debug;
-use log::info;
 #[cfg(debug_assertions)]
 use opencv::core::Rect;
 use opencv::{
@@ -18,6 +17,7 @@ use opencv::{
     imgcodecs::imencode_def,
 };
 use strum::IntoEnumIterator;
+use tokio::sync::broadcast::channel;
 
 #[cfg(debug_assertions)]
 use crate::bridge::KeyKind;
@@ -32,11 +32,11 @@ use crate::{
     mat::OwnedMat,
     minimap::{Minimap, MinimapState},
     navigator::{DefaultNavigator, Navigator},
-    notification::{DiscordNotification, NotificationKind},
-    player::{PanicTo, Panicking, Player, PlayerState},
+    notification::DiscordNotification,
+    player::{Player, PlayerState},
     rng::Rng,
     rotator::{DefaultRotator, Rotator},
-    services::{DefaultService, PollArgs, halt_or_panic},
+    services::{DefaultService, PollArgs},
     skill::{Skill, SkillKind, SkillState},
 };
 #[cfg(test)]
@@ -46,9 +46,6 @@ use crate::{Settings, bridge::MockInput, detect::MockDetector};
 ///
 /// This must **not** be changed as it affects other ticking systems.
 const FPS: u32 = 30;
-
-/// Seconds to wait before halting.
-const PENDING_HALT_SECS: u64 = 12;
 
 /// Milliseconds per tick as an [`u64`].
 pub const MS_PER_TICK: u64 = MS_PER_TICK_F32 as u64;
@@ -150,10 +147,6 @@ pub struct Context {
     ///
     /// This is increased on each update tick.
     pub tick: u64,
-    /// Whether minimap changed to detecting on current tick.
-    pub tick_changed_minimap: bool,
-    /// Whether capturing starts failing on current tick.
-    tick_failed_capturing: bool,
 }
 
 impl Context {
@@ -172,8 +165,6 @@ impl Context {
             buffs: [Buff::No; BuffKind::COUNT],
             operation: Operation::Running,
             tick: 0,
-            tick_changed_minimap: false,
-            tick_failed_capturing: false,
         }
     }
 
@@ -189,6 +180,14 @@ impl Context {
     pub fn detector_cloned_unwrap(&self) -> Box<dyn Detector> {
         clone_box(self.detector_unwrap())
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ContextEvent {
+    CycledToHalt,
+    PlayerDied,
+    MinimapChanged,
+    CaptureFailed,
 }
 
 /// Current operating state of the bot.
@@ -238,15 +237,9 @@ impl Operation {
                 CycleRunStopMode::None | CycleRunStopMode::Once => Operation::Halting,
                 CycleRunStopMode::Repeat => {
                     if current_stop_duration_millis == stop_duration_millis {
-                        return self;
-                    }
-
-                    let duration = Duration::from_millis(stop_duration_millis);
-                    let instant = Instant::now() + duration;
-                    Operation::HaltUntil {
-                        instant,
-                        run_duration_millis,
-                        stop_duration_millis,
+                        self
+                    } else {
+                        Operation::halt_until(run_duration_millis, stop_duration_millis)
                     }
                 }
             },
@@ -265,22 +258,17 @@ impl Operation {
             Operation::Halting => Operation::Halting,
             Operation::Running | Operation::RunUntil { .. } => match cycle_run_stop {
                 CycleRunStopMode::None => Operation::Running,
-                CycleRunStopMode::Once | CycleRunStopMode::Repeat => {
-                    let duration = Duration::from_millis(run_duration_millis);
-                    let instant = Instant::now() + duration;
-
-                    Operation::RunUntil {
-                        instant,
-                        run_duration_millis,
-                        stop_duration_millis,
-                        once: matches!(cycle_run_stop, CycleRunStopMode::Once),
-                    }
-                }
+                CycleRunStopMode::Once | CycleRunStopMode::Repeat => Operation::run_until(
+                    run_duration_millis,
+                    stop_duration_millis,
+                    matches!(cycle_run_stop, CycleRunStopMode::Once),
+                ),
             },
         }
     }
 
     fn update(self) -> Operation {
+        let now = Instant::now();
         match self {
             // Imply run/stop cycle enabled
             Operation::HaltUntil {
@@ -288,21 +276,12 @@ impl Operation {
                 run_duration_millis,
                 stop_duration_millis,
             } => {
-                let now = Instant::now();
                 if now < instant {
-                    return self;
-                }
-
-                let duration = Duration::from_millis(stop_duration_millis);
-                let instant = now + duration;
-                Operation::RunUntil {
-                    instant,
-                    run_duration_millis,
-                    stop_duration_millis,
-                    once: false,
+                    self
+                } else {
+                    Operation::run_until(run_duration_millis, stop_duration_millis, false)
                 }
             }
-            Operation::Halting | Operation::TemporaryHalting { .. } | Operation::Running => self,
             // Imply run/stop cycle enabled
             Operation::RunUntil {
                 instant,
@@ -310,22 +289,34 @@ impl Operation {
                 stop_duration_millis,
                 once,
             } => {
-                let now = Instant::now();
                 if now < instant {
-                    return self;
-                }
-                if once {
-                    return Operation::Halting;
-                }
-
-                let duration = Duration::from_millis(stop_duration_millis);
-                let instant = now + duration;
-                Operation::HaltUntil {
-                    instant,
-                    run_duration_millis,
-                    stop_duration_millis,
+                    self
+                } else if once {
+                    Operation::Halting
+                } else {
+                    Operation::halt_until(run_duration_millis, stop_duration_millis)
                 }
             }
+            Operation::Halting | Operation::TemporaryHalting { .. } | Operation::Running => self,
+        }
+    }
+
+    #[inline]
+    fn halt_until(run_duration_millis: u64, stop_duration_millis: u64) -> Operation {
+        Operation::HaltUntil {
+            instant: Instant::now() + Duration::from_millis(stop_duration_millis),
+            run_duration_millis,
+            stop_duration_millis,
+        }
+    }
+
+    #[inline]
+    pub fn run_until(run_duration_millis: u64, stop_duration_millis: u64, once: bool) -> Operation {
+        Operation::RunUntil {
+            instant: Instant::now() + Duration::from_millis(run_duration_millis),
+            run_duration_millis,
+            stop_duration_millis,
+            once,
         }
     }
 }
@@ -363,10 +354,12 @@ fn update_loop() {
     let settings = Rc::new(RefCell::new(query_settings()));
     let seeds = query_seeds(); // Fixed, unchanged
     let rng = Rng::new(seeds.seed); // Create one for Context
-    let (mut service, keys, mut capture) = DefaultService::new(seeds, settings.clone());
+    let (event_tx, event_rx) = channel::<ContextEvent>(5);
+    let (mut service, keys, mut capture) =
+        DefaultService::new(seeds, settings.clone(), event_tx.subscribe());
 
     let mut rotator = DefaultRotator::default();
-    let mut navigator = DefaultNavigator::default();
+    let mut navigator = DefaultNavigator::new(event_rx);
     let mut context = Context {
         #[cfg(debug_assertions)]
         debug: Debug::default(),
@@ -380,8 +373,6 @@ fn update_loop() {
         buffs: [Buff::No; BuffKind::COUNT],
         operation: Operation::Halting,
         tick: 0,
-        tick_changed_minimap: false,
-        tick_failed_capturing: false,
     };
     let mut player_state = PlayerState::default();
     let mut minimap_state = MinimapState::default();
@@ -391,36 +382,25 @@ fn update_loop() {
     let mut buff_states = BuffKind::iter()
         .map(BuffState::new)
         .collect::<Vec<BuffState>>();
-    // When minimap changes, a pending halt will be queued. This helps ensure that if any
-    // accidental or intended (e.g. navigating) minimap change occurs, it will try to wait for a
-    // specified threshold to pass before determining panicking is needed. This can be beneficial
-    // when navigator falsely navigates to a wrong unknown location.
-    let mut pending_halt = None;
-    let mut did_capture_normally = false;
+    let mut is_capturing_normally = false;
 
     loop_with_fps(FPS, || {
         let detector = capture
             .grab()
             .map(OwnedMat::new_from_frame)
             .map(CachedDetector::new);
-        let was_capturing_normally = did_capture_normally;
+        let was_capturing_normally = is_capturing_normally;
 
-        did_capture_normally = detector.is_ok();
+        is_capturing_normally = detector.is_ok();
         context.tick += 1;
-        context.tick_failed_capturing =
-            was_capturing_normally && !did_capture_normally && detector.is_err();
-
         if let Ok(detector) = detector {
             let was_player_alive = !player_state.is_dead();
-            let was_player_navigating = navigator.was_last_point_available_or_completed();
             let was_running_cycle = matches!(context.operation, Operation::RunUntil { .. });
             let was_minimap_idle = matches!(context.minimap, Minimap::Idle(_));
 
             context.operation = context.operation.update();
             context.detector = Some(Box::new(detector));
             context.minimap = fold_context(&context, context.minimap, &mut minimap_state);
-            context.tick_changed_minimap =
-                was_minimap_idle && matches!(context.minimap, Minimap::Detecting);
             context.player = fold_context(&context, context.player, &mut player_state);
             for (i, state) in skill_states
                 .iter_mut()
@@ -433,7 +413,6 @@ fn update_loop() {
                 context.buffs[i] = fold_context(&context, context.buffs[i], state);
             }
 
-            navigator.update(&context);
             if navigator.navigate_player(&context, &mut player_state) {
                 rotator.rotate_action(&context, &mut player_state);
             }
@@ -441,69 +420,22 @@ fn update_loop() {
             let did_cycled_to_stop = context.operation.halting();
             // Go to town on stop cycle
             if was_running_cycle && did_cycled_to_stop {
-                halt_or_panic(&mut context, &mut rotator, &mut player_state, false, true);
-            }
-            if context.operation.halting() {
-                pending_halt = None;
+                let _ = event_tx.send(ContextEvent::CycledToHalt);
             }
 
-            // Upon accidental or white roomed causing map to change,
-            // abort actions and send notification
-            if service.has_minimap_data() && !context.operation.halting() {
-                let player_died = was_player_alive && player_state.is_dead();
-                // Unconditionally halt when player died
-                if player_died {
-                    halt_or_panic(&mut context, &mut rotator, &mut player_state, true, false);
-                    return;
-                }
-
-                let stop_on_fail_or_change_map = settings.borrow().stop_on_fail_or_change_map;
-                if !stop_on_fail_or_change_map {
-                    return;
-                }
-
-                let mut pending_halt_reached = pending_halt.is_some_and(|instant| {
-                    Instant::now().duration_since(instant).as_secs() >= PENDING_HALT_SECS
-                });
-                if pending_halt_reached && was_player_navigating {
-                    info!(target: "context", "halt cancelled due to navigating");
-                    pending_halt_reached = false;
-                    pending_halt = None;
-                }
-
-                // Do not halt if player changed map due to switching channel
-                let player_panicking = matches!(
-                    context.player,
-                    Player::Panicking(Panicking {
-                        to: PanicTo::Channel,
-                        ..
-                    })
-                );
-                let can_halt_or_notify = pending_halt_reached
-                    || (pending_halt.is_none()
-                        && context.tick_changed_minimap
-                        && !player_panicking)
-                    || (pending_halt.is_none() && context.tick_failed_capturing);
-                if can_halt_or_notify {
-                    if pending_halt.is_none() {
-                        info!(target: "context", "queued a halt due to minimap changed or detection failed");
-                        pending_halt = Some(Instant::now());
-                    } else {
-                        info!(target: "context", "halting...");
-                        pending_halt = None;
-                        halt_or_panic(
-                            &mut context,
-                            &mut rotator,
-                            &mut player_state,
-                            true,
-                            did_capture_normally,
-                        );
-                        let _ = context
-                            .notification
-                            .schedule_notification(NotificationKind::FailOrMapChange);
-                    }
-                }
+            let player_died = was_player_alive && player_state.is_dead();
+            if player_died {
+                let _ = event_tx.send(ContextEvent::PlayerDied);
             }
+
+            let minimap_detecting = matches!(context.minimap, Minimap::Detecting);
+            if was_minimap_idle && minimap_detecting {
+                let _ = event_tx.send(ContextEvent::MinimapChanged);
+            }
+        }
+
+        if was_capturing_normally && !is_capturing_normally {
+            let _ = event_tx.send(ContextEvent::CaptureFailed);
         }
 
         context.input.update(context.tick);

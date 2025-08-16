@@ -15,10 +15,11 @@ use opencv::{
     core::{Mat, Rect, Vector},
     imgcodecs::{IMREAD_COLOR, IMREAD_GRAYSCALE, imdecode},
 };
+use tokio::sync::broadcast::Receiver;
 
 use crate::{
     ActionKeyDirection, ActionKeyWith, KeyBinding, NavigationPaths, Position,
-    context::Context,
+    context::{Context, ContextEvent},
     database::{NavigationPath, NavigationTransition, query_navigation_paths},
     detect::Detector,
     minimap::Minimap,
@@ -106,8 +107,6 @@ pub trait Navigator: Debug + 'static {
 
     /// Same as [`Self::mark_dirty`] but also sets the destination.
     fn mark_dirty_with_destination(&mut self, paths_id_index: Option<(i64, usize)>);
-
-    fn update(&mut self, context: &Context);
 }
 
 #[derive(Debug)]
@@ -131,10 +130,18 @@ pub struct DefaultNavigator {
     /// Cached next point navigation computation.
     last_point_state: Option<PointState>,
     destination_path_id: Option<String>,
+    event_receiver: Receiver<ContextEvent>,
 }
 
 impl DefaultNavigator {
-    fn new(source: impl NavigatorDataSource) -> Self {
+    pub fn new(event_receiver: Receiver<ContextEvent>) -> Self {
+        Self::new_with_source(event_receiver, DefaultNavigatorDataSource)
+    }
+
+    fn new_with_source(
+        event_receiver: Receiver<ContextEvent>,
+        source: impl NavigatorDataSource,
+    ) -> Self {
         Self {
             source: Box::new(source),
             base_path: None,
@@ -144,6 +151,31 @@ impl DefaultNavigator {
             path_last_update: Instant::now(),
             last_point_state: None,
             destination_path_id: None,
+            event_receiver,
+        }
+    }
+
+    #[inline]
+    fn update(&mut self, context: &Context, did_minimap_changed: bool) {
+        const UPDATE_RETRY_MAX_COUNT: u32 = 3;
+
+        if did_minimap_changed {
+            // Do not reset `base_path`, `current_path` and `last_point_state` here so that
+            // `update_current_path_from_current_location` will try to reuse that when looking up.
+            self.mark_dirty(false);
+        }
+        if self.path_dirty {
+            match self.update_current_path_from_current_location(context) {
+                UpdateState::Pending => (),
+                UpdateState::Completed => self.path_dirty = false,
+                UpdateState::NoMatch => {
+                    if self.path_dirty_retry_count < UPDATE_RETRY_MAX_COUNT {
+                        self.path_dirty_retry_count += 1;
+                    } else {
+                        self.path_dirty = false;
+                    }
+                }
+            }
         }
     }
 
@@ -315,11 +347,13 @@ impl DefaultNavigator {
 
         UpdateState::NoMatch
     }
-}
 
-impl Default for DefaultNavigator {
-    fn default() -> Self {
-        Self::new(DefaultNavigatorDataSource)
+    #[inline]
+    fn did_minimap_changed(&mut self) -> bool {
+        matches!(
+            self.event_receiver.try_recv().ok(),
+            Some(ContextEvent::MinimapChanged)
+        )
     }
 }
 
@@ -328,6 +362,9 @@ impl Navigator for DefaultNavigator {
     ///
     /// Returns `true` if the player has reached the destination or operation is currently halting.
     fn navigate_player(&mut self, context: &Context, player: &mut PlayerState) -> bool {
+        let did_minimap_changed = self.did_minimap_changed();
+        self.update(context, did_minimap_changed);
+
         if context.operation.halting() {
             return true;
         }
@@ -340,7 +377,7 @@ impl Navigator for DefaultNavigator {
 
         match next_point_state {
             PointState::Dirty => {
-                if context.tick_changed_minimap {
+                if did_minimap_changed {
                     player.take_priority_action();
                 }
                 false
@@ -407,30 +444,6 @@ impl Navigator for DefaultNavigator {
         self.destination_path_id =
             paths_id_index.map(|(id, index)| path_id_from_paths_id_index(id, index));
         self.mark_dirty(false);
-    }
-
-    #[inline]
-    fn update(&mut self, context: &Context) {
-        const UPDATE_RETRY_MAX_COUNT: u32 = 3;
-
-        if context.tick_changed_minimap {
-            // Do not reset `base_path`, `current_path` and `last_point_state` here so that
-            // `update_current_path_from_current_location` will try to reuse that when looking up.
-            self.mark_dirty(false);
-        }
-        if self.path_dirty {
-            match self.update_current_path_from_current_location(context) {
-                UpdateState::Pending => (),
-                UpdateState::Completed => self.path_dirty = false,
-                UpdateState::NoMatch => {
-                    if self.path_dirty_retry_count < UPDATE_RETRY_MAX_COUNT {
-                        self.path_dirty_retry_count += 1;
-                    } else {
-                        self.path_dirty = false;
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -562,8 +575,17 @@ fn path_id_from_paths_id_index(path_id: i64, index: usize) -> String {
 mod tests {
     use std::assert_matches::assert_matches;
 
+    use tokio::sync::broadcast::channel;
+
     use super::*;
     use crate::{database::NavigationPoint, detect::MockDetector, minimap::MinimapIdle};
+
+    impl Default for DefaultNavigator {
+        fn default() -> Self {
+            let (_tx, rx) = channel::<ContextEvent>(1);
+            Self::new_with_source(rx, DefaultNavigatorDataSource)
+        }
+    }
 
     fn mock_navigation_path(points: Vec<NavigationPoint>) -> NavigationPath {
         NavigationPath {
@@ -820,7 +842,8 @@ mod tests {
             .expect_query_paths()
             .returning(move || Ok(vec![mock_paths.clone()]));
 
-        let mut navigator = DefaultNavigator::new(mock_source);
+        let (_tx, rx) = channel::<ContextEvent>(1);
+        let mut navigator = DefaultNavigator::new_with_source(rx, mock_source);
 
         // Force update
         navigator.path_last_update = Instant::now() - std::time::Duration::from_secs(10);

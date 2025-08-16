@@ -11,7 +11,11 @@ use opencv::{
 use platforms::input::InputKind;
 use serenity::all::{CreateAttachment, EditInteractionResponse};
 use strum::EnumMessage;
-use tokio::sync::broadcast::Receiver;
+use tokio::{
+    sync::broadcast::Receiver,
+    task::{JoinHandle, spawn_local},
+    time::sleep,
+};
 
 use crate::{
     ActionKeyDirection, ActionKeyWith, Character, CycleRunStopMode, GameState, KeyBinding,
@@ -19,11 +23,14 @@ use crate::{
     bot::{BotAction, BotCommandKind},
     bridge::{Capture, DefaultCapture, DefaultInput, DefaultInputReceiver, InputMethod},
     buff::BuffState,
-    context::{Context, Operation},
+    context::{Context, ContextEvent, Operation},
     database::Seeds,
     minimap::MinimapState,
     navigator::Navigator,
-    player::{Chat, ChattingContent, Key, Panic, PanicTo, PlayerAction, PlayerState},
+    notification::NotificationKind,
+    player::{
+        Chat, ChattingContent, Key, Panic, PanicTo, Panicking, Player, PlayerAction, PlayerState,
+    },
     poll_request,
     rotator::Rotator,
     services::{
@@ -62,6 +69,8 @@ pub struct PollArgs<'a> {
 
 #[derive(Debug)]
 pub struct DefaultService {
+    event_receiver: Receiver<ContextEvent>,
+    pending_halt: Option<JoinHandle<()>>,
     game: Box<dyn GameService>,
     minimap: Box<dyn MinimapService>,
     character: Box<dyn CharacterService>,
@@ -77,6 +86,7 @@ impl DefaultService {
     pub fn new(
         seeds: Seeds,
         settings: Rc<RefCell<Settings>>,
+        event_receiver: Receiver<ContextEvent>,
     ) -> (Self, DefaultInput, DefaultCapture) {
         let mut settings_service = DefaultSettingsService::new(settings.clone());
 
@@ -98,6 +108,8 @@ impl DefaultService {
         bot.update(&settings_service.settings());
 
         let service = Self {
+            event_receiver,
+            pending_halt: None,
             game: Box::new(DefaultGameService::new(input_receiver)),
             minimap: Box::new(DefaultMinimapService::default()),
             character: Box::new(DefaultCharacterService::default()),
@@ -118,15 +130,12 @@ impl DefaultService {
             service: self,
             args,
         };
+        // TODO: Maybe handling 1 by 1 on each tick instead of all at once?
         handler.poll_request();
-        handler.poll_events();
+        handler.poll_game_events();
+        handler.poll_context_event();
         handler.poll_bot();
         handler.broadcast_state();
-    }
-
-    #[inline]
-    pub fn has_minimap_data(&self) -> bool {
-        self.minimap.minimap().is_some()
     }
 }
 
@@ -141,7 +150,7 @@ impl DefaultRequestHandler<'_> {
         poll_request(self);
     }
 
-    fn poll_events(&mut self) {
+    fn poll_game_events(&mut self) {
         let events = self.service.game.poll_events(
             self.service
                 .minimap
@@ -193,6 +202,69 @@ impl DefaultRequestHandler<'_> {
         self.service.debug.poll(self.args.context);
     }
 
+    fn poll_context_event(&mut self) {
+        const PENDING_HALT_SECS: u64 = 12;
+
+        if self
+            .service
+            .pending_halt
+            .as_ref()
+            .is_some_and(|handle| handle.is_finished())
+        {
+            self.service.pending_halt = None;
+            if !self.args.navigator.was_last_point_available_or_completed() {
+                self.update_halt_or_panic(true, true);
+            }
+        }
+
+        let Some(event) = self.service.event_receiver.try_recv().ok() else {
+            return;
+        };
+        match event {
+            ContextEvent::CycledToHalt => {
+                self.update_halt_or_panic(false, true);
+            }
+            ContextEvent::PlayerDied => {
+                self.update_halt_or_panic(true, false);
+            }
+            ContextEvent::MinimapChanged => {
+                if self.args.context.operation.halting()
+                    | !self.service.settings.settings().stop_on_fail_or_change_map
+                {
+                    return;
+                }
+
+                let player_panicking = matches!(
+                    self.args.context.player,
+                    Player::Panicking(Panicking {
+                        to: PanicTo::Channel,
+                        ..
+                    })
+                );
+                if player_panicking {
+                    return;
+                }
+                self.service.pending_halt = Some(spawn_local(async {
+                    sleep(Duration::from_secs(PENDING_HALT_SECS)).await;
+                }));
+            }
+            ContextEvent::CaptureFailed => {
+                if self.args.context.operation.halting() {
+                    return;
+                }
+
+                if self.service.settings.settings().stop_on_fail_or_change_map {
+                    self.update_halt_or_panic(true, false);
+                }
+                let _ = self
+                    .args
+                    .context
+                    .notification
+                    .schedule_notification(NotificationKind::FailOrMapChange);
+            }
+        }
+    }
+
     fn poll_bot(&mut self) {
         if let Some(command) = self.service.bot.poll() {
             match command.kind {
@@ -203,7 +275,7 @@ impl DefaultRequestHandler<'_> {
                             .send(EditInteractionResponse::new().content("Bot already running."));
                         return;
                     }
-                    if !self.service.has_minimap_data()
+                    if self.service.minimap.minimap().is_none()
                         || self.service.character.character().is_none()
                     {
                         let _ = command.sender.send(
@@ -220,7 +292,7 @@ impl DefaultRequestHandler<'_> {
                     let _ = command
                         .sender
                         .send(EditInteractionResponse::new().content("Bot stopped running."));
-                    self.halt_or_panic(true, go_to_town);
+                    self.update_halt_or_panic(true, go_to_town);
                 }
                 BotCommandKind::Status => {
                     let (status, frame) = state_and_frame(self.args.context);
@@ -357,15 +429,11 @@ impl DefaultRequestHandler<'_> {
                         once,
                     }
                 } else {
-                    let duration = Duration::from_millis(settings.cycle_run_duration_millis);
-                    let instant = Instant::now() + duration;
-
-                    Operation::RunUntil {
-                        instant,
-                        run_duration_millis: settings.cycle_run_duration_millis,
-                        stop_duration_millis: settings.cycle_stop_duration_millis,
-                        once: matches!(settings.cycle_run_stop, CycleRunStopMode::Once),
-                    }
+                    Operation::run_until(
+                        settings.cycle_run_duration_millis,
+                        settings.cycle_stop_duration_millis,
+                        matches!(settings.cycle_run_stop, CycleRunStopMode::Once),
+                    )
                 }
             }
             (RotateKind::Run, CycleRunStopMode::None) => Operation::Running,
@@ -373,17 +441,26 @@ impl DefaultRequestHandler<'_> {
         if matches!(kind, RotateKind::Halt | RotateKind::TemporaryHalt) {
             self.args.rotator.reset_queue();
             self.args.player.clear_actions_aborted(true);
+            if let Some(handle) = self.service.pending_halt.take() {
+                handle.abort();
+            }
         }
     }
 
-    fn halt_or_panic(&mut self, should_halt: bool, should_panic: bool) {
-        halt_or_panic(
-            self.args.context,
-            self.args.rotator,
-            self.args.player,
-            should_halt,
-            should_panic,
-        );
+    fn update_halt_or_panic(&mut self, should_halt: bool, should_panic: bool) {
+        self.args.rotator.reset_queue();
+        self.args.player.clear_actions_aborted(!should_panic);
+        if should_halt {
+            if let Some(handle) = self.service.pending_halt.take() {
+                handle.abort();
+            }
+            self.args.context.operation = Operation::Halting;
+        }
+        if should_panic {
+            self.args
+                .rotator
+                .inject_action(PlayerAction::Panic(Panic { to: PanicTo::Town }));
+        }
     }
 }
 
@@ -536,24 +613,6 @@ impl RequestHandler for DefaultRequestHandler<'_> {
     }
 }
 
-#[inline]
-pub fn halt_or_panic(
-    context: &mut Context,
-    rotator: &mut dyn Rotator,
-    player: &mut PlayerState,
-    should_halt: bool,
-    should_panic: bool,
-) {
-    rotator.reset_queue();
-    player.clear_actions_aborted(!should_panic);
-    if should_halt {
-        context.operation = Operation::Halting;
-    }
-    if should_panic {
-        rotator.inject_action(PlayerAction::Panic(Panic { to: PanicTo::Town }));
-    }
-}
-
 fn state_and_frame(context: &Context) -> (String, Option<Vec<u8>>) {
     let frame = context
         .detector
@@ -610,6 +669,7 @@ mod tests {
     use std::cell::RefCell;
 
     use mockall::Sequence;
+    use tokio::sync::broadcast::channel;
 
     use super::*;
     use crate::{
@@ -734,8 +794,11 @@ mod tests {
             .return_const(())
             .in_sequence(&mut sequence);
 
+        let (_tx, rx) = channel(1);
         let args = mock_poll_args(&mut states);
         let mut service = DefaultService {
+            event_receiver: rx,
+            pending_halt: None,
             game: Box::new(game),
             minimap: Box::new(minimap),
             character: Box::new(character),
@@ -834,7 +897,10 @@ mod tests {
             .return_const(())
             .in_sequence(&mut sequence);
 
+        let (_tx, rx) = channel(1);
         let mut service = DefaultService {
+            event_receiver: rx,
+            pending_halt: None,
             game: Box::new(game),
             minimap: Box::new(minimap),
             character: Box::new(character),

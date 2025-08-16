@@ -312,7 +312,7 @@ async fn start_stream_command(
 ) {
     let sender = handler.command_sender.clone();
     let mut handle = handler.stream_handle.lock().await;
-    if handle.is_some() {
+    if handle.as_ref().is_some_and(|handle| !handle.is_finished()) {
         response_with(&context, &command, "Streaming already started.").await;
         return;
     }

@@ -56,7 +56,7 @@ static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
     .unwrap();
     Mutex::new(conn)
 });
-static EVENT: LazyLock<Sender<DatabaseEvent>> = LazyLock::new(|| channel(10).0);
+static EVENT: LazyLock<Sender<DatabaseEvent>> = LazyLock::new(|| channel(5).0);
 
 #[derive(Debug, Clone)]
 pub enum DatabaseEvent {
