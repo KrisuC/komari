@@ -2,7 +2,7 @@
 - [Actions contention](#actions-contention-)
 - [Default Ratio game resolution](#default-ratio-game-resolution)
 - [Preventing double jump(s)](#preventing-double-jumps)
-- [Mage up jump](#mage-up-jump)
+- [Up jump key](#up-jump-key)
 - [Missing installation](#missing-installation)
 - [Unstucking state](#unstucking-state)
 
@@ -41,8 +41,13 @@ points `x` distance should be less than `25`.
 
 ## Up jump key
 - If you are a mage class:
-  - If you have up jump, which most mage classes now have, you don't need to set this key
-  - If you use teleport as up jump, set this key to same key as `Teleport key` 
+  - You need to set the `Teleport key`
+  - If you have up jump, which most mage classes now have (e.g. holding up arrow + jump key), you don't need to set this key
+  - If you have a dedicated up jump key (e.g. similar to Hero up jump), you should set this key
+  - The bot will try to use the following combinations where appropriate:
+    - Teleport only
+    - Jump and then teleport
+    - Up jump and then teleport
 - If you are Demon Slayer, set this key to up arrow
 - If you are any other class with up jump skill such as Explorer Warriors, Blaster,... set this key to that skill
 

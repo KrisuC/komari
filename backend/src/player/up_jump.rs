@@ -146,10 +146,7 @@ pub fn update_up_jumping_context(
                         y_distance >= UP_JUMP_AND_TELEPORT_THRESHOLD;
 
                     let _ = context.input.send_key_down(KeyKind::Up);
-                    if y_distance >= TELEPORT_WITH_JUMP_THRESHOLD {
-                        // TODO: If a dedicated up jump key is set, a jump should not be performed.
-                        // TODO: But what mage class has a dedicated up jump that is not
-                        // TODO: a normal jump key/space?
+                    if y_distance >= TELEPORT_WITH_JUMP_THRESHOLD && up_jump_key.is_none() {
                         let _ = context.input.send_key(jump_key);
                     }
                 }
@@ -186,7 +183,7 @@ pub fn update_up_jumping_context(
             } else {
                 match kind {
                     UpJumpingKind::Mage => {
-                        perform_mage_up_jump(
+                        update_mage_up_jump(
                             context,
                             state,
                             &mut moving,
@@ -280,7 +277,7 @@ pub fn update_up_jumping_context(
     }
 }
 
-fn perform_mage_up_jump(
+fn update_mage_up_jump(
     context: &Context,
     state: &PlayerState,
     moving: &mut Moving,
@@ -288,6 +285,7 @@ fn perform_mage_up_jump(
     y_distance: i32,
 ) {
     let jump_key = state.config.jump_key;
+    let up_jump_key = state.config.upjump_key;
     let teleport_key = state.config.teleport_key.expect("has teleport key");
 
     if y_distance < TELEPORT_WITH_JUMP_THRESHOLD {
@@ -299,6 +297,13 @@ fn perform_mage_up_jump(
     if !up_jumping.mage_use_teleport_after_up_jump || up_jumping.mage_did_up_jump {
         return;
     }
+
+    if let Some(key) = up_jump_key {
+        let _ = context.input.send_key(key);
+        up_jumping.mage_did_up_jump = true;
+        return;
+    }
+
     if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
         if moving.timeout.total >= up_jumping.spam_delay {
             let _ = context.input.send_key(jump_key);
