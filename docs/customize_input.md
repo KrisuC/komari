@@ -9,6 +9,10 @@ The bot currently does not use advanced input method such as a driver like `Inte
 
 ![Customize Input](https://github.com/sasanquaa/komari/blob/master/.github/images/customize_input.png?raw=true)
 
+## Key states (from v0.20)
+The `KeyState` function is required to let the bot knows if a key is currently pressed or released. This helps improve
+some of the bot behaviors. For example, waits for all key to be released before solving rune. 
+
 ## Random delay (from v0.13)
 - For the default method using `SendInput`, the bot also has delay for each key stroke by default
 - When customizing input with `Rpc` method, on `Send` request, you will receive a `down_ms` delay in milliseconds for the 

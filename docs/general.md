@@ -16,6 +16,7 @@
   - [Familiars Swapping](#familiars-swapping)
   - [Panic Mode](#panic-mode)
   - [Elite Boss Spawns Behavior](#elite-boss-spawns-behavior)
+  - [Discord](#discord)
 - [Video guides](#video-guides)
 - [Showcase](#showcase)
   - [Rotation](#rotation)
@@ -244,8 +245,17 @@ This system is currently experimental and subject to changes. Current limitation
 #### Run/stop Cycle
 (Added in v0.19)
 
-Added in the `Settings` tab under `Run/stop cycle` section. When `Enabled`, the bot will run for the specified `Run duration` and then stop, go to town, AFK for the specified `Stop duration` and back to running. Using this feature requires the key binding 
-for `To town` is set and navigation paths for the selected map are available.
+Added in the `Settings` tab under `Run/stop cycle` section:
+- `None`: Does not cycle and run or stop forever
+- `Once`: Runs for the specified `Run duration` and then stops completely by going to town
+- `Repeat`: Runs for the specified `Run duration`, then stops for the specified `Stop duration` by going to town and repeats afterwards
+
+Using this feature requires:
+- Key binding for `To town` is set
+- Navigation paths for the selected map are available if `Repeat` is chosen
+
+If enabled, the `Suspend` button below the map will be enabled and can be used for temporarily stopping
+without resetting the duration.
 
 #### Capture Modes
 `Capture` section in the `Settings` tab can be used to change how the bot captures game images. There are three capture modes, the first two are similar to what you see in OBS:
@@ -292,8 +302,28 @@ Requires setting up key bindings for `To town` and `Change channel` first.
 (From v0.17, previously known as `Change Channel On Elite Boss`)
 
 Added `Elite boss spawns behavior` in `Characters` tab with two behavior types:
+- `None`: Does nothing when elite boss spawns
 - `CycleChannel`: Queues a channel change (`Panicking` state) action when an elite boss appears
 - `UseKey`: Uses a key when elite boss appears (e.g. useful for origin skill)
+
+#### Discord
+(Added in v0.20 for Discord bot)
+The bot uses Discord's webhook and bot/application to enable notifications an remote monitoring. Follows Discord's guide
+to create a webhook URL or a bot/application access token and provides it to Komari's bot.
+
+For Discord bot, the following commands are available:
+- `/status`: The bot current status, run duration and image
+- `/start`: Starts the bot
+- `/stop`: Stops the bot
+  - `go-to-town`: Whether to go to town when stopping
+- `/start-stream`: Streams the bot's status at regular interval for up to 15 minutes
+- `/stop-stream`: Stops the started stream
+- `/chat`: Performs an in-game chat (only supports partial ASCII characters and external chat disabled)
+- `/action`: Performs a specified action
+  - `kind`: The kind of action
+  - `count`: The number of times to do the action
+
+The Discord bot is current experimental and subject to change.
 
 ## Video guides
 From v0.16, due to UI change, the first two videos are now outdated but the general concepts still apply.
