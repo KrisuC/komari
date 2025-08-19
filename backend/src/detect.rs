@@ -51,21 +51,22 @@ use crate::{array::Array, buff::BuffKind, mat::OwnedMat};
 const MAX_ARROWS: usize = 4;
 const MAX_SPIN_ARROWS: usize = 2; // PRAY
 
-/// Struct for storing information about the spinning arrows
+/// Struct for storing information about the spinning arrows.
 #[derive(Debug, Copy, Clone)]
 struct SpinArrow {
-    /// The centroid of the spinning arrow relative to the whole image
+    /// The centroid of the spinning arrow relative to the whole image.
     centroid: Point,
-    /// The region of the spinning arrow relative to the whole image
+    /// The region of the spinning arrow relative to the whole image.
     region: Rect,
-    /// The last arrow head relative to the centroid
+    /// The last arrow head relative to the centroid.
     last_arrow_head: Option<Point>,
+    /// Final result of spinning arrow.
     final_arrow: Option<KeyKind>,
     #[cfg(debug_assertions)]
     is_spin_testing: bool,
 }
 
-/// The current arrows detection/calibration state
+/// The current arrows detection/calibration state.
 #[derive(Debug)]
 pub enum ArrowsState {
     Calibrating(ArrowsCalibrating),
@@ -1470,8 +1471,10 @@ fn detect_rune_arrows_with_scores_regions(mat: &impl MatTraitConst) -> Vec<(Rect
 
     let size = mat.size().unwrap();
     let (mat_in, w_ratio, h_ratio, left, top) = preprocess_for_yolo(mat);
+
     let mut model = RUNE_MODEL.lock().unwrap();
     let result = model.run([to_input_value(&mat_in)]).unwrap();
+
     let mat_out = from_output_value(&result);
     let mut vec = (0..mat_out.rows())
         // SAFETY: 0..outputs.rows() is within Mat bounds
@@ -1594,10 +1597,10 @@ fn detect_rune_arrows(
     }
 
     // Normal detection path
-    let mut mat = mat.roi(rune_region)?;
+    let mut mat_rune_region = mat.roi(rune_region)?;
     if calibrating.spin_arrows.is_some() {
         //  Set all spin arrow regions to black pixels
-        let mut mat_copy = mat.clone_pointee();
+        let mut mat_copy = mat_rune_region.clone_pointee();
         for region in calibrating
             .spin_arrows
             .as_ref()
@@ -1609,12 +1612,14 @@ fn detect_rune_arrows(
                 .roi_mut(region - rune_region.tl())?
                 .set_scalar(Scalar::default())?;
         }
-        mat = BoxedRef::from(mat_copy);
+        mat_rune_region = BoxedRef::from(mat_copy);
     }
 
-    let result = detect_rune_arrows_with_scores_regions(&mat)
+    let result = detect_rune_arrows_with_scores_regions(&mat_rune_region)
         .into_iter()
-        .filter_map(|(rect, arrow, score)| (score >= SCORE_THRESHOLD).then_some((rect, arrow)))
+        .filter_map(|(rect, arrow, score)| {
+            (score >= SCORE_THRESHOLD).then_some((rect + rune_region.tl(), arrow))
+        })
         .collect::<Vec<_>>();
     // TODO: If there are spinning arrows, either set the limit internally
     // or ensure caller only try to solve rune for a fixed time frame. Otherwise, it may
@@ -1628,7 +1633,7 @@ fn detect_rune_arrows(
             .take()
             .unwrap()
             .into_iter()
-            .map(|arrow| (arrow.region - rune_region.tl(), arrow.final_arrow.unwrap()))
+            .map(|arrow| (arrow.region, arrow.final_arrow.unwrap()))
             .chain(result)
             .collect::<Vec<_>>();
         vec.sort_by_key(|a| a.0.x);

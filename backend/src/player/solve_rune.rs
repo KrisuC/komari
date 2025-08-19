@@ -172,7 +172,7 @@ fn update_find_region(
     }
 
     debug_assert!(cooldown_timeout.is_none());
-    match next_timeout_lifecycle(timeout, 35) {
+    match next_timeout_lifecycle(timeout, 90) {
         Lifecycle::Started(timeout) => {
             let _ = context.input.send_key(interact_key);
             solving_rune.stage_find_region(calibrating, timeout, cooldown_timeout, retry_count)
@@ -310,7 +310,7 @@ mod tests {
             ArrowsCalibrating::default(),
             Timeout {
                 started: true,
-                current: 35,
+                current: 90,
                 ..Default::default()
             },
             None,
@@ -353,7 +353,7 @@ mod tests {
             ArrowsCalibrating::default(),
             Timeout {
                 started: true,
-                current: 35,
+                current: 90,
                 ..Default::default()
             },
             None,
