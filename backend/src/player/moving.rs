@@ -339,7 +339,7 @@ pub fn update_moving_context(
         }
 
         return abort_action_on_state_repeat(
-            Player::UpJumping(UpJumping::new(moving)),
+            Player::UpJumping(UpJumping::new(moving, context, state)),
             context,
             state,
         );

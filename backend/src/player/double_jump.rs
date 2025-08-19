@@ -284,7 +284,7 @@ fn on_player_action(
     forced: bool,
     double_jumped_or_flying: bool,
 ) -> Option<(Player, bool)> {
-    let cur_pos = state.last_known_pos.unwrap();
+    let cur_pos = state.last_known_pos.expect("in positional context");
     let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
 
@@ -293,12 +293,12 @@ fn on_player_action(
             bound, direction, ..
         }) => on_ping_pong_use_key_action(
             context,
+            state,
             action,
             cur_pos,
             bound,
             direction,
             double_jumped_or_flying,
-            state.config.grappling_key.is_some(),
         ),
         PlayerAction::AutoMob(_) => {
             on_auto_mob_use_key_action(context, action, moving.pos, x_distance, y_distance)
@@ -342,12 +342,12 @@ fn on_player_action(
 #[inline]
 fn on_ping_pong_use_key_action(
     context: &Context,
+    state: &PlayerState,
     action: PlayerAction,
     cur_pos: Point,
     bound: Rect,
     direction: PingPongDirection,
     double_jumped: bool,
-    has_grappling: bool,
 ) -> Option<(Player, bool)> {
     let hit_x_bound_edge = match direction {
         PingPongDirection::Left => cur_pos.x - bound.x <= 0,
@@ -365,6 +365,7 @@ fn on_ping_pong_use_key_action(
     let bound_y_max = bound.y + bound.height;
     let bound_y_mid = bound.y + bound.height / 2;
 
+    let has_grappling = state.config.grappling_key.is_some();
     let allow_randomize = (cur_pos.y - bound_y_mid).abs() >= PING_PONG_IGNORE_RANDOMIZE_Y_THRESHOLD;
     let upward_bias = allow_randomize && cur_pos.y < bound_y_mid;
     let downward_bias = allow_randomize && cur_pos.y > bound_y_mid;
@@ -387,7 +388,7 @@ fn on_ping_pong_use_key_action(
         let next = if has_grappling {
             Player::Grappling(moving)
         } else {
-            Player::UpJumping(UpJumping::new(moving))
+            Player::UpJumping(UpJumping::new(moving, context, state))
         };
         return Some((next, false));
     }
@@ -627,14 +628,15 @@ mod tests {
         });
 
         let context = Context::new(None, None);
+        let state = PlayerState::default();
         let result = on_ping_pong_use_key_action(
             &context,
+            &state,
             action,
             cur_pos,
             bound,
             PingPongDirection::Left,
             true,
-            false,
         );
         assert_matches!(result, Some((Player::Idle, true)));
     }
@@ -650,14 +652,16 @@ mod tests {
         });
 
         let context = Context::new(None, None);
+        let mut state = PlayerState::default();
+        state.config.grappling_key = Some(KeyKind::A);
         let result = on_ping_pong_use_key_action(
             &context,
+            &state,
             action,
             cur_pos,
             bound,
             PingPongDirection::Right,
             false, // hasn't double jumped
-            true,
         );
         assert_matches!(result, None);
     }
@@ -675,24 +679,26 @@ mod tests {
         let mut keys = MockInput::new();
         keys.expect_send_key_up().returning(|_| Ok(()));
         let context = Context::new(Some(keys), None);
+        let mut state = PlayerState::default();
         let result = on_ping_pong_use_key_action(
             &context,
+            &state,
             action.clone(),
             cur_pos,
             bound,
             PingPongDirection::Right,
             true,
-            false, // no grappling
         );
         assert_matches!(result, Some((Player::UpJumping(_), false)));
 
+        state.config.grappling_key = Some(KeyKind::A);
         let result_with_grappling = on_ping_pong_use_key_action(
             &context,
+            &state,
             action,
             cur_pos,
             bound,
             PingPongDirection::Right,
-            true,
             true,
         );
         assert_matches!(result_with_grappling, Some((Player::Grappling(_), false)));
@@ -711,14 +717,15 @@ mod tests {
         let mut keys = MockInput::new();
         keys.expect_send_key_up().returning(|_| Ok(()));
         let context = Context::new(Some(keys), None);
+        let state = PlayerState::default();
         let result = on_ping_pong_use_key_action(
             &context,
+            &state,
             action,
             cur_pos,
             bound,
             PingPongDirection::Right,
             true,
-            false,
         );
         matches!(
             result,

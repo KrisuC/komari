@@ -44,57 +44,53 @@ const UP_JUMP_AND_TELEPORT_THRESHOLD: i32 = 23;
 const SOFT_UP_JUMP_THRESHOLD: i32 = 16;
 
 #[derive(Debug, Clone, Copy)]
+struct Mage {
+    did_up_jump: bool,
+    teleport_after_up_jump: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
 enum UpJumpingKind {
-    Mage,
+    Mage(Mage),
     UpArrow,
     JumpKey,
     SpecificKey,
 }
 
-// TODO: Reorganize states
 #[derive(Debug, Clone, Copy)]
 pub struct UpJumping {
     pub moving: Moving,
+    /// The kind of up jump.
+    kind: UpJumpingKind,
     /// Number of ticks to wait before sending jump key(s).
     spam_delay: u32,
     /// Whether auto-mobbing should wait for up jump completion in non-intermediate destination.
-    ///
-    /// This is false initially but randomized on start lifecycle.
     auto_mob_wait_completion: bool,
-    mage_did_up_jump: bool,
-    mage_use_teleport_after_up_jump: bool,
 }
 
 impl UpJumping {
-    // TODO: Compute `UpJumpingKind` upon construction?
-    pub fn new(moving: Moving) -> Self {
+    pub fn new(moving: Moving, context: &Context, state: &PlayerState) -> Self {
         let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
         let spam_delay = if y_distance <= SOFT_UP_JUMP_THRESHOLD {
             SOFT_SPAM_DELAY
         } else {
             SPAM_DELAY
         };
+        let auto_mob_wait_completion =
+            state.has_auto_mob_action_only() && context.rng.random_bool(0.5);
+        let kind = up_jumping_kind(state.config.upjump_key, state.config.teleport_key.is_some());
 
         Self {
             moving,
+            kind,
             spam_delay,
-            auto_mob_wait_completion: false,
-            mage_did_up_jump: false,
-            mage_use_teleport_after_up_jump: false,
+            auto_mob_wait_completion,
         }
     }
 
     #[inline]
     fn moving(self, moving: Moving) -> UpJumping {
         UpJumping { moving, ..self }
-    }
-
-    #[inline]
-    fn auto_mob_wait_completion(self, auto_mob_wait_completion: bool) -> UpJumping {
-        UpJumping {
-            auto_mob_wait_completion,
-            ..self
-        }
     }
 }
 
@@ -108,13 +104,10 @@ impl UpJumping {
 pub fn update_up_jumping_context(
     context: &Context,
     state: &mut PlayerState,
-    up_jumping: UpJumping,
+    mut up_jumping: UpJumping,
 ) -> Player {
     let up_jump_key = state.config.upjump_key;
     let jump_key = state.config.jump_key;
-    let teleport_key = state.config.teleport_key;
-    let has_teleport_key = teleport_key.is_some();
-    let kind = up_jumping_kind(up_jump_key, has_teleport_key);
 
     match next_moving_lifecycle_with_axis(
         up_jumping.moving,
@@ -138,12 +131,10 @@ pub fn update_up_jumping_context(
             }
             state.last_movement = Some(LastMovement::UpJumping);
 
-            let mut up_jumping = up_jumping;
-            let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
-            match kind {
-                UpJumpingKind::Mage => {
-                    up_jumping.mage_use_teleport_after_up_jump =
-                        y_distance >= UP_JUMP_AND_TELEPORT_THRESHOLD;
+            match &mut up_jumping.kind {
+                UpJumpingKind::Mage(mage) => {
+                    let (y_distance, _) = moving.y_distance_direction_from(true, moving.pos);
+                    mage.teleport_after_up_jump = y_distance >= UP_JUMP_AND_TELEPORT_THRESHOLD;
 
                     let _ = context.input.send_key_down(KeyKind::Up);
                     if y_distance >= TELEPORT_WITH_JUMP_THRESHOLD && up_jump_key.is_none() {
@@ -162,32 +153,25 @@ pub fn update_up_jumping_context(
                 }
             }
 
-            // TODO: Should be fine to not check auto-mob action only?
-            Player::UpJumping(
-                up_jumping
-                    .moving(moving)
-                    .auto_mob_wait_completion(context.rng.random_bool(0.5)),
-            )
+            Player::UpJumping(up_jumping.moving(moving))
         }
         MovingLifecycle::Ended(moving) => {
             let _ = context.input.send_key_up(KeyKind::Up);
             Player::Moving(moving.dest, moving.exact, moving.intermediates)
         }
         MovingLifecycle::Updated(mut moving) => {
-            let mut up_jumping = up_jumping;
             let cur_pos = moving.pos;
             let (y_distance, y_direction) = moving.y_distance_direction_from(true, moving.pos);
 
-            if moving.completed {
-                let _ = context.input.send_key_up(KeyKind::Up);
-            } else {
-                match kind {
-                    UpJumpingKind::Mage => {
+            if !moving.completed {
+                match &mut up_jumping.kind {
+                    UpJumpingKind::Mage(mage) => {
                         update_mage_up_jump(
                             context,
                             state,
                             &mut moving,
-                            &mut up_jumping,
+                            mage,
+                            up_jumping.spam_delay,
                             y_distance,
                         );
                     }
@@ -197,7 +181,7 @@ pub fn update_up_jumping_context(
                             // above a threshold as sending jump key twice
                             // doesn't work.
                             if moving.timeout.total >= up_jumping.spam_delay {
-                                if matches!(kind, UpJumpingKind::UpArrow) {
+                                if matches!(up_jumping.kind, UpJumpingKind::UpArrow) {
                                     let _ = context.input.send_key(KeyKind::Up);
                                 } else {
                                     let _ = context.input.send_key(jump_key);
@@ -208,10 +192,14 @@ pub fn update_up_jumping_context(
                         }
                     }
                     UpJumpingKind::SpecificKey => {
-                        let _ = context.input.send_key(up_jump_key.expect("has up jum key"));
+                        let _ = context
+                            .input
+                            .send_key(up_jump_key.expect("has up jump key"));
                         moving = moving.completed(true);
                     }
                 }
+            } else {
+                let _ = context.input.send_key_up(KeyKind::Up);
             }
 
             on_action(
@@ -281,7 +269,8 @@ fn update_mage_up_jump(
     context: &Context,
     state: &PlayerState,
     moving: &mut Moving,
-    up_jumping: &mut UpJumping,
+    mage: &mut Mage,
+    spam_delay: u32,
     y_distance: i32,
 ) {
     let jump_key = state.config.jump_key;
@@ -290,33 +279,38 @@ fn update_mage_up_jump(
 
     if y_distance < TELEPORT_WITH_JUMP_THRESHOLD {
         let _ = context.input.send_key(teleport_key);
-        *moving = moving.completed(true);
+        moving.completed = true;
         return;
     }
 
-    if !up_jumping.mage_use_teleport_after_up_jump || up_jumping.mage_did_up_jump {
+    if !mage.teleport_after_up_jump || mage.did_up_jump {
         return;
     }
 
-    if let Some(key) = up_jump_key {
-        let _ = context.input.send_key(key);
-        up_jumping.mage_did_up_jump = true;
-        return;
-    }
-
-    if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
-        if moving.timeout.total >= up_jumping.spam_delay {
-            let _ = context.input.send_key(jump_key);
+    match up_jump_key {
+        Some(key) => {
+            let _ = context.input.send_key(key);
+            mage.did_up_jump = true;
         }
-    } else {
-        up_jumping.mage_did_up_jump = true;
+        None => {
+            if state.velocity.1 <= UP_JUMPED_Y_VELOCITY_THRESHOLD {
+                if moving.timeout.total >= spam_delay {
+                    let _ = context.input.send_key(jump_key);
+                }
+            } else {
+                mage.did_up_jump = true;
+            }
+        }
     }
 }
 
 #[inline]
 fn up_jumping_kind(up_jump_key: Option<KeyKind>, has_teleport_key: bool) -> UpJumpingKind {
     match (up_jump_key, has_teleport_key) {
-        (Some(_), true) | (None, true) => UpJumpingKind::Mage,
+        (Some(_), true) | (None, true) => UpJumpingKind::Mage(Mage {
+            teleport_after_up_jump: false,
+            did_up_jump: false,
+        }),
         (Some(KeyKind::Up), false) => UpJumpingKind::UpArrow,
         (None, false) => UpJumpingKind::JumpKey,
         (Some(_), false) => UpJumpingKind::SpecificKey,
@@ -361,7 +355,8 @@ mod tests {
             .once();
         context.input = Box::new(keys);
         // Space + Up only
-        update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
+        let up_jumping = UpJumping::new(moving, &context, &state);
+        update_up_jumping_context(&context, &mut state, up_jumping);
         let _ = context.input; // drop mock for validation
 
         state.config.upjump_key = Some(KeyKind::C);
@@ -376,7 +371,8 @@ mod tests {
             .returning(|_| Ok(()));
         context.input = Box::new(keys);
         // Up only
-        update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
+        let up_jumping = UpJumping::new(moving, &context, &state);
+        update_up_jumping_context(&context, &mut state, up_jumping);
         let _ = context.input; // drop mock for validation
 
         state.config.teleport_key = Some(KeyKind::Shift);
@@ -391,7 +387,8 @@ mod tests {
             .returning(|_| Ok(()));
         context.input = Box::new(keys);
         // Space + Up
-        update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
+        let up_jumping = UpJumping::new(moving, &context, &state);
+        update_up_jumping_context(&context, &mut state, up_jumping);
         let _ = context.input; // drop mock for validation
     }
 
@@ -410,10 +407,11 @@ mod tests {
         state.last_known_pos = Some(Point::new(7, 7));
         state.velocity = (0.0, 1.36);
         let context = Context::new(None, None);
+        let up_jumping = UpJumping::new(moving, &context, &state);
 
         // up jumped because y velocity > 1.35
         assert_matches!(
-            update_up_jumping_context(&context, &mut state, UpJumping::new(moving)),
+            update_up_jumping_context(&context, &mut state, up_jumping),
             Player::UpJumping(UpJumping {
                 moving: Moving {
                     timeout: Timeout {
@@ -456,7 +454,8 @@ mod tests {
         context.input = Box::new(keys);
 
         // Start by sending Space only
-        update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
+        let up_jumping = UpJumping::new(moving, &context, &state);
+        update_up_jumping_context(&context, &mut state, up_jumping);
         let _ = context.input;
 
         // Update by sending Up
@@ -471,8 +470,9 @@ mod tests {
             .withf(|key| *key == KeyKind::Space)
             .never();
         context.input = Box::new(keys);
-        update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
-        update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
+        let up_jumping = UpJumping::new(moving, &context, &state);
+        update_up_jumping_context(&context, &mut state, up_jumping);
+        update_up_jumping_context(&context, &mut state, up_jumping);
         let _ = context.input;
     }
 
@@ -504,7 +504,8 @@ mod tests {
         context.input = Box::new(keys);
 
         // Start by sending Up and Space
-        update_up_jumping_context(&context, &mut state, UpJumping::new(moving));
+        let up_jumping = UpJumping::new(moving, &context, &state);
+        update_up_jumping_context(&context, &mut state, up_jumping);
         let _ = context.input;
 
         // Change to started
@@ -515,8 +516,10 @@ mod tests {
         moving.timeout.total = 4; // Before SPAM_DELAY
         keys.expect_send_key().never();
         context.input = Box::new(keys);
+
+        let up_jumping = UpJumping::new(moving, &context, &state);
         assert_matches!(
-            update_up_jumping_context(&context, &mut state, UpJumping::new(moving)),
+            update_up_jumping_context(&context, &mut state, up_jumping),
             Player::UpJumping(UpJumping {
                 moving: Moving {
                     completed: false,
@@ -536,8 +539,9 @@ mod tests {
             .returning(|_| Ok(()));
         context.input = Box::new(keys);
         state.last_known_pos = Some(Point { y: 17, ..pos });
+        let up_jumping = UpJumping::new(moving, &context, &state);
         assert_matches!(
-            update_up_jumping_context(&context, &mut state, UpJumping::new(moving)),
+            update_up_jumping_context(&context, &mut state, up_jumping),
             Player::UpJumping(UpJumping {
                 moving: Moving {
                     completed: true,
