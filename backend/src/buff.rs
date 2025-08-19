@@ -13,8 +13,7 @@ use crate::{
     task::{Task, Update, update_detection_task},
 };
 
-const COMMON_FAIL_COUNT: u32 = 3;
-const WEALTH_LUCK_EXP_FAIL_COUNT: u32 = 5;
+const COMMON_FAIL_COUNT: u32 = 5;
 const FAMILIAR_FAIL_COUNT: u32 = 2;
 const RUNE_FAIL_COUNT: u32 = 1;
 
@@ -46,8 +45,8 @@ impl BuffState {
                 BuffKind::LegionWealth
                 | BuffKind::LegionLuck
                 | BuffKind::WealthAcquisitionPotion
-                | BuffKind::ExpAccumulationPotion => WEALTH_LUCK_EXP_FAIL_COUNT,
-                BuffKind::SayramElixir
+                | BuffKind::ExpAccumulationPotion
+                | BuffKind::SayramElixir
                 | BuffKind::AureliaElixir
                 | BuffKind::ExpCouponX3
                 | BuffKind::BonusExpCoupon
