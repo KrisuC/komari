@@ -153,10 +153,13 @@ fn update_find_region(
     cooldown_timeout: Option<Timeout>,
     retry_count: u32,
 ) -> SolvingRune {
+    const COOLDOWN_AND_SOLVE_TIMEOUT: u32 = 125;
+    const SOLVE_INTERVAL: u32 = 15;
+
     // cooldown_timeout is used to wait for rune cooldown around ~4 secs before hitting interact
     // key again.
     if let Some(cooldown_timeout) = cooldown_timeout {
-        return match next_timeout_lifecycle(cooldown_timeout, 125) {
+        return match next_timeout_lifecycle(cooldown_timeout, COOLDOWN_AND_SOLVE_TIMEOUT) {
             Lifecycle::Updated(cooldown_timeout) | Lifecycle::Started(cooldown_timeout) => {
                 solving_rune.stage_find_region(
                     calibrating,
@@ -172,31 +175,42 @@ fn update_find_region(
     }
 
     debug_assert!(cooldown_timeout.is_none());
-    match next_timeout_lifecycle(timeout, 90) {
+    match next_timeout_lifecycle(timeout, COOLDOWN_AND_SOLVE_TIMEOUT) {
         Lifecycle::Started(timeout) => {
             let _ = context.input.send_key(interact_key);
             solving_rune.stage_find_region(calibrating, timeout, cooldown_timeout, retry_count)
         }
-        Lifecycle::Ended => match context.detector_unwrap().detect_rune_arrows(calibrating) {
-            Ok(ArrowsState::Calibrating(calibrating)) => {
-                solving_rune.stage_solving(calibrating, Timeout::default())
+        Lifecycle::Ended => {
+            if retry_count < MAX_RETRY_COUNT {
+                // Retry possibly because mis-pressing the interact key
+                solving_rune.stage_find_region(
+                    ArrowsCalibrating::default(),
+                    Timeout::default(),
+                    Some(Timeout::default()),
+                    retry_count + 1,
+                )
+            } else {
+                solving_rune.stage_completed()
             }
-            Ok(ArrowsState::Complete(_)) => unreachable!(),
-            Err(_) => {
-                if retry_count < MAX_RETRY_COUNT {
-                    // Retry possibly because mis-pressing the interact key
-                    solving_rune.stage_find_region(
-                        ArrowsCalibrating::default(),
-                        Timeout::default(),
-                        Some(Timeout::default()),
-                        retry_count + 1,
-                    )
-                } else {
-                    solving_rune.stage_completed()
+        }
+        Lifecycle::Updated(timeout) => {
+            if timeout.current.is_multiple_of(SOLVE_INTERVAL) {
+                match context.detector_unwrap().detect_rune_arrows(calibrating) {
+                    Ok(ArrowsState::Calibrating(calibrating)) => {
+                        return solving_rune.stage_solving(calibrating, Timeout::default());
+                    }
+                    Ok(ArrowsState::Complete(_)) => unreachable!(),
+                    Err(_) => {
+                        return solving_rune.stage_find_region(
+                            ArrowsCalibrating::default(),
+                            timeout,
+                            cooldown_timeout,
+                            retry_count,
+                        );
+                    }
                 }
             }
-        },
-        Lifecycle::Updated(timeout) => {
+
             solving_rune.stage_find_region(calibrating, timeout, cooldown_timeout, retry_count)
         }
     }
@@ -310,7 +324,7 @@ mod tests {
             ArrowsCalibrating::default(),
             Timeout {
                 started: true,
-                current: 90,
+                current: 89,
                 ..Default::default()
             },
             None,
@@ -353,7 +367,7 @@ mod tests {
             ArrowsCalibrating::default(),
             Timeout {
                 started: true,
-                current: 90,
+                current: 125,
                 ..Default::default()
             },
             None,
