@@ -144,7 +144,12 @@ pub fn debug_pathing_points(mat: &impl MatTraitConst, minimap: Rect, points: &[P
 }
 
 #[allow(unused)]
-pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[(Rect, &str)]) -> i32 {
+pub fn debug_mat(
+    name: &str,
+    mat: &impl MatTraitConst,
+    wait_ms: i32,
+    bboxes: &[(Rect, &str)],
+) -> i32 {
     let mut mat = mat.try_clone().unwrap();
     for (bbox, text) in bboxes {
         let _ = rectangle(
@@ -165,7 +170,7 @@ pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[(Rec
         );
     }
     imshow(name, &mat).unwrap();
-    let result = wait_key(wait).unwrap();
+    let result = wait_key(wait_ms).unwrap();
     destroy_all_windows().unwrap();
     result
 }

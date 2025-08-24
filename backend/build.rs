@@ -53,7 +53,7 @@ fn main() {
     let hp_separator_2 = dir.join("hp_separator_ideal_ratio_2.png");
     let hp_shield = dir.join("hp_shield_ideal_ratio.png");
     let hp_end = dir.join("hp_end_ideal_ratio.png");
-    let spin_test = dir.join("spin_test_2");
+    let spin_test = dir.join("spin_test_1");
     let familiar_button_save = dir.join("familiar_button_save_ideal_ratio.png");
     let familiar_button_setup = dir.join("familiar_button_setup_ideal_ratio.png");
     let familiar_button_level = dir.join("familiar_button_level_ideal_ratio.png");

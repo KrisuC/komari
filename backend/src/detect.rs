@@ -708,6 +708,7 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
         )
     });
 
+    #[derive(Debug)]
     enum Border {
         Top,
         Bottom,
@@ -717,50 +718,43 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
 
     fn scan_border(minimap: &impl MatTraitConst, border: Border, border_threshold: u8) -> i32 {
         let mut counts = HashMap::<u32, u32>::new();
-        match border {
-            Border::Top | Border::Bottom => {
-                let col_start = (minimap.cols() as f32 * 0.1) as i32 - 1;
-                let col_end = minimap.cols() - col_start;
-                for col in col_start..col_end {
-                    let mut count = 0;
-                    for row in 0..minimap.rows() {
-                        let row = if matches!(border, Border::Bottom) {
-                            minimap.rows() - row - 1
-                        } else {
-                            row
-                        };
-                        let pixel = minimap.at_2d::<Vec4b>(row, col).unwrap();
-                        if pixel.into_iter().all(|v| v >= border_threshold) {
-                            count += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    counts.entry(count).and_modify(|c| *c += 1).or_insert(1);
-                }
-            }
-            Border::Left | Border::Right => {
-                let row_start = (minimap.rows() as f32 * 0.1) as i32 - 1;
-                let row_end = minimap.rows() - row_start;
-                for row in row_start..row_end {
-                    let mut count = 0;
-                    for col in 0..minimap.cols() {
-                        let col = if matches!(border, Border::Right) {
-                            minimap.cols() - col - 1
-                        } else {
-                            col
-                        };
-                        let pixel = minimap.at_2d::<Vec4b>(row, col).unwrap();
-                        if pixel.into_iter().all(|v| v >= border_threshold) {
-                            count += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    counts.entry(count).and_modify(|c| *c += 1).or_insert(1);
-                }
-            }
+        let is_pixel_above_threshold =
+            |pixel: &[u8; 4]| pixel.iter().all(|&v| v >= border_threshold);
+        let (primary_len, secondary_len, flip_primary) = match border {
+            Border::Top => (minimap.rows(), minimap.cols(), false),
+            Border::Bottom => (minimap.rows(), minimap.cols(), true),
+            Border::Left => (minimap.cols(), minimap.rows(), false),
+            Border::Right => (minimap.cols(), minimap.rows(), true),
         };
+
+        let secondary_start = ((secondary_len - 1) as f32 * 0.1) as i32;
+        let secondary_end = secondary_len - secondary_start;
+
+        for secondary in secondary_start..secondary_end {
+            let mut count = 0;
+
+            for primary in 0..primary_len {
+                let flipped_primary = if flip_primary {
+                    primary_len - primary - 1
+                } else {
+                    primary
+                };
+                let (row, col) = match border {
+                    Border::Top | Border::Bottom => (flipped_primary, secondary),
+                    Border::Left | Border::Right => (secondary, flipped_primary),
+                };
+
+                let pixel = minimap.at_2d::<Vec4b>(row, col).unwrap();
+                if is_pixel_above_threshold(pixel) {
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+
+            *counts.entry(count).or_insert(0) += 1;
+        }
+
         counts
             .into_iter()
             .max_by_key(|e| e.1)
@@ -810,10 +804,7 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
         .max_by_key(|bbox| bbox.area())
         .ok_or(anyhow!("minimap contours is empty"))?
         + minimap_bbox.tl();
-    let intersection = (contour_bbox & minimap_bbox).area() as f32;
-    let union = (contour_bbox | minimap_bbox).area() as f32;
-    let iou = intersection / union;
-    if iou < 0.8 {
+    if iou(contour_bbox, minimap_bbox) < 0.8 {
         bail!("wrong minimap likely caused by detection during map switching")
     }
 
@@ -1551,9 +1542,7 @@ fn detect_rune_arrows(
     }
 
     // Reuse cached result if any
-    if let Some(arrows) = calibrating.normal_arrows {
-        calibrating.normal_arrows = None;
-
+    if let Some(arrows) = calibrating.normal_arrows.take() {
         if calibrating.spin_arrows.is_none() && arrows.len() == MAX_ARROWS {
             debug!(target: "rune", "reuse cached arrows result");
             return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(
@@ -1567,25 +1556,23 @@ fn detect_rune_arrows(
             for arrow in spin_arrows {
                 final_arrows.push((arrow.region, arrow.final_arrow.unwrap()));
             }
-            for (arrow_region, arrow) in arrows {
+            for (normal_arrow_region, normal_arrow) in arrows {
                 let mut use_arrow = true;
-                for region in spin_arrows.iter().map(|arrow| arrow.region) {
-                    let intersection = (arrow_region & region).area() as f32;
-                    let union = (arrow_region | region).area() as f32;
-                    let iou = intersection / union;
+                for spin_arrow_region in spin_arrows.iter().map(|arrow| arrow.region) {
+                    let iou = iou(normal_arrow_region, spin_arrow_region);
                     if iou >= 0.5 {
                         use_arrow = false;
-                        debug!(target: "rune", "skip using cached result for normal {arrow_region:?} and spin {region:?} with IoU {iou}");
+                        debug!(target: "rune", "skip using cached result for normal {normal_arrow_region:?} and spin {spin_arrow_region:?} with IoU {iou}");
                         break;
                     }
                 }
                 if use_arrow {
-                    final_arrows.push((arrow_region, arrow));
+                    final_arrows.push((normal_arrow_region, normal_arrow));
                 }
             }
 
             if final_arrows.len() == MAX_ARROWS {
-                debug!(target: "rune", "reuse cached arrows result with spin arrows");
+                debug!(target: "rune", "reuse cached arrows result with spin arrows {calibrating:?}");
                 final_arrows.sort_by_key(|(region, _)| region.x);
                 return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(
                     final_arrows,
@@ -1663,7 +1650,7 @@ fn calibrate_for_spin_arrows(
             extract_channel(mat, mat_mut, 1).unwrap();
             #[cfg(debug_assertions)]
             if calibrating.is_spin_testing {
-                debug_mat("Rune Region Before Thresh", mat, 0, &[]);
+                debug_mat("Rune Region Before Thresholding", mat, 0, &[]);
             }
             threshold(mat, mat_mut, 245.0, 255.0, THRESH_BINARY).unwrap();
         });
@@ -1671,7 +1658,7 @@ fn calibrate_for_spin_arrows(
 
     #[cfg(debug_assertions)]
     if calibrating.is_spin_testing {
-        debug_mat("Rune Region", &rune_region_mat, 0, &[]);
+        debug_mat("Rune Region After Thresholding", &rune_region_mat, 0, &[]);
     }
 
     let mut centroids = Mat::default();
@@ -1755,7 +1742,7 @@ fn calibrate_for_spin_arrows(
 
 fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Result<()> {
     const INTERPOLATE_FROM_CENTROID: f32 = 0.785;
-    const SPIN_LAG_THRESHOLD: i32 = 25;
+    const SPIN_LAG_THRESHOLD: i32 = 30;
     const SPIN_ARROW_HUE_THRESHOLD: u8 = 30;
 
     // Extract spin arrow region
@@ -2661,6 +2648,14 @@ fn expand_bbox(size: Option<Size>, bbox: Rect, count: i32) -> Rect {
     }
 
     Rect::new(x1, y1, x2 - x1, y2 - y1)
+}
+
+/// Computes the intersection over union ratio.
+#[inline]
+fn iou(first: Rect, second: Rect) -> f32 {
+    let intersection = (first & second).area() as f32;
+    let union = (first | second).area() as f32;
+    intersection / union
 }
 
 /// Crops `mat` to the buffs region.
