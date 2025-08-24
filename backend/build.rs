@@ -1,6 +1,9 @@
 #[cfg(feature = "gpu")]
 use std::process::Command;
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn main() {
     let dir = env::current_dir().unwrap().join("resources");
@@ -349,67 +352,71 @@ fn main() {
     );
 
     // onnxruntime dependencies
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let target_dir = out_dir.ancestors().nth(5).unwrap();
-    let exe_build_type = if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    };
-    let exe_dir = target_dir
+    let target_dir = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap())
+        .parent()
+        .unwrap()
+        .join("target");
+    let dx_exe_dir = target_dir
         .join("dx")
         .join("ui")
-        .join(exe_build_type)
+        .join(env::var("PROFILE").unwrap())
         .join("windows")
         .join("app");
-    let _ = fs::create_dir_all(&exe_dir);
+    let normal_exe_dir = target_dir
+        .join(env::var("TARGET").unwrap())
+        .join(env::var("PROFILE").unwrap());
+    let _ = fs::create_dir_all(&normal_exe_dir);
+    let _ = fs::create_dir_all(&dx_exe_dir);
 
-    fs::copy(
-        &onnx_runtime,
-        exe_dir.join(onnx_runtime.file_name().unwrap()),
-    )
-    .unwrap();
-    println!(
-        "cargo:rerun-if-changed={}",
-        exe_dir
-            .join(onnx_runtime.file_name().unwrap())
-            .to_str()
-            .unwrap()
-    );
+    copy_file_to_dir(&onnx_runtime, &dx_exe_dir);
+    copy_file_to_dir(&onnx_runtime, &normal_exe_dir);
 
     #[cfg(feature = "gpu")]
     {
+        copy_file_to_dir(&onnx_runtime_shared, &dx_exe_dir);
+        copy_file_to_dir(&onnx_runtime_shared, &normal_exe_dir);
+
         let tools_dir = env::current_dir().unwrap().parent().unwrap().join("tools");
+        let join_script = tools_dir.join("join.ps1").to_str().unwrap().to_string();
+
         let _ = Command::new("powershell")
             .arg("-Command")
             .arg(format!(
                 "& {{ . {}; join {} {}}}",
-                tools_dir.join("join.ps1").to_str().unwrap(),
+                &join_script,
                 onnx_runtime_cuda.to_str().unwrap(),
-                exe_dir
+                dx_exe_dir
                     .join(onnx_runtime_cuda.file_name().unwrap())
                     .to_str()
                     .unwrap()
             ))
             .spawn()
             .expect("failed to spawn powershell command");
-
-        fs::copy(
-            &onnx_runtime_shared,
-            exe_dir.join(onnx_runtime_shared.file_name().unwrap()),
-        )
-        .unwrap();
         println!(
             "cargo:rerun-if-changed={}",
-            exe_dir
+            dx_exe_dir
                 .join(onnx_runtime_cuda.file_name().unwrap())
                 .to_str()
                 .unwrap()
         );
+
+        let _ = Command::new("powershell")
+            .arg("-Command")
+            .arg(format!(
+                "& {{ . {}; join {} {}}}",
+                &join_script,
+                onnx_runtime_cuda.to_str().unwrap(),
+                normal_exe_dir
+                    .join(onnx_runtime_cuda.file_name().unwrap())
+                    .to_str()
+                    .unwrap()
+            ))
+            .spawn()
+            .expect("failed to spawn powershell command");
         println!(
             "cargo:rerun-if-changed={}",
-            exe_dir
-                .join(onnx_runtime_shared.file_name().unwrap())
+            normal_exe_dir
+                .join(onnx_runtime_cuda.file_name().unwrap())
                 .to_str()
                 .unwrap()
         );
@@ -437,4 +444,11 @@ fn main() {
         "cargo:rustc-env=TEXT_RECOGNITION_ALPHABET={}",
         text_alphabet_txt.to_str().unwrap()
     );
+}
+
+fn copy_file_to_dir(file: &PathBuf, dir: &Path) {
+    let destination = dir.join(file.file_name().unwrap());
+    let destination_str = destination.to_str().unwrap().to_string();
+    fs::copy(file, destination).unwrap();
+    println!("cargo:rerun-if-changed={}", destination_str);
 }
