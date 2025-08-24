@@ -18,8 +18,8 @@ use opencv::{
     boxed_ref::BoxedRef,
     core::{
         BORDER_CONSTANT, CMP_EQ, CMP_GT, CV_8U, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait,
-        MatTraitConst, MatTraitConstManual, ModifyInplace, Point, Point2f, Range, Rect, Scalar,
-        Size, ToInputArray, Vec3b, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare,
+        MatTraitConst, MatTraitConstManual, ModifyInplace, Point, Range, Rect, Scalar, Size,
+        ToInputArray, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare,
         copy_make_border, divide2_def, extract_channel, find_non_zero, min_max_loc, no_array,
         subtract_def, transpose_nd,
     },
@@ -32,9 +32,9 @@ use opencv::{
         CC_STAT_AREA, CC_STAT_HEIGHT, CC_STAT_LEFT, CC_STAT_TOP, CC_STAT_WIDTH,
         CHAIN_APPROX_SIMPLE, COLOR_BGR2HSV_FULL, COLOR_BGRA2BGR, COLOR_BGRA2GRAY, COLOR_BGRA2RGB,
         INTER_CUBIC, INTER_LINEAR, MORPH_RECT, RETR_EXTERNAL, THRESH_BINARY, TM_CCOEFF_NORMED,
-        TM_SQDIFF_NORMED, bounding_rect, connected_components_with_stats, cvt_color_def,
-        dilate_def, find_contours_def, get_structuring_element_def, match_template, min_area_rect,
-        resize, threshold,
+        TM_SQDIFF_NORMED, bounding_rect, connected_components_with_stats, contour_area,
+        cvt_color_def, dilate_def, find_contours_def, get_structuring_element_def, match_template,
+        min_area_rect, min_enclosing_triangle, resize, threshold,
     },
 };
 use ort::{
@@ -1634,6 +1634,7 @@ fn detect_rune_arrows(
     }
 }
 
+// TODO: Improve spin arrows detection by detecting from model
 fn calibrate_for_spin_arrows(
     mat: &impl MatTraitConst,
     rune_region: Rect,
@@ -1741,9 +1742,7 @@ fn calibrate_for_spin_arrows(
 }
 
 fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Result<()> {
-    const INTERPOLATE_FROM_CENTROID: f32 = 0.785;
     const SPIN_LAG_THRESHOLD: i32 = 30;
-    const SPIN_ARROW_HUE_THRESHOLD: u8 = 30;
 
     // Extract spin arrow region
     let spin_arrow_mat = to_hsv(&mat.roi(spin_arrow.region)?);
@@ -1769,105 +1768,57 @@ fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Re
         bail!("cannot find the spinning arrow contour")
     }
 
-    let mut points = [Point2f::default(); 4];
-    let rect = min_area_rect(&contours.get(0).unwrap()).unwrap();
-    rect.points(&mut points).unwrap();
+    let contour = contours
+        .iter()
+        .max_by_key(|contour| contour_area(contour, false).unwrap_or(0.0) as i32)
+        .expect("not empty");
+    let mut triangle = Vector::<Point>::new();
+    min_enclosing_triangle(&contour, &mut triangle).unwrap();
 
-    // Determine the two short edges of a rectangle following the points order
-    // returned by `[RotatedRect::points]`
-    let mut first_short_edge_center = Point2f::default();
-    let mut second_short_edge_center = Point2f::default();
-    if (points[0] - points[1]).norm() < (points[0] - points[3]).norm() {
-        first_short_edge_center.x = (points[0].x + points[1].x) / 2.0;
-        first_short_edge_center.y = (points[0].y + points[1].y) / 2.0;
+    let shortest_edge = triangle
+        .iter()
+        .zip(triangle.iter().cycle().skip(1))
+        .min_by(|first_edge, second_edge| {
+            let first_norm = (first_edge.0 - first_edge.1).norm();
+            let second_norm = (second_edge.0 - second_edge.1).norm();
+            first_norm.total_cmp(&second_norm)
+        })
+        .expect("has value");
+    let arrow_head = (shortest_edge.0 + shortest_edge.1) / 2;
 
-        second_short_edge_center.x = (points[3].x + points[2].x) / 2.0;
-        second_short_edge_center.y = (points[3].y + points[2].y) / 2.0;
-    } else {
-        first_short_edge_center.x = (points[0].x + points[3].x) / 2.0;
-        first_short_edge_center.y = (points[0].y + points[3].y) / 2.0;
-
-        second_short_edge_center.x = (points[2].x + points[1].x) / 2.0;
-        second_short_edge_center.y = (points[2].y + points[1].y) / 2.0;
-    }
-
-    // Determine which edge is the arrow head by first computing the collinear point
-    // from the centroid to the center point of each edges
     let centroid = spin_arrow.centroid - spin_arrow.region.tl();
-    let first_collinear = first_short_edge_center * INTERPOLATE_FROM_CENTROID
-        + centroid.to::<f32>().unwrap() * (1.0 - INTERPOLATE_FROM_CENTROID);
-    let first_collinear = first_collinear.to::<i32>().unwrap();
-
-    let second_collinear = second_short_edge_center * INTERPOLATE_FROM_CENTROID
-        + centroid.to::<f32>().unwrap() * (1.0 - INTERPOLATE_FROM_CENTROID);
-    let second_collinear = second_collinear.to::<i32>().unwrap();
-
-    let collinear = if let Some(last_collinear) = spin_arrow.last_arrow_head {
-        if (last_collinear - centroid).dot(first_collinear - centroid) > 0 {
-            first_collinear
-        } else {
-            second_collinear
-        }
-    } else {
-        // Check the hue to determine the arrow head
-        let first_hue = spin_arrow_mat
-            .at_pt::<Vec3b>(first_collinear)
-            .unwrap()
-            .first()
-            .copied()
-            .unwrap();
-        let second_hue = spin_arrow_mat
-            .at_pt::<Vec3b>(second_collinear)
-            .unwrap()
-            .first()
-            .copied()
-            .unwrap();
-        if first_hue <= SPIN_ARROW_HUE_THRESHOLD {
-            first_collinear
-        } else if second_hue <= SPIN_ARROW_HUE_THRESHOLD {
-            second_collinear
-        } else {
-            bail!("failed to determine spinning arrow head")
-        }
-    };
+    let cur_arrow_head = arrow_head - centroid;
 
     if spin_arrow.last_arrow_head.is_none() {
-        spin_arrow.last_arrow_head = Some(collinear);
+        spin_arrow.last_arrow_head = Some(cur_arrow_head);
         return Ok(());
     }
 
-    let prev_arrow_head = spin_arrow.last_arrow_head.unwrap() - centroid;
-    let cur_arrow_head = collinear - centroid;
+    let prev_arrow_head = spin_arrow.last_arrow_head.unwrap();
     // https://stackoverflow.com/a/13221874
     let dot = prev_arrow_head.x * -cur_arrow_head.y + prev_arrow_head.y * cur_arrow_head.x;
     if dot >= SPIN_LAG_THRESHOLD {
         debug!(target: "rune", "spinning arrow lag detected");
-        let up = prev_arrow_head.dot(Point::new(0, -1));
-        let down = prev_arrow_head.dot(Point::new(0, 1));
-        let left = prev_arrow_head.dot(Point::new(-1, 0));
-        let right = prev_arrow_head.dot(Point::new(1, 0));
-        let results = [up, down, left, right];
-        let (index, _) = results
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, dot)| **dot)
+        let directions = [
+            (KeyKind::Up, prev_arrow_head.dot(Point::new(0, -1))),
+            (KeyKind::Down, prev_arrow_head.dot(Point::new(0, 1))),
+            (KeyKind::Left, prev_arrow_head.dot(Point::new(-1, 0))),
+            (KeyKind::Right, prev_arrow_head.dot(Point::new(1, 0))),
+        ];
+        let (arrow, _) = directions
+            .into_iter()
+            .max_by_key(|(_, score)| *score)
             .unwrap();
-        let arrow = match index {
-            0 => KeyKind::Up,
-            1 => KeyKind::Down,
-            2 => KeyKind::Left,
-            3 => KeyKind::Right,
-            _ => unreachable!(),
-        };
-        info!(target: "rune", "spinning arrow result {arrow:?} {results:?}");
+        info!(target: "rune", "spinning arrow result {arrow:?} {directions:?}");
         spin_arrow.final_arrow = Some(arrow);
     }
-    spin_arrow.last_arrow_head = Some(collinear);
+    spin_arrow.last_arrow_head = Some(cur_arrow_head);
 
     #[cfg(debug_assertions)]
     if spin_arrow.is_spin_testing {
         debug_spinning_arrows(
             mat,
+            &triangle,
             &contours,
             spin_arrow.region,
             prev_arrow_head,
