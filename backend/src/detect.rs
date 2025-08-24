@@ -1765,15 +1765,18 @@ fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Re
     )
     .unwrap();
     if contours.is_empty() {
-        bail!("cannot find the spinning arrow contour")
+        bail!("cannot find the spinning arrow contour");
     }
 
     let contour = contours
         .iter()
-        .max_by_key(|contour| contour_area(contour, false).unwrap_or(0.0) as i32)
+        .min_by_key(|contour| contour_area(contour, false).unwrap() as i32)
         .expect("not empty");
     let mut triangle = Vector::<Point>::new();
-    min_enclosing_triangle(&contour, &mut triangle).unwrap();
+    let triangle_area = min_enclosing_triangle(&contour, &mut triangle).unwrap() as i32;
+    if triangle_area == 0 {
+        bail!("failed to determine the spinning arrow triangle");
+    }
 
     let shortest_edge = triangle
         .iter()
