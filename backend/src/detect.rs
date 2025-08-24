@@ -1489,20 +1489,20 @@ fn detect_rune_arrows(
     mat: &impl MatTraitConst,
     mut calibrating: ArrowsCalibrating,
 ) -> Result<ArrowsState> {
-    /// The minimum region width required to contain 4 arrows
-    ///
-    /// Based on the rectangular region in-game with round border when detecting arrows.
-    const RUNE_REGION_MIN_WIDTH: i32 = 300;
     const SCORE_THRESHOLD: f32 = 0.8;
 
     if calibrating.rune_region.is_none() {
+        // Detect until 4 arrows found even if there maybe spin arrows
         let result = detect_rune_arrows_with_scores_regions(mat);
-        calibrating.rune_region = result
-            .clone()
-            .into_iter()
-            .map(|(r, _, _)| r)
-            .reduce(|acc, cur| acc | cur)
-            .filter(|region| region.width >= RUNE_REGION_MIN_WIDTH);
+        calibrating.rune_region = if result.len() == MAX_ARROWS {
+            result
+                .clone()
+                .into_iter()
+                .map(|(r, _, _)| r)
+                .reduce(|acc, cur| acc | cur)
+        } else {
+            None
+        };
 
         // Cache result for later
         let filtered = result
@@ -1510,6 +1510,7 @@ fn detect_rune_arrows(
             .filter_map(|(rect, arrow, score)| (score >= SCORE_THRESHOLD).then_some((rect, arrow)))
             .collect::<Vec<_>>();
         if !filtered.is_empty() && filtered.len() <= MAX_ARROWS {
+            info!(target: "rune", "initial rune region {filtered:?}");
             calibrating.normal_arrows = Some(Array::from_iter(filtered));
         }
     }
@@ -1544,38 +1545,31 @@ fn detect_rune_arrows(
     }
 
     // Reuse cached result if any
-    if let Some(arrows) = calibrating.normal_arrows.take() {
-        if calibrating.spin_arrows.is_none() && arrows.len() == MAX_ARROWS {
-            debug!(target: "rune", "reuse cached arrows result");
+    if let Some(normal_arrows) = calibrating.normal_arrows.take() {
+        if calibrating.spin_arrows.is_none() && normal_arrows.len() == MAX_ARROWS {
+            info!(target: "rune", "reuse cached arrows result");
             return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(
-                arrows.into_iter().collect::<Vec<_>>(),
+                normal_arrows.into_iter().collect::<Vec<_>>(),
             )));
         }
 
         if let Some(ref spin_arrows) = calibrating.spin_arrows {
-            let mut final_arrows = Vec::new();
+            let mut final_arrows = normal_arrows
+                .into_iter()
+                .filter(|(normal_arrow_region, _)| {
+                    spin_arrows
+                        .iter()
+                        .map(|spin_arrow| spin_arrow.region)
+                        .all(|spin_arrow_region| iou(*normal_arrow_region, spin_arrow_region) < 0.5)
+                })
+                .collect::<Vec<(Rect, KeyKind)>>();
 
             for arrow in spin_arrows {
                 final_arrows.push((arrow.region, arrow.final_arrow.unwrap()));
             }
-            for (normal_arrow_region, normal_arrow) in arrows {
-                let mut use_arrow = true;
-                for spin_arrow_region in spin_arrows.iter().map(|arrow| arrow.region) {
-                    let iou = iou(normal_arrow_region, spin_arrow_region);
-                    if iou >= 0.5 {
-                        use_arrow = false;
-                        debug!(target: "rune", "skip using cached result for normal {normal_arrow_region:?} and spin {spin_arrow_region:?} with IoU {iou}");
-                        break;
-                    }
-                }
-                if use_arrow {
-                    final_arrows.push((normal_arrow_region, normal_arrow));
-                }
-            }
-
             if final_arrows.len() == MAX_ARROWS {
-                debug!(target: "rune", "reuse cached arrows result with spin arrows {calibrating:?}");
                 final_arrows.sort_by_key(|(region, _)| region.x);
+                info!(target: "rune", "reuse cached arrows result with spin arrows {calibrating:?}");
                 return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(
                     final_arrows,
                 )));
@@ -1589,7 +1583,7 @@ fn detect_rune_arrows(
     let mut mat_rune_region = mat.roi(rune_region)?;
     if calibrating.spin_arrows.is_some() {
         //  Set all spin arrow regions to black pixels
-        let mut mat_copy = mat_rune_region.clone_pointee();
+        let mut mat_clone = mat_rune_region.clone_pointee();
         for region in calibrating
             .spin_arrows
             .as_ref()
@@ -1597,11 +1591,11 @@ fn detect_rune_arrows(
             .iter()
             .map(|arrow| arrow.region)
         {
-            mat_copy
+            mat_clone
                 .roi_mut(region - rune_region.tl())?
                 .set_scalar(Scalar::default())?;
         }
-        mat_rune_region = BoxedRef::from(mat_copy);
+        mat_rune_region = BoxedRef::from(mat_clone);
     }
 
     let result = detect_rune_arrows_with_scores_regions(&mat_rune_region)
