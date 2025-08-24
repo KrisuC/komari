@@ -11,7 +11,7 @@ If you have any questions about the codebase or want to discuss an idea before s
 
 ## Building the bot
 
-On Windows, to build the bot, you need to have [Dioxus ClI](https://dioxuslabs.com/cli/), OpenCV and LLVM installed. OpenCV binaries need
+On Windows, to build the bot, you need to have [Dioxus CLI](https://dioxuslabs.com/cli/), OpenCV and LLVM installed. OpenCV binaries need
 to also be statically linked.
 ```powershell
 # You can use vcpkg to install OpenCV
