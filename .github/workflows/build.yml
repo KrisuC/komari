@@ -33,7 +33,6 @@ env:
   VCPKGRS_TRIPLET: x64-windows-static
 
   PROTOC_VERSION: "31.1.0"
-  LLVM_VERSION: "20.1.8"
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
   RUST_BACKTRACE: 1
@@ -56,7 +55,6 @@ jobs:
           vcpkg-version: ${{ env.VCPKG_VERSION }}
           vcpkg-root: ${{ env.VCPKG_ROOT }}
           protoc-version: ${{ env.PROTOC_VERSION }}
-          llvm-version: ${{ env.LLVM_VERSION }}
 
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
@@ -78,7 +76,6 @@ jobs:
           vcpkg-version: ${{ env.VCPKG_VERSION }}
           vcpkg-root: ${{ env.VCPKG_ROOT }}
           protoc-version: ${{ env.PROTOC_VERSION }}
-          llvm-version: ${{ env.LLVM_VERSION }}
 
       - name: Build ${{ matrix.type }} ${{ matrix.feature }}
         shell: pwsh

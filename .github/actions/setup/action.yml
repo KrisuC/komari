@@ -6,8 +6,6 @@ inputs:
     required: true
   protoc-version:
     required: true
-  llvm-version:
-    required: true
 runs:
   using: composite
   steps:
@@ -53,10 +51,6 @@ runs:
         npm install
         cd ../
         cargo binstall dioxus-cli --no-confirm
-
-    - name: Install LLVM
-      shell: pwsh
-      run: choco install -y llvm --version "${{ inputs.llvm-version }}"
 
     - name: Install protoc
       shell: pwsh
