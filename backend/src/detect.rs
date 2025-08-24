@@ -1090,6 +1090,7 @@ fn detect_player_in_cash_shop(mat: &impl ToInputArray) -> bool {
     detect_template(mat, &*CASH_SHOP, Point::default(), 0.7).is_ok()
 }
 
+// TODO: Update detection resource when UI changes
 fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
     /// TODO: Support default ratio
     static HP_START: LazyLock<Mat> = LazyLock::new(|| {
@@ -1110,6 +1111,7 @@ fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
     ))
 }
 
+// TODO: Update detection resource when UI changes
 fn detect_player_current_max_health_bars(
     mat: &impl MatTraitConst,
     grayscale: &impl MatTraitConst,
