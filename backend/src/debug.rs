@@ -12,12 +12,12 @@ use opencv::core::add_weighted_def;
 use opencv::core::{Mat, ToInputArray};
 use opencv::core::{MatTraitConst, Vector};
 use opencv::highgui::destroy_all_windows;
-use opencv::imgproc::cvt_color_def;
 use opencv::imgproc::line_def;
 use opencv::imgproc::rectangle;
 use opencv::imgproc::{COLOR_BGRA2GRAY, draw_contours_def};
 use opencv::imgproc::{FONT_HERSHEY_SIMPLEX, put_text_def};
 use opencv::imgproc::{LINE_8, circle_def};
+use opencv::imgproc::{cvt_color_def, polylines};
 use opencv::{
     highgui::{imshow, wait_key},
     imgcodecs::imwrite_def,
@@ -51,20 +51,26 @@ static DATASET_RUNE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 #[allow(unused)]
 pub fn debug_spinning_arrows(
     mat: &impl MatTraitConst,
-    spin_arrow_contours: &Vector<Vector<Point>>,
-    spin_arrow_region: Rect,
-    spin_arrow_last_head: Point,
-    spin_arrow_cur_head: Point,
-    spin_arrow_centroid: Point,
+    arrow_curve: &Vector<Point>,
+    arrow_contours: &Vector<Vector<Point>>,
+    arrow_region: Rect,
+    last_arrow_head: Point,
+    cur_arrow_head: Point,
+    region_centroid: Point,
 ) {
     let mut mat = mat.try_clone().unwrap();
-    let contours = spin_arrow_contours
+    let curve = arrow_curve
+        .clone()
+        .into_iter()
+        .map(|point| point + arrow_region.tl())
+        .collect::<Vector<Point>>();
+    let contours = arrow_contours
         .clone()
         .into_iter()
         .map(|points| {
             points
                 .into_iter()
-                .map(|pt| pt + spin_arrow_region.tl())
+                .map(|pt| pt + arrow_region.tl())
                 .collect::<Vector<Point>>()
         })
         .collect::<Vector<Vector<Point>>>();
@@ -72,22 +78,32 @@ pub fn debug_spinning_arrows(
     draw_contours_def(&mut mat, &contours, 0, Scalar::new(255.0, 0.0, 0.0, 0.0));
     circle_def(
         &mut mat,
-        spin_arrow_last_head + spin_arrow_centroid,
+        last_arrow_head + region_centroid,
         3,
         Scalar::new(0.0, 255.0, 0.0, 0.0),
     );
     circle_def(
         &mut mat,
-        spin_arrow_cur_head + spin_arrow_centroid,
+        cur_arrow_head + region_centroid,
         3,
         Scalar::new(255.0, 0.0, 0.0, 0.0),
     );
     circle_def(
         &mut mat,
-        spin_arrow_centroid,
+        region_centroid,
         3,
         Scalar::new(0.0, 0.0, 255.0, 0.0),
     );
+    polylines(
+        &mut mat,
+        &curve,
+        true,
+        Scalar::new(0., 255., 0., 0.),
+        1,
+        LINE_8,
+        0,
+    )
+    .unwrap();
     debug_mat("Spin Arrow", &mat, 0, &[]);
 }
 
@@ -144,7 +160,12 @@ pub fn debug_pathing_points(mat: &impl MatTraitConst, minimap: Rect, points: &[P
 }
 
 #[allow(unused)]
-pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[(Rect, &str)]) -> i32 {
+pub fn debug_mat(
+    name: &str,
+    mat: &impl MatTraitConst,
+    wait_ms: i32,
+    bboxes: &[(Rect, &str)],
+) -> i32 {
     let mut mat = mat.try_clone().unwrap();
     for (bbox, text) in bboxes {
         let _ = rectangle(
@@ -165,7 +186,7 @@ pub fn debug_mat(name: &str, mat: &impl MatTraitConst, wait: i32, bboxes: &[(Rec
         );
     }
     imshow(name, &mat).unwrap();
-    let result = wait_key(wait).unwrap();
+    let result = wait_key(wait_ms).unwrap();
     destroy_all_windows().unwrap();
     result
 }

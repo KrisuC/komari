@@ -136,6 +136,7 @@ impl DebugService {
             match CachedDetector::new(OwnedMat::from(mat.clone())).detect_rune_arrows(calibrating) {
                 Ok(ArrowsState::Complete(arrows)) => {
                     debug!(target: "test", "spin test completed {arrows:?}");
+                    break;
                 }
                 Ok(ArrowsState::Calibrating(new_calibrating)) => {
                     calibrating = new_calibrating;

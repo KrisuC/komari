@@ -18,8 +18,8 @@ use opencv::{
     boxed_ref::BoxedRef,
     core::{
         BORDER_CONSTANT, CMP_EQ, CMP_GT, CV_8U, CV_32FC3, CV_32S, Mat, MatExprTraitConst, MatTrait,
-        MatTraitConst, MatTraitConstManual, ModifyInplace, Point, Point2f, Range, Rect, Scalar,
-        Size, ToInputArray, Vec3b, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare,
+        MatTraitConst, MatTraitConstManual, ModifyInplace, Point, Range, Rect, Scalar, Size,
+        ToInputArray, Vec4b, Vector, add, add_weighted_def, bitwise_and_def, compare,
         copy_make_border, divide2_def, extract_channel, find_non_zero, min_max_loc, no_array,
         subtract_def, transpose_nd,
     },
@@ -32,9 +32,9 @@ use opencv::{
         CC_STAT_AREA, CC_STAT_HEIGHT, CC_STAT_LEFT, CC_STAT_TOP, CC_STAT_WIDTH,
         CHAIN_APPROX_SIMPLE, COLOR_BGR2HSV_FULL, COLOR_BGRA2BGR, COLOR_BGRA2GRAY, COLOR_BGRA2RGB,
         INTER_CUBIC, INTER_LINEAR, MORPH_RECT, RETR_EXTERNAL, THRESH_BINARY, TM_CCOEFF_NORMED,
-        TM_SQDIFF_NORMED, bounding_rect, connected_components_with_stats, cvt_color_def,
-        dilate_def, find_contours_def, get_structuring_element_def, match_template, min_area_rect,
-        resize, threshold,
+        TM_SQDIFF_NORMED, bounding_rect, connected_components_with_stats, contour_area,
+        cvt_color_def, dilate_def, find_contours_def, get_structuring_element_def, match_template,
+        min_area_rect, min_enclosing_triangle, resize, threshold,
     },
 };
 use ort::{
@@ -708,6 +708,7 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
         )
     });
 
+    #[derive(Debug)]
     enum Border {
         Top,
         Bottom,
@@ -717,50 +718,43 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
 
     fn scan_border(minimap: &impl MatTraitConst, border: Border, border_threshold: u8) -> i32 {
         let mut counts = HashMap::<u32, u32>::new();
-        match border {
-            Border::Top | Border::Bottom => {
-                let col_start = (minimap.cols() as f32 * 0.1) as i32 - 1;
-                let col_end = minimap.cols() - col_start;
-                for col in col_start..col_end {
-                    let mut count = 0;
-                    for row in 0..minimap.rows() {
-                        let row = if matches!(border, Border::Bottom) {
-                            minimap.rows() - row - 1
-                        } else {
-                            row
-                        };
-                        let pixel = minimap.at_2d::<Vec4b>(row, col).unwrap();
-                        if pixel.into_iter().all(|v| v >= border_threshold) {
-                            count += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    counts.entry(count).and_modify(|c| *c += 1).or_insert(1);
-                }
-            }
-            Border::Left | Border::Right => {
-                let row_start = (minimap.rows() as f32 * 0.1) as i32 - 1;
-                let row_end = minimap.rows() - row_start;
-                for row in row_start..row_end {
-                    let mut count = 0;
-                    for col in 0..minimap.cols() {
-                        let col = if matches!(border, Border::Right) {
-                            minimap.cols() - col - 1
-                        } else {
-                            col
-                        };
-                        let pixel = minimap.at_2d::<Vec4b>(row, col).unwrap();
-                        if pixel.into_iter().all(|v| v >= border_threshold) {
-                            count += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    counts.entry(count).and_modify(|c| *c += 1).or_insert(1);
-                }
-            }
+        let is_pixel_above_threshold =
+            |pixel: &[u8; 4]| pixel.iter().all(|&v| v >= border_threshold);
+        let (primary_len, secondary_len, flip_primary) = match border {
+            Border::Top => (minimap.rows(), minimap.cols(), false),
+            Border::Bottom => (minimap.rows(), minimap.cols(), true),
+            Border::Left => (minimap.cols(), minimap.rows(), false),
+            Border::Right => (minimap.cols(), minimap.rows(), true),
         };
+
+        let secondary_start = ((secondary_len - 1) as f32 * 0.1) as i32;
+        let secondary_end = secondary_len - secondary_start;
+
+        for secondary in secondary_start..secondary_end {
+            let mut count = 0;
+
+            for primary in 0..primary_len {
+                let flipped_primary = if flip_primary {
+                    primary_len - primary - 1
+                } else {
+                    primary
+                };
+                let (row, col) = match border {
+                    Border::Top | Border::Bottom => (flipped_primary, secondary),
+                    Border::Left | Border::Right => (secondary, flipped_primary),
+                };
+
+                let pixel = minimap.at_2d::<Vec4b>(row, col).unwrap();
+                if is_pixel_above_threshold(pixel) {
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+
+            *counts.entry(count).or_insert(0) += 1;
+        }
+
         counts
             .into_iter()
             .max_by_key(|e| e.1)
@@ -810,10 +804,7 @@ fn detect_minimap(mat: &impl MatTraitConst, border_threshold: u8) -> Result<Rect
         .max_by_key(|bbox| bbox.area())
         .ok_or(anyhow!("minimap contours is empty"))?
         + minimap_bbox.tl();
-    let intersection = (contour_bbox & minimap_bbox).area() as f32;
-    let union = (contour_bbox | minimap_bbox).area() as f32;
-    let iou = intersection / union;
-    if iou < 0.8 {
+    if iou(contour_bbox, minimap_bbox) < 0.8 {
         bail!("wrong minimap likely caused by detection during map switching")
     }
 
@@ -1099,6 +1090,7 @@ fn detect_player_in_cash_shop(mat: &impl ToInputArray) -> bool {
     detect_template(mat, &*CASH_SHOP, Point::default(), 0.7).is_ok()
 }
 
+// TODO: Update detection resource when UI changes
 fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
     /// TODO: Support default ratio
     static HP_START: LazyLock<Mat> = LazyLock::new(|| {
@@ -1119,6 +1111,7 @@ fn detect_player_health_bar(mat: &impl ToInputArray) -> Result<Rect> {
     ))
 }
 
+// TODO: Update detection resource when UI changes
 fn detect_player_current_max_health_bars(
     mat: &impl MatTraitConst,
     grayscale: &impl MatTraitConst,
@@ -1551,9 +1544,7 @@ fn detect_rune_arrows(
     }
 
     // Reuse cached result if any
-    if let Some(arrows) = calibrating.normal_arrows {
-        calibrating.normal_arrows = None;
-
+    if let Some(arrows) = calibrating.normal_arrows.take() {
         if calibrating.spin_arrows.is_none() && arrows.len() == MAX_ARROWS {
             debug!(target: "rune", "reuse cached arrows result");
             return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(
@@ -1567,25 +1558,23 @@ fn detect_rune_arrows(
             for arrow in spin_arrows {
                 final_arrows.push((arrow.region, arrow.final_arrow.unwrap()));
             }
-            for (arrow_region, arrow) in arrows {
+            for (normal_arrow_region, normal_arrow) in arrows {
                 let mut use_arrow = true;
-                for region in spin_arrows.iter().map(|arrow| arrow.region) {
-                    let intersection = (arrow_region & region).area() as f32;
-                    let union = (arrow_region | region).area() as f32;
-                    let iou = intersection / union;
+                for spin_arrow_region in spin_arrows.iter().map(|arrow| arrow.region) {
+                    let iou = iou(normal_arrow_region, spin_arrow_region);
                     if iou >= 0.5 {
                         use_arrow = false;
-                        debug!(target: "rune", "skip using cached result for normal {arrow_region:?} and spin {region:?} with IoU {iou}");
+                        debug!(target: "rune", "skip using cached result for normal {normal_arrow_region:?} and spin {spin_arrow_region:?} with IoU {iou}");
                         break;
                     }
                 }
                 if use_arrow {
-                    final_arrows.push((arrow_region, arrow));
+                    final_arrows.push((normal_arrow_region, normal_arrow));
                 }
             }
 
             if final_arrows.len() == MAX_ARROWS {
-                debug!(target: "rune", "reuse cached arrows result with spin arrows");
+                debug!(target: "rune", "reuse cached arrows result with spin arrows {calibrating:?}");
                 final_arrows.sort_by_key(|(region, _)| region.x);
                 return Ok(ArrowsState::Complete(extract_rune_arrows_to_slice(
                     final_arrows,
@@ -1647,6 +1636,7 @@ fn detect_rune_arrows(
     }
 }
 
+// TODO: Improve spin arrows detection by detecting from model
 fn calibrate_for_spin_arrows(
     mat: &impl MatTraitConst,
     rune_region: Rect,
@@ -1663,7 +1653,7 @@ fn calibrate_for_spin_arrows(
             extract_channel(mat, mat_mut, 1).unwrap();
             #[cfg(debug_assertions)]
             if calibrating.is_spin_testing {
-                debug_mat("Rune Region Before Thresh", mat, 0, &[]);
+                debug_mat("Rune Region Before Thresholding", mat, 0, &[]);
             }
             threshold(mat, mat_mut, 245.0, 255.0, THRESH_BINARY).unwrap();
         });
@@ -1671,7 +1661,7 @@ fn calibrate_for_spin_arrows(
 
     #[cfg(debug_assertions)]
     if calibrating.is_spin_testing {
-        debug_mat("Rune Region", &rune_region_mat, 0, &[]);
+        debug_mat("Rune Region After Thresholding", &rune_region_mat, 0, &[]);
     }
 
     let mut centroids = Mat::default();
@@ -1754,9 +1744,7 @@ fn calibrate_for_spin_arrows(
 }
 
 fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Result<()> {
-    const INTERPOLATE_FROM_CENTROID: f32 = 0.785;
-    const SPIN_LAG_THRESHOLD: i32 = 25;
-    const SPIN_ARROW_HUE_THRESHOLD: u8 = 30;
+    const SPIN_LAG_THRESHOLD: i32 = 30;
 
     // Extract spin arrow region
     let spin_arrow_mat = to_hsv(&mat.roi(spin_arrow.region)?);
@@ -1779,108 +1767,63 @@ fn detect_spin_arrow(mat: &impl MatTraitConst, spin_arrow: &mut SpinArrow) -> Re
     )
     .unwrap();
     if contours.is_empty() {
-        bail!("cannot find the spinning arrow contour")
+        bail!("cannot find the spinning arrow contour");
     }
 
-    let mut points = [Point2f::default(); 4];
-    let rect = min_area_rect(&contours.get(0).unwrap()).unwrap();
-    rect.points(&mut points).unwrap();
-
-    // Determine the two short edges of a rectangle following the points order
-    // returned by `[RotatedRect::points]`
-    let mut first_short_edge_center = Point2f::default();
-    let mut second_short_edge_center = Point2f::default();
-    if (points[0] - points[1]).norm() < (points[0] - points[3]).norm() {
-        first_short_edge_center.x = (points[0].x + points[1].x) / 2.0;
-        first_short_edge_center.y = (points[0].y + points[1].y) / 2.0;
-
-        second_short_edge_center.x = (points[3].x + points[2].x) / 2.0;
-        second_short_edge_center.y = (points[3].y + points[2].y) / 2.0;
-    } else {
-        first_short_edge_center.x = (points[0].x + points[3].x) / 2.0;
-        first_short_edge_center.y = (points[0].y + points[3].y) / 2.0;
-
-        second_short_edge_center.x = (points[2].x + points[1].x) / 2.0;
-        second_short_edge_center.y = (points[2].y + points[1].y) / 2.0;
+    let contour = contours
+        .iter()
+        .min_by_key(|contour| contour_area(contour, false).unwrap() as i32)
+        .expect("not empty");
+    let mut triangle = Vector::<Point>::new();
+    let triangle_area = min_enclosing_triangle(&contour, &mut triangle).unwrap() as i32;
+    if triangle_area == 0 {
+        bail!("failed to determine the spinning arrow triangle");
     }
 
-    // Determine which edge is the arrow head by first computing the collinear point
-    // from the centroid to the center point of each edges
+    let shortest_edge = triangle
+        .iter()
+        .zip(triangle.iter().cycle().skip(1))
+        .min_by(|first_edge, second_edge| {
+            let first_norm = (first_edge.0 - first_edge.1).norm();
+            let second_norm = (second_edge.0 - second_edge.1).norm();
+            first_norm.total_cmp(&second_norm)
+        })
+        .expect("has value");
+    let arrow_head = (shortest_edge.0 + shortest_edge.1) / 2;
+
     let centroid = spin_arrow.centroid - spin_arrow.region.tl();
-    let first_collinear = first_short_edge_center * INTERPOLATE_FROM_CENTROID
-        + centroid.to::<f32>().unwrap() * (1.0 - INTERPOLATE_FROM_CENTROID);
-    let first_collinear = first_collinear.to::<i32>().unwrap();
-
-    let second_collinear = second_short_edge_center * INTERPOLATE_FROM_CENTROID
-        + centroid.to::<f32>().unwrap() * (1.0 - INTERPOLATE_FROM_CENTROID);
-    let second_collinear = second_collinear.to::<i32>().unwrap();
-
-    let collinear = if let Some(last_collinear) = spin_arrow.last_arrow_head {
-        if (last_collinear - centroid).dot(first_collinear - centroid) > 0 {
-            first_collinear
-        } else {
-            second_collinear
-        }
-    } else {
-        // Check the hue to determine the arrow head
-        let first_hue = spin_arrow_mat
-            .at_pt::<Vec3b>(first_collinear)
-            .unwrap()
-            .first()
-            .copied()
-            .unwrap();
-        let second_hue = spin_arrow_mat
-            .at_pt::<Vec3b>(second_collinear)
-            .unwrap()
-            .first()
-            .copied()
-            .unwrap();
-        if first_hue <= SPIN_ARROW_HUE_THRESHOLD {
-            first_collinear
-        } else if second_hue <= SPIN_ARROW_HUE_THRESHOLD {
-            second_collinear
-        } else {
-            bail!("failed to determine spinning arrow head")
-        }
-    };
+    let cur_arrow_head = arrow_head - centroid;
 
     if spin_arrow.last_arrow_head.is_none() {
-        spin_arrow.last_arrow_head = Some(collinear);
+        spin_arrow.last_arrow_head = Some(cur_arrow_head);
         return Ok(());
     }
 
-    let prev_arrow_head = spin_arrow.last_arrow_head.unwrap() - centroid;
-    let cur_arrow_head = collinear - centroid;
+    let prev_arrow_head = spin_arrow.last_arrow_head.unwrap();
     // https://stackoverflow.com/a/13221874
     let dot = prev_arrow_head.x * -cur_arrow_head.y + prev_arrow_head.y * cur_arrow_head.x;
     if dot >= SPIN_LAG_THRESHOLD {
         debug!(target: "rune", "spinning arrow lag detected");
-        let up = prev_arrow_head.dot(Point::new(0, -1));
-        let down = prev_arrow_head.dot(Point::new(0, 1));
-        let left = prev_arrow_head.dot(Point::new(-1, 0));
-        let right = prev_arrow_head.dot(Point::new(1, 0));
-        let results = [up, down, left, right];
-        let (index, _) = results
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, dot)| **dot)
+        let directions = [
+            (KeyKind::Up, prev_arrow_head.dot(Point::new(0, -1))),
+            (KeyKind::Down, prev_arrow_head.dot(Point::new(0, 1))),
+            (KeyKind::Left, prev_arrow_head.dot(Point::new(-1, 0))),
+            (KeyKind::Right, prev_arrow_head.dot(Point::new(1, 0))),
+        ];
+        let (arrow, _) = directions
+            .into_iter()
+            .max_by_key(|(_, score)| *score)
             .unwrap();
-        let arrow = match index {
-            0 => KeyKind::Up,
-            1 => KeyKind::Down,
-            2 => KeyKind::Left,
-            3 => KeyKind::Right,
-            _ => unreachable!(),
-        };
-        info!(target: "rune", "spinning arrow result {arrow:?} {results:?}");
+        info!(target: "rune", "spinning arrow result {arrow:?} {directions:?}");
         spin_arrow.final_arrow = Some(arrow);
     }
-    spin_arrow.last_arrow_head = Some(collinear);
+    spin_arrow.last_arrow_head = Some(cur_arrow_head);
 
     #[cfg(debug_assertions)]
     if spin_arrow.is_spin_testing {
         debug_spinning_arrows(
             mat,
+            &triangle,
             &contours,
             spin_arrow.region,
             prev_arrow_head,
@@ -2661,6 +2604,14 @@ fn expand_bbox(size: Option<Size>, bbox: Rect, count: i32) -> Rect {
     }
 
     Rect::new(x1, y1, x2 - x1, y2 - y1)
+}
+
+/// Computes the intersection over union ratio.
+#[inline]
+fn iou(first: Rect, second: Rect) -> f32 {
+    let intersection = (first & second).area() as f32;
+    let union = (first | second).area() as f32;
+    intersection / union
 }
 
 /// Crops `mat` to the buffs region.
