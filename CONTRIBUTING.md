@@ -25,7 +25,7 @@ dx build --release --package ui # CPU backend
 dx build --release --package ui -- --features backend/gpu # GPU backend
 ```
 
-Plain `cargo build` is also possile:
+Plain `cargo build` is also possible:
 ```powershell
 cargo build
 cargo build --features backend/gpu
