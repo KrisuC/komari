@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     fmt::{Debug, Formatter},
+    hash::Hash,
     rc::Rc,
     time::Instant,
 };
@@ -48,6 +49,7 @@ impl NavigatorDataSource for DefaultNavigatorDataSource {
 struct Path {
     id: String,
     minimap_snapshot_base64: String,
+    minimap_snapshot_grayscale: bool,
     name_snapshot_base64: String,
     points: Vec<Point>,
 }
@@ -55,8 +57,12 @@ struct Path {
 impl Debug for Path {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Path")
-            .field("minimap_snapshot_base64", &"...")
-            .field("name_snapshot_base64", &"...")
+            .field("minimap_snapshot_base64", &"..base64..")
+            .field(
+                "minimap_snapshot_grayscale",
+                &self.minimap_snapshot_grayscale,
+            )
+            .field("name_snapshot_base64", &"..base64..")
             .field("points", &self.points)
             .finish()
     }
@@ -181,39 +187,52 @@ impl DefaultNavigator {
 
     fn compute_next_point(&self) -> PointState {
         fn search_point(from: Rc<RefCell<Path>>, to_id: String) -> Option<Point> {
+            type CameFrom = (Option<Rc<RefCell<Path>>>, Option<Point>);
+
             let from_id = from.borrow().id.clone();
-            let mut visiting_paths = vec![(from, None, None)];
-            let mut came_from =
-                HashMap::<String, (Option<Rc<RefCell<Path>>>, Option<Point>)>::new();
+            let mut point = None;
+            let mut came_from: HashMap<String, CameFrom> = HashMap::new();
 
-            while let Some((path, from_path, from_point)) = visiting_paths.pop() {
-                let path_borrow = path.borrow();
-                if came_from
-                    .try_insert(path_borrow.id.clone(), (from_path, from_point))
-                    .is_err()
-                {
-                    continue;
-                }
+            dfs(
+                (from, None, None),
+                |(path, _, _)| path.borrow().id.clone(),
+                |(path, _, _)| {
+                    path.borrow()
+                        .points
+                        .iter()
+                        .filter_map(|point| {
+                            Some((
+                                point.next_path.clone()?,
+                                Some(path.clone()),
+                                Some(point.clone()),
+                            ))
+                        })
+                        .collect()
+                },
+                |(path, from_path, from_point)| {
+                    let path_id = path.borrow().id.clone();
 
-                // Trace back to start_path to find the first point to move
-                if path_borrow.id == to_id {
-                    let mut current = path_borrow.id.clone();
-                    while let Some((Some(from_path), Some(from_point))) = came_from.get(&current) {
-                        if from_path.borrow().id == from_id {
-                            return Some(from_point.clone());
+                    came_from
+                        .try_insert(path_id.clone(), (from_path.clone(), from_point.clone()))
+                        .expect("not visited");
+                    if path_id == to_id {
+                        let mut current = path_id.clone();
+                        while let Some((Some(from_path), Some(from_point))) =
+                            came_from.get(&current)
+                        {
+                            if from_path.borrow().id == from_id {
+                                point = Some(from_point.clone());
+                                return false;
+                            }
+                            current = from_path.borrow().id.clone();
                         }
-                        current = from_path.borrow().id.clone();
                     }
-                }
 
-                for point in path_borrow.points.iter() {
-                    if let Some(next_path) = point.next_path.clone() {
-                        visiting_paths.push((next_path, Some(path.clone()), Some(point.clone())));
-                    }
-                }
-            }
+                    true
+                },
+            );
 
-            None
+            point
         }
 
         if self.path_dirty {
@@ -244,16 +263,13 @@ impl DefaultNavigator {
             return PointState::Completed;
         }
 
-        // Search from current forward
-        if let Some(point) = self
-            .current_path
+        // Search from current
+        self.current_path
             .clone()
             .and_then(|path| search_point(path, path_id))
-        {
-            return PointState::Next(point.x, point.y, point.transition, point.next_path.clone());
-        }
-
-        PointState::Unreachable
+            .map_or(PointState::Unreachable, |point| {
+                PointState::Next(point.x, point.y, point.transition, point.next_path.clone())
+            })
     }
 
     // TODO: Do this on background thread?
@@ -452,63 +468,67 @@ fn build_base_path_from(
     path_id: String,
 ) -> Result<(Rc<RefCell<Path>>, HashSet<String>)> {
     let mut visiting_paths = HashMap::new();
-    let mut visited_path_ids = HashSet::new();
-    let mut visiting_path_ids = vec![path_id.clone()];
-
-    while let Some(path_id) = visiting_path_ids.pop() {
-        if !visited_path_ids.insert(path_id.clone()) {
-            continue;
-        }
-
-        let path = paths.get(&path_id).expect("exists");
-        let inner_path = visiting_paths
-            .entry(path_id.clone())
-            .or_insert_with(|| {
-                Rc::new(RefCell::new(Path {
-                    id: path_id,
-                    minimap_snapshot_base64: path.minimap_snapshot_base64.clone(),
-                    name_snapshot_base64: path.name_snapshot_base64.clone(),
-                    points: vec![],
-                }))
-            })
-            .clone();
-
-        for point in path.points.iter().copied() {
-            let next_path = point
-                .next_paths_id_index
-                .map(|(id, index)| path_id_from_paths_id_index(id, index))
-                .as_ref()
-                .and_then(|path_id| visiting_paths.get(path_id).cloned())
-                .or_else(|| {
+    let visited_path_ids = dfs(
+        path_id.clone(),
+        |path_id| path_id.clone(),
+        |path_id| {
+            let path = paths.get(path_id).expect("exists");
+            path.points
+                .iter()
+                .filter_map(|point| {
                     let (id, index) = point.next_paths_id_index?;
-                    let path_id = path_id_from_paths_id_index(id, index);
-                    let path = paths.get(&path_id).expect("exists");
-                    let inner_path = Rc::new(RefCell::new(Path {
+                    Some(path_id_from_paths_id_index(id, index))
+                })
+                .collect()
+        },
+        |path_id| {
+            let path = paths.get(path_id).expect("exists");
+            let inner_path = visiting_paths
+                .entry(path_id.clone())
+                .or_insert_with(|| {
+                    Rc::new(RefCell::new(Path {
                         id: path_id.clone(),
                         minimap_snapshot_base64: path.minimap_snapshot_base64.clone(),
+                        minimap_snapshot_grayscale: path.minimap_snapshot_grayscale,
                         name_snapshot_base64: path.name_snapshot_base64.clone(),
                         points: vec![],
-                    }));
+                    }))
+                })
+                .clone();
 
-                    visiting_paths.insert(path_id, inner_path.clone());
-                    Some(inner_path)
+            for point in path.points.iter().copied() {
+                let next_path = point
+                    .next_paths_id_index
+                    .map(|(id, index)| path_id_from_paths_id_index(id, index))
+                    .as_ref()
+                    .and_then(|path_id| visiting_paths.get(path_id).cloned())
+                    .or_else(|| {
+                        let (id, index) = point.next_paths_id_index?;
+                        let path_id = path_id_from_paths_id_index(id, index);
+                        let path = paths.get(&path_id).expect("exists");
+                        let inner_path = Rc::new(RefCell::new(Path {
+                            id: path_id.clone(),
+                            minimap_snapshot_base64: path.minimap_snapshot_base64.clone(),
+                            minimap_snapshot_grayscale: path.minimap_snapshot_grayscale,
+                            name_snapshot_base64: path.name_snapshot_base64.clone(),
+                            points: vec![],
+                        }));
+
+                        visiting_paths.insert(path_id, inner_path.clone());
+                        Some(inner_path)
+                    });
+
+                inner_path.borrow_mut().points.push(Point {
+                    next_path,
+                    x: point.x,
+                    y: point.y,
+                    transition: point.transition,
                 });
-
-            inner_path.borrow_mut().points.push(Point {
-                next_path,
-                x: point.x,
-                y: point.y,
-                transition: point.transition,
-            });
-
-            if let Some(id) = point
-                .next_paths_id_index
-                .map(|(id, index)| path_id_from_paths_id_index(id, index))
-            {
-                visiting_path_ids.push(id);
             }
-        }
-    }
+
+            true
+        },
+    );
 
     Ok((
         visiting_paths.remove(&path_id).expect("root path exists"),
@@ -522,30 +542,43 @@ fn find_current_from_base_path(
     minimap_bbox: Rect,
     minimap_name_bbox: Rect,
 ) -> Result<Rc<RefCell<Path>>> {
-    let mut visited_ids = HashSet::new();
-    let mut visiting_paths = vec![base_path];
     let mut matches = vec![];
 
-    while let Some(path) = visiting_paths.pop() {
-        let path_borrow = path.borrow();
-        if !visited_ids.insert(path_borrow.id.clone()) {
-            continue;
-        }
-        for point in &path_borrow.points {
-            if let Some(path) = point.next_path.clone() {
-                visiting_paths.push(path);
-            }
-        }
+    dfs(
+        base_path,
+        |path| path.borrow().id.clone(),
+        |path| {
+            path.borrow()
+                .points
+                .iter()
+                .filter_map(|point| point.next_path.clone())
+                .collect()
+        },
+        |path| {
+            let path_borrow = path.borrow();
 
-        let name_mat = decode_base64_to_mat(&path_borrow.name_snapshot_base64, true)?;
-        let minimap_mat = decode_base64_to_mat(&path_borrow.minimap_snapshot_base64, false)?;
-        if let Ok(score) =
-            detector.detect_minimap_match(&minimap_mat, &name_mat, minimap_bbox, minimap_name_bbox)
-        {
-            debug!(target: "navigator", "candidate path found with score {score}");
-            matches.push((score, path.clone()));
-        }
-    }
+            let Ok(name_mat) = decode_base64_to_mat(&path_borrow.name_snapshot_base64, true) else {
+                return false;
+            };
+            let Ok(minimap_mat) = decode_base64_to_mat(
+                &path_borrow.minimap_snapshot_base64,
+                path_borrow.minimap_snapshot_grayscale,
+            ) else {
+                return false;
+            };
+            if let Ok(score) = detector.detect_minimap_match(
+                &minimap_mat,
+                &name_mat,
+                minimap_bbox,
+                minimap_name_bbox,
+            ) {
+                debug!(target: "navigator", "candidate path found with score {score}");
+                matches.push((score, path.clone()));
+            }
+
+            true
+        },
+    );
 
     matches
         .into_iter()
@@ -571,6 +604,32 @@ fn path_id_from_paths_id_index(path_id: i64, index: usize) -> String {
     format!("{path_id}_{index}")
 }
 
+#[inline]
+fn dfs<N, K, I, F, V>(start: N, id_fn: I, mut neighbors_fn: F, mut visitor_fn: V) -> HashSet<K>
+where
+    K: Eq + Hash,
+    I: Fn(&N) -> K,
+    F: FnMut(&N) -> Vec<N>,
+    V: FnMut(&N) -> bool,
+{
+    let mut stack = vec![start];
+    let mut visited = HashSet::<K>::new();
+
+    while let Some(node) = stack.pop() {
+        if !visited.insert(id_fn(&node)) {
+            continue;
+        }
+
+        if !visitor_fn(&node) {
+            break;
+        }
+
+        stack.extend(neighbors_fn(&node));
+    }
+
+    visited
+}
+
 #[cfg(test)]
 mod tests {
     use std::assert_matches::assert_matches;
@@ -594,6 +653,7 @@ mod tests {
             name_snapshot_width: 2,
             name_snapshot_height: 5,
             points,
+            ..Default::default()
         }
     }
 
@@ -738,6 +798,7 @@ mod tests {
             id: 42.to_string(),
             minimap_snapshot_base64: "".into(),
             name_snapshot_base64: "".into(),
+            minimap_snapshot_grayscale: false,
             points: vec![],
         };
         navigator.current_path = Some(Rc::new(RefCell::new(path.clone())));
@@ -756,6 +817,7 @@ mod tests {
             id: 2.to_string(),
             minimap_snapshot_base64: "".into(),
             name_snapshot_base64: "".into(),
+            minimap_snapshot_grayscale: false,
             points: vec![],
         };
         let point = Point {
@@ -768,6 +830,7 @@ mod tests {
             id: 1.to_string(),
             minimap_snapshot_base64: "".into(),
             name_snapshot_base64: "".into(),
+            minimap_snapshot_grayscale: false,
             points: vec![point.clone()],
         };
         navigator.current_path = Some(Rc::new(RefCell::new(path.clone())));
@@ -794,6 +857,7 @@ mod tests {
             id: 1.to_string(),
             minimap_snapshot_base64: "".into(),
             name_snapshot_base64: "".into(),
+            minimap_snapshot_grayscale: false,
             points: vec![],
         }));
         navigator.current_path = Some(unrelated_path.clone());

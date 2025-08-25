@@ -33,7 +33,7 @@ impl NavigatorService for DefaultNavigatorService {
                 name_snapshot_base64: name_base64,
                 name_snapshot_width: name_bbox.width,
                 name_snapshot_height: name_bbox.height,
-                points: vec![],
+                ..NavigationPath::default()
             })
         } else {
             None

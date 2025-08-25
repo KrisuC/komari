@@ -611,6 +611,7 @@ impl_identifiable!(NavigationPaths);
 #[derive(PartialEq, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NavigationPath {
     pub minimap_snapshot_base64: String,
+    pub minimap_snapshot_grayscale: bool,
     pub name_snapshot_base64: String,
     pub name_snapshot_width: i32,
     pub name_snapshot_height: i32,
