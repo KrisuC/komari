@@ -28,6 +28,8 @@ impl BotService {
     }
 
     pub fn update(&mut self, settings: &Settings) {
-        let _ = self.bot.start(settings.discord_bot_access_token.clone());
+        if !settings.discord_bot_access_token.is_empty() {
+            let _ = self.bot.start(settings.discord_bot_access_token.clone());
+        }
     }
 }

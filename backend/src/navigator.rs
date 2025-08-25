@@ -556,7 +556,6 @@ fn find_current_from_base_path(
         },
         |path| {
             let path_borrow = path.borrow();
-
             let Ok(name_mat) = decode_base64_to_mat(&path_borrow.name_snapshot_base64, true) else {
                 return false;
             };
@@ -566,8 +565,10 @@ fn find_current_from_base_path(
             ) else {
                 return false;
             };
+
             if let Ok(score) = detector.detect_minimap_match(
                 &minimap_mat,
+                path_borrow.minimap_snapshot_grayscale,
                 &name_mat,
                 minimap_bbox,
                 minimap_name_bbox,
@@ -880,7 +881,7 @@ mod tests {
             .returning(move |_| Ok(minimap_name_bbox));
         mock_detector
             .expect_detect_minimap_match()
-            .returning(|_, _, _, _| Ok(0.75)); // Simulate successful match
+            .returning(|_, _, _, _, _| Ok(0.75)); // Simulate successful match
 
         let mut minimap = MinimapIdle::default();
         minimap.bbox = minimap_bbox;

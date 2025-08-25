@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use opencv::{
     core::{MatTraitConst, Rect, Vector},
-    imgcodecs::imencode_def,
+    imgcodecs::{IMREAD_GRAYSCALE, imdecode, imencode_def},
 };
 
 use crate::{NavigationPath, context::Context, minimap::Minimap};
@@ -17,6 +17,9 @@ pub trait NavigatorService: Debug {
     ///
     /// Returns the updated [`NavigationPath`] or the original.
     fn recapture_path(&self, context: &Context, path: NavigationPath) -> NavigationPath;
+
+    /// Converts image `base64` to grayscale.
+    fn navigation_snapshot_as_grayscale(&self, base64: String) -> String;
 }
 
 /// Default implementation of [`NavigatorService`].
@@ -52,6 +55,21 @@ impl NavigatorService for DefaultNavigatorService {
 
         path
     }
+
+    fn navigation_snapshot_as_grayscale(&self, base64: String) -> String {
+        convert_color_base64_to_grayscale_base64(base64.clone()).unwrap_or(base64)
+    }
+}
+
+fn convert_color_base64_to_grayscale_base64(base64: String) -> Option<String> {
+    let bytes = BASE64_STANDARD.decode(base64).ok()?;
+    let mut bytes = Vector::<u8>::from_iter(bytes);
+    let mat = imdecode(&bytes, IMREAD_GRAYSCALE).ok()?;
+
+    bytes.clear();
+    imencode_def(".png", &mat, &mut bytes).ok()?;
+
+    Some(BASE64_STANDARD.encode(bytes))
 }
 
 // TODO: Better way?

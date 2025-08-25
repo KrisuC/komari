@@ -147,6 +147,7 @@ pub trait Detector: 'static + Send + DynClone + Debug {
     fn detect_minimap_match(
         &self,
         minimap_snapshot: &Mat,
+        minimap_snapshot_grayscale: bool,
         minimap_name_snapshot: &Mat,
         minimap_bbox: Rect,
         minimap_name_bbox: Rect,
@@ -257,6 +258,7 @@ mock! {
         fn detect_minimap_match(
             &self,
             minimap_snapshot: &Mat,
+            minimap_snapshot_grayscale: bool,
             minimap_name_snapshot: &Mat,
             minimap_bbox: Rect,
             minimap_name_bbox: Rect,
@@ -373,6 +375,7 @@ impl Detector for CachedDetector {
     fn detect_minimap_match(
         &self,
         minimap_snapshot: &Mat,
+        minimap_snapshot_grayscale: bool,
         minimap_name_snapshot: &Mat,
         minimap_bbox: Rect,
         minimap_name_bbox: Rect,
@@ -381,6 +384,7 @@ impl Detector for CachedDetector {
             &*self.mat,
             &**self.grayscale,
             minimap_snapshot,
+            minimap_snapshot_grayscale,
             minimap_name_snapshot,
             minimap_bbox,
             minimap_name_bbox,
@@ -868,25 +872,30 @@ fn detect_minimap_match<T: ToInputArray + MatTraitConst>(
     mat: &impl MatTraitConst,
     grayscale: &impl MatTraitConst,
     minimap_snapshot: &T,
+    minimap_snapshot_grayscale: bool,
     minimap_name_snapshot: &T,
     minimap_bbox: Rect,
     minimap_name_bbox: Rect,
 ) -> Result<f64> {
-    const EXPAND_NAME_SIZE: i32 = 4;
+    const EXPAND_BBOX_SIZE: i32 = 4;
 
     let minimap_name_bbox = expand_bbox(
         Some(grayscale.size().expect("size available")),
         minimap_name_bbox,
-        EXPAND_NAME_SIZE,
+        EXPAND_BBOX_SIZE,
     );
     let minimap_name = grayscale.roi(minimap_name_bbox)?;
 
     let minimap_bbox = expand_bbox(
         Some(mat.size().expect("size available")),
         minimap_bbox,
-        EXPAND_NAME_SIZE,
+        EXPAND_BBOX_SIZE,
     );
-    let minimap = to_bgr(&mat.roi(minimap_bbox)?);
+    let minimap = if minimap_snapshot_grayscale {
+        to_grayscale(&mat.roi(minimap_bbox)?, false)
+    } else {
+        to_bgr(&mat.roi(minimap_bbox)?)
+    };
 
     let name_score = detect_template_single(
         &minimap_name,

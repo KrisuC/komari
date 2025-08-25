@@ -513,6 +513,12 @@ impl RequestHandler for DefaultRequestHandler<'_> {
             .recapture_path(self.args.context, path)
     }
 
+    fn on_navigation_snapshot_as_grayscale(&self, base64: String) -> String {
+        self.service
+            .navigator
+            .navigation_snapshot_as_grayscale(base64)
+    }
+
     fn on_update_character(&mut self, character: Option<Character>) {
         self.service.character.set_character(character);
         self.service.character.update(self.args.player);

@@ -103,6 +103,7 @@ enum Request {
     UpdateMinimap(Option<String>, Option<Minimap>),
     CreateNavigationPath,
     RecaptureNavigationPath(NavigationPath),
+    NavigationSnapshotAsGrayscale(String),
     UpdateCharacter(Option<Character>),
     RedetectMinimap,
     GameStateReceiver,
@@ -137,6 +138,7 @@ enum Response {
     UpdateMinimap,
     CreateNavigationPath(Option<NavigationPath>),
     RecaptureNavigationPath(NavigationPath),
+    NavigationSnapshotAsGrayscale(String),
     UpdateCharacter,
     RedetectMinimap,
     GameStateReceiver(broadcast::Receiver<GameState>),
@@ -171,6 +173,8 @@ pub(crate) trait RequestHandler {
     fn on_create_navigation_path(&self) -> Option<NavigationPath>;
 
     fn on_recapture_navigation_path(&self, path: NavigationPath) -> NavigationPath;
+
+    fn on_navigation_snapshot_as_grayscale(&self, base64: String) -> String;
 
     fn on_update_character(&mut self, character: Option<Character>);
 
@@ -358,6 +362,10 @@ pub async fn recapture_navigation_path(path: NavigationPath) -> NavigationPath {
     send_request!(RecaptureNavigationPath(path) => (path))
 }
 
+pub async fn navigation_snapshot_as_grayscale(base64: String) -> String {
+    send_request!(NavigationSnapshotAsGrayscale(base64) => (base64))
+}
+
 /// Deletes `paths` from the database.
 ///
 /// Returns `true` if `paths` was deleted.
@@ -483,6 +491,11 @@ pub(crate) fn poll_request(handler: &mut dyn RequestHandler) {
             }
             Request::RecaptureNavigationPath(path) => {
                 Response::RecaptureNavigationPath(handler.on_recapture_navigation_path(path))
+            }
+            Request::NavigationSnapshotAsGrayscale(base64) => {
+                Response::NavigationSnapshotAsGrayscale(
+                    handler.on_navigation_snapshot_as_grayscale(base64),
+                )
             }
             Request::UpdateCharacter(character) => {
                 handler.on_update_character(character);
