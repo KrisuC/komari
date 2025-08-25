@@ -1498,20 +1498,25 @@ fn detect_rune_arrows(
     mat: &impl MatTraitConst,
     mut calibrating: ArrowsCalibrating,
 ) -> Result<ArrowsState> {
+    /// The minimum region width required to contain 4 arrows
+    ///
+    /// Based on the rectangular region in-game with round border when detecting arrows.
+    const RUNE_REGION_MIN_WIDTH: i32 = 260;
     const SCORE_THRESHOLD: f32 = 0.8;
 
     if calibrating.rune_region.is_none() {
-        // Detect until 4 arrows found even if there maybe spin arrows
+        // Detect until 4 arrows found even if there maybe spin arrows or a large enough rune region
+        // is found
+        //
+        // TODO: Replace with detecting spin arrows from model
         let result = detect_rune_arrows_with_scores_regions(mat);
-        calibrating.rune_region = if result.len() == MAX_ARROWS {
-            result
-                .clone()
-                .into_iter()
-                .map(|(r, _, _)| r)
-                .reduce(|acc, cur| acc | cur)
-        } else {
-            None
-        };
+        let region = result
+            .clone()
+            .into_iter()
+            .map(|(r, _, _)| r)
+            .reduce(|acc, cur| acc | cur)
+            .filter(|region| result.len() == MAX_ARROWS || region.width >= RUNE_REGION_MIN_WIDTH);
+        calibrating.rune_region = region;
 
         // Cache result for later
         let filtered = result
