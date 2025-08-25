@@ -1082,7 +1082,7 @@ fn PopupBoundInput(
 #[component]
 fn PopupActionInput(
     actions: ReadOnlySignal<Vec<Action>>,
-    on_copy: EventHandler<()>,
+    on_copy: EventHandler,
     on_cancel: EventHandler,
     on_value: EventHandler<ActionInputValueKind>,
     kind: ActionInputKind,
@@ -1147,9 +1147,9 @@ fn PopupActionInput(
     };
 
     rsx! {
-        div { class: "p-8 w-full h-full absolute inset-0 z-1 bg-gray-950/80 flex",
+        // TODO: Use Popup's buttons
+        Popup { title: section_text, class: "min-w-120 max-w-120 max-h-100",
             ActionInput {
-                section_text,
                 switchable,
                 modifying,
                 copyable,
@@ -1195,14 +1195,13 @@ fn PopupActionInput(
 
 #[component]
 fn ActionInput(
-    section_text: String,
     switchable: bool,
     modifying: bool,
     copyable: bool,
     can_create_linked_action: bool,
     can_have_position: bool,
     can_have_direction: bool,
-    on_copy: EventHandler<()>,
+    on_copy: EventHandler,
     on_cancel: EventHandler,
     on_value: EventHandler<(Action, ActionCondition)>,
     value: Action,
@@ -1219,73 +1218,69 @@ fn ActionInput(
     use_effect(use_reactive!(|value| action.set(value)));
 
     rsx! {
-        div { class: "bg-gray-900 max-w-xl w-full h-full max-h-120 px-2 m-auto",
-            Section { name: section_text, class: "relative h-full",
-                div { class: "flex-none grid auto-cols-auto grid-flow-col",
-                    if switchable {
-                        Button {
-                            text: button_text(),
-                            kind: ButtonKind::Primary,
-                            on_click: move |_| {
-                                if discriminant(&value) != discriminant(&*action.peek()) {
-                                    action.set(value);
-                                } else if matches!(value, Action::Move(_)) {
-                                    action
-                                        .set(
-                                            Action::Key(ActionKey {
-                                                condition: value.condition(),
-                                                ..ActionKey::default()
-                                            }),
-                                        );
-                                } else {
-                                    action
-                                        .set(
-                                            Action::Move(ActionMove {
-                                                condition: value.condition(),
-                                                ..ActionMove::default()
-                                            }),
-                                        );
-                                }
-                            },
-                            class: "label border-b border-gray-600",
-                        }
-                    }
-                    if copyable {
-                        Button {
-                            text: "Copy",
-                            kind: ButtonKind::Primary,
-                            on_click: on_copy,
-                            class: "label border-b border-gray-600",
-                        }
-                    }
-                }
-                match action() {
-                    Action::Move(action) => rsx! {
-                        ActionMoveInput {
-                            modifying,
-                            can_create_linked_action,
-                            on_cancel,
-                            on_value: move |(action, condition)| {
-                                on_value((Action::Move(action), condition));
-                            },
-                            value: action,
+        div { class: "flex-none grid auto-cols-auto grid-flow-col",
+            if switchable {
+                Button {
+                    text: button_text(),
+                    kind: ButtonKind::Primary,
+                    on_click: move |_| {
+                        if discriminant(&value) != discriminant(&*action.peek()) {
+                            action.set(value);
+                        } else if matches!(value, Action::Move(_)) {
+                            action
+                                .set(
+                                    Action::Key(ActionKey {
+                                        condition: value.condition(),
+                                        ..ActionKey::default()
+                                    }),
+                                );
+                        } else {
+                            action
+                                .set(
+                                    Action::Move(ActionMove {
+                                        condition: value.condition(),
+                                        ..ActionMove::default()
+                                    }),
+                                );
                         }
                     },
-                    Action::Key(action) => rsx! {
-                        ActionKeyInput {
-                            modifying,
-                            can_create_linked_action,
-                            can_have_position,
-                            can_have_direction,
-                            on_cancel,
-                            on_value: move |(action, condition)| {
-                                on_value((Action::Key(action), condition));
-                            },
-                            value: action,
-                        }
-                    },
+                    class: "label border-b border-gray-600",
                 }
             }
+            if copyable {
+                Button {
+                    text: "Copy",
+                    kind: ButtonKind::Primary,
+                    on_click: on_copy,
+                    class: "label border-b border-gray-600",
+                }
+            }
+        }
+        match action() {
+            Action::Move(action) => rsx! {
+                ActionMoveInput {
+                    modifying,
+                    can_create_linked_action,
+                    on_cancel,
+                    on_value: move |(action, condition)| {
+                        on_value((Action::Move(action), condition));
+                    },
+                    value: action,
+                }
+            },
+            Action::Key(action) => rsx! {
+                ActionKeyInput {
+                    modifying,
+                    can_create_linked_action,
+                    can_have_position,
+                    can_have_direction,
+                    on_cancel,
+                    on_value: move |(action, condition)| {
+                        on_value((Action::Key(action), condition));
+                    },
+                    value: action,
+                }
+            },
         }
     }
 }

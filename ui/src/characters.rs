@@ -101,6 +101,14 @@ pub fn Characters() -> Element {
         coroutine.send(CharacterUpdate::Update(new_character));
     });
     let mut action_input_kind = use_signal(|| None);
+    let copy_action = use_callback(move |kind| match kind {
+        ActionConfigurationInputKind::Edit(action, _) => {
+            action_input_kind.set(Some(ActionConfigurationInputKind::Add(action)));
+        }
+        ActionConfigurationInputKind::Add(_) => {
+            unreachable!()
+        }
+    });
 
     // Sets a character if there is not one
     use_effect(move || {
@@ -128,6 +136,9 @@ pub fn Characters() -> Element {
         if let Some(kind) = action_input_kind() {
             PopupActionConfigurationInput {
                 is_actions_empty: character_view().actions.is_empty(),
+                on_copy: move |_| {
+                    copy_action(kind);
+                },
                 on_cancel: move |_| {
                     action_input_kind.set(None);
                 },
@@ -946,6 +957,7 @@ fn CharactersNumberU32Input(
 #[component]
 fn PopupActionConfigurationInput(
     is_actions_empty: bool,
+    on_copy: EventHandler,
     on_cancel: EventHandler,
     on_value: EventHandler<ActionConfiguration>,
     kind: ActionConfigurationInputKind,
@@ -971,12 +983,9 @@ fn PopupActionConfigurationInput(
             ActionConfigurationInput {
                 modifying,
                 can_create_linked_action,
-                on_cancel: move |_| {
-                    on_cancel(());
-                },
-                on_value: move |action| {
-                    on_value(action);
-                },
+                on_copy,
+                on_cancel,
+                on_value,
                 value: action,
             }
         }
@@ -987,6 +996,7 @@ fn PopupActionConfigurationInput(
 fn ActionConfigurationInput(
     modifying: bool,
     can_create_linked_action: bool,
+    on_copy: EventHandler<()>,
     on_cancel: EventHandler,
     on_value: EventHandler<ActionConfiguration>,
     value: ActionConfiguration,
@@ -1001,6 +1011,14 @@ fn ActionConfigurationInput(
 
     rsx! {
         div { class: "grid grid-cols-3 gap-3 pb-10 overflow-y-auto scrollbar",
+            if modifying {
+                Button {
+                    text: "Copy",
+                    kind: ButtonKind::Primary,
+                    on_click: on_copy,
+                    class: "label border-b border-gray-600 col-span-3",
+                }
+            }
             // Key, count and link key
             KeyBindingInput {
                 label: "Key",
