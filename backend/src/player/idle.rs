@@ -69,6 +69,7 @@ fn on_player_action(
                 })
                 .unwrap_or(Player::Moving(point, position.allow_adjusting, None));
 
+            state.auto_mob_clear_pathing_task();
             state.last_destinations = intermediates
                 .map(|intermediates| {
                     intermediates

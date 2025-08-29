@@ -12,7 +12,10 @@ use crate::{
     ActionKeyDirection, ActionKeyWith, Class, KeyBinding, LinkKeyBinding, Position,
     bridge::KeyKind,
     context::Context,
-    player::{LastMovement, MOVE_TIMEOUT, Moving, Player, on_action_state_mut},
+    player::{
+        AUTO_MOB_USE_KEY_X_THRESHOLD, AUTO_MOB_USE_KEY_Y_THRESHOLD, LastMovement, MOVE_TIMEOUT,
+        Moving, Player, on_action_state_mut,
+    },
 };
 
 /// The total number of ticks for changing direction before timing out.
@@ -20,6 +23,11 @@ const CHANGE_DIRECTION_TIMEOUT: u32 = 3;
 
 /// The tick to which the actual key will be pressed for [`LinkKeyBinding::Along`].
 const LINK_ALONG_PRESS_TICK: u32 = 2;
+
+#[derive(Clone, Copy, Debug)]
+enum ActionInfo {
+    AutoMobbing { should_terminate: bool },
+}
 
 /// The different stages of using key.
 #[derive(Clone, Copy, Debug)]
@@ -53,6 +61,7 @@ pub struct UseKey {
     with: ActionKeyWith,
     wait_before_use_ticks: u32,
     wait_after_use_ticks: u32,
+    action_info: Option<ActionInfo>,
     stage: UseKeyStage,
 }
 
@@ -90,6 +99,7 @@ impl UseKey {
                     with,
                     wait_before_use_ticks: wait_before,
                     wait_after_use_ticks: wait_after,
+                    action_info: None,
                     stage: UseKeyStage::Precondition,
                 }
             }
@@ -98,14 +108,16 @@ impl UseKey {
                     random_wait_ticks(mob.wait_before_ticks, mob.wait_before_ticks_random_range);
                 let wait_after =
                     random_wait_ticks(mob.wait_after_ticks, mob.wait_after_ticks_random_range);
-                let direction = match pos {
-                    Some(pos) => match pos.x.cmp(&mob.position.x) {
-                        Ordering::Less => ActionKeyDirection::Right,
-                        Ordering::Equal => ActionKeyDirection::Any,
-                        Ordering::Greater => ActionKeyDirection::Left,
-                    },
-                    None => unreachable!(),
+                let pos = pos.expect("has position");
+                let direction = match pos.x.cmp(&mob.position.x) {
+                    Ordering::Less => ActionKeyDirection::Right,
+                    Ordering::Equal => ActionKeyDirection::Any,
+                    Ordering::Greater => ActionKeyDirection::Left,
                 };
+                let x_distance = (pos.x - mob.position.x).abs();
+                let y_distance = (pos.y - mob.position.y).abs();
+                let should_terminate = x_distance <= AUTO_MOB_USE_KEY_X_THRESHOLD
+                    && y_distance <= AUTO_MOB_USE_KEY_Y_THRESHOLD;
 
                 Self {
                     key: mob.key,
@@ -116,6 +128,7 @@ impl UseKey {
                     with: mob.with,
                     wait_before_use_ticks: wait_before,
                     wait_after_use_ticks: wait_after,
+                    action_info: Some(ActionInfo::AutoMobbing { should_terminate }),
                     stage: UseKeyStage::Precondition,
                 }
             }
@@ -143,6 +156,7 @@ impl UseKey {
                     with: ping_pong.with,
                     wait_before_use_ticks: wait_before,
                     wait_after_use_ticks: wait_after,
+                    action_info: None,
                     stage: UseKeyStage::Precondition,
                 }
             }
@@ -330,7 +344,13 @@ pub fn update_use_key_context(
                 position: Position { y, .. },
                 ..
             }) => {
-                let is_terminal = matches!(next, Player::Idle);
+                let should_terminate = matches!(
+                    use_key.action_info,
+                    Some(ActionInfo::AutoMobbing {
+                        should_terminate: true
+                    })
+                );
+                let is_terminal = should_terminate && matches!(next, Player::Idle);
                 if is_terminal {
                     state.auto_mob_track_ignore_xs(context, false);
                     if state.auto_mob_reachable_y_require_update(y) {
@@ -480,6 +500,7 @@ mod tests {
             with: ActionKeyWith::Stationary,
             wait_before_use_ticks: 0,
             wait_after_use_ticks: 0,
+            action_info: None,
             stage: UseKeyStage::Precondition,
         };
 
@@ -526,6 +547,7 @@ mod tests {
             with: ActionKeyWith::Any,
             wait_before_use_ticks: 0,
             wait_after_use_ticks: 0,
+            action_info: None,
             stage: UseKeyStage::Precondition,
         };
 
@@ -590,6 +612,7 @@ mod tests {
             with: ActionKeyWith::Any,
             wait_before_use_ticks: 0,
             wait_after_use_ticks: 0,
+            action_info: None,
             stage: UseKeyStage::Precondition,
         };
 
@@ -643,6 +666,7 @@ mod tests {
             with: ActionKeyWith::Any,
             wait_before_use_ticks: 10,
             wait_after_use_ticks: 20,
+            action_info: None,
             stage: UseKeyStage::Precondition,
         };
 
@@ -703,6 +727,7 @@ mod tests {
             with: ActionKeyWith::Any,
             wait_before_use_ticks: 0,
             wait_after_use_ticks: 0,
+            action_info: None,
             stage: UseKeyStage::Using(Timeout::default(), false),
         };
 

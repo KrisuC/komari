@@ -15,10 +15,10 @@ use crate::{
 };
 
 /// The minimum x distance required to transition to [`Player::UseKey`] in auto mob action.
-const AUTO_MOB_USE_KEY_X_THRESHOLD: i32 = 16;
+pub const AUTO_MOB_USE_KEY_X_THRESHOLD: i32 = 16;
 
 /// The minimum y distance required to transition to [`Player::UseKey`] in auto mob action.
-const AUTO_MOB_USE_KEY_Y_THRESHOLD: i32 = 8;
+pub const AUTO_MOB_USE_KEY_Y_THRESHOLD: i32 = 8;
 
 /// Represents the fixed key action.
 ///
@@ -112,6 +112,7 @@ pub struct AutoMob {
     pub wait_after_ticks: u32,
     pub wait_after_ticks_random_range: u32,
     pub position: Position,
+    pub is_pathing: bool,
 }
 
 impl fmt::Display for AutoMob {
