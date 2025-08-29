@@ -630,7 +630,7 @@ impl PlayerState {
         self.auto_mob_pathing_task = None;
     }
 
-    /// Whether to use key when pathing is auto mob.
+    /// Whether to use key when auto mob is currently pathing.
     pub(super) fn auto_mob_pathing_should_use_key(&mut self, context: &Context) -> bool {
         if !matches!(
             self.normal_action,
@@ -668,7 +668,7 @@ impl PlayerState {
             _ => unreachable!(),
         };
 
-        points
+        let use_key = points
             .into_iter()
             .filter_map(|point| {
                 let y = minimap_bbox.height - point.y;
@@ -681,7 +681,10 @@ impl PlayerState {
                     point.y >= pos.y && point.y - pos.y <= AUTO_MOB_USE_KEY_Y_THRESHOLD;
                 let same_direction = (point - pos).dot(pathing_point - pos) > 0;
                 within_hitting_range && within_jump_range && same_direction
-            })
+            });
+        debug!(target: "player", "auto mob use key during pathing {use_key}");
+
+        use_key
     }
 
     /// Picks a pathing point in auto mobbing to move to where `bound` is relative to the minimap
@@ -1145,8 +1148,8 @@ impl PlayerState {
                 let avg_dx = (weighted_sum.0 / total_weight).abs();
                 let avg_dy = (weighted_sum.1 / total_weight).abs();
 
-                let smoothed_dx = 0.6 * avg_dx + 0.4 * self.velocity.0;
-                let smoothed_dy = 0.6 * avg_dy + 0.4 * self.velocity.1;
+                let smoothed_dx = 0.5 * avg_dx + 0.5 * self.velocity.0;
+                let smoothed_dy = 0.5 * avg_dy + 0.5 * self.velocity.1;
 
                 self.velocity = (smoothed_dx, smoothed_dy);
             }

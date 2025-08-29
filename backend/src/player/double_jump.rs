@@ -301,19 +301,14 @@ fn on_player_action(
             direction,
             double_jumped_or_flying,
         ),
-        PlayerAction::AutoMob(_) => {
-            if state.auto_mob_pathing_should_use_key(context) {
-                let _ = context.input.send_key_up(KeyKind::Down);
-                let _ = context.input.send_key_up(KeyKind::Up);
-                let _ = context.input.send_key_up(KeyKind::Left);
-                let _ = context.input.send_key_up(KeyKind::Right);
-                return Some((
-                    Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
-                    false,
-                ));
-            }
-            on_auto_mob_use_key_action(context, action, moving.pos, x_distance, y_distance)
-        }
+        PlayerAction::AutoMob(_) => on_auto_mob_use_key_action(
+            context,
+            Some(state),
+            action,
+            moving.pos,
+            x_distance,
+            y_distance,
+        ),
         PlayerAction::Key(Key {
             with: ActionKeyWith::DoubleJump | ActionKeyWith::Any,
             ..

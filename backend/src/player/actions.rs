@@ -245,15 +245,30 @@ pub(super) fn on_ping_pong_double_jump_action(
 
 /// Checks proximity in [`PlayerAction::AutoMob`] for transitioning to [`Player::UseKey`].
 ///
+/// If `state` is [`Some`], this function will attempt to use key when auto mob is currently
+/// pathing.
+///
 /// This is common logics shared with other contextual states when there is auto mob action.
 #[inline]
 pub(super) fn on_auto_mob_use_key_action(
     context: &Context,
+    state: Option<&mut PlayerState>,
     action: PlayerAction,
     cur_pos: Point,
     x_distance: i32,
     y_distance: i32,
 ) -> Option<(Player, bool)> {
+    if state.is_some_and(|state| state.auto_mob_pathing_should_use_key(context)) {
+        let _ = context.input.send_key_up(KeyKind::Down);
+        let _ = context.input.send_key_up(KeyKind::Up);
+        let _ = context.input.send_key_up(KeyKind::Left);
+        let _ = context.input.send_key_up(KeyKind::Right);
+        return Some((
+            Player::UseKey(UseKey::from_action_pos(action, Some(cur_pos))),
+            false,
+        ));
+    }
+
     if x_distance <= AUTO_MOB_USE_KEY_X_THRESHOLD && y_distance <= AUTO_MOB_USE_KEY_Y_THRESHOLD {
         let _ = context.input.send_key_up(KeyKind::Down);
         let _ = context.input.send_key_up(KeyKind::Up);

@@ -149,7 +149,7 @@ fn on_player_action(
 
             let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
             let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
-            on_auto_mob_use_key_action(context, action, cur_pos, x_distance, y_distance)
+            on_auto_mob_use_key_action(context, None, action, cur_pos, x_distance, y_distance)
         }
         PlayerAction::Key(Key {
             with: ActionKeyWith::Any,
