@@ -18,6 +18,7 @@ use crate::{
     context::Context,
     minimap::Minimap,
     notification::NotificationKind,
+    player::{AUTO_MOB_USE_KEY_X_THRESHOLD, AUTO_MOB_USE_KEY_Y_THRESHOLD, AutoMob},
     task::{Task, Update, update_detection_task},
 };
 
@@ -54,7 +55,7 @@ const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
 
 /// The maximum number of times horizontal movement contextual state can be repeated in
 /// auto-mob before aborting.
-const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 4;
+const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 6;
 
 /// The maximum number of times vertical movement contextual state can be repeated in
 /// auto-mob before aborting.
@@ -108,10 +109,12 @@ pub struct PlayerConfiguration {
     pub class: Class,
     /// Whether to disable [`Player::Adjusting`].
     pub disable_adjusting: bool,
+
     /// Enables platform pathing for rune.
     pub rune_platforms_pathing: bool,
     /// Uses only up jump(s) in rune platform pathing.
     pub rune_platforms_pathing_up_jump_only: bool,
+
     /// Enables platform pathing for auto mob.
     pub auto_mob_platforms_pathing: bool,
     /// Uses only up jump(s) in auto mob platform pathing.
@@ -120,6 +123,9 @@ pub struct PlayerConfiguration {
     ///
     /// TODO: This shouldn't be here...
     pub auto_mob_platforms_bound: bool,
+    pub auto_mob_use_key_when_pathing: bool,
+    pub auto_mob_use_key_when_pathing_update_millis: u64,
+
     /// The interact key.
     pub interact_key: KeyKind,
     /// The `Rope Lift` skill key.
@@ -158,6 +164,8 @@ impl Default for PlayerConfiguration {
             auto_mob_platforms_pathing: Default::default(),
             auto_mob_platforms_pathing_up_jump_only: Default::default(),
             auto_mob_platforms_bound: Default::default(),
+            auto_mob_use_key_when_pathing: false,
+            auto_mob_use_key_when_pathing_update_millis: 0,
             interact_key: KeyKind::A,
             grappling_key: Default::default(),
             teleport_key: Default::default(),
@@ -182,6 +190,7 @@ impl Default for PlayerConfiguration {
 #[derive(Debug, Default)]
 pub struct PlayerState {
     pub config: PlayerConfiguration,
+
     /// Optional id of current normal action provided by [`Rotator`].
     normal_action_id: Option<u32>,
     /// Requested normal action.
@@ -192,6 +201,7 @@ pub struct PlayerState {
     ///
     /// This action will override the normal action if it is in the middle of executing.
     pub(super) priority_action: Option<PlayerAction>,
+
     /// The player current health and max health.
     health: Option<(u32, u32)>,
     /// The task to update health.
@@ -200,17 +210,20 @@ pub struct PlayerState {
     health_bar: Option<Rect>,
     /// The task for the health bar.
     health_bar_task: Option<Task<Result<Rect>>>,
+
     /// Track if the player moved within a specified ticks to determine if the player is
     /// stationary.
     is_stationary_timeout: Timeout,
     /// Whether the player is stationary.
     pub(super) is_stationary: bool,
+
     /// Whether the player is dead.
     is_dead: bool,
     /// The task for detecting if player is dead.
     is_dead_task: Option<Task<Result<bool>>>,
     /// The task for detecting the tomb OK button when player is dead.
     is_dead_button_task: Option<Task<Result<Rect>>>,
+
     /// Approximates the player direction for using key.
     pub(super) last_known_direction: ActionKeyDirection,
     /// Tracks last destination points for displaying to UI.
@@ -221,6 +234,7 @@ pub struct PlayerState {
     ///
     /// It is updated to latest current position on each tick.
     pub last_known_pos: Option<Point>,
+
     /// Indicates whether to use [`ControlFlow::Immediate`] on this update.
     pub(super) use_immediate_control_flow: bool,
     /// Indicates whether to ignore update_pos and use last_known_pos on next update.
@@ -231,6 +245,7 @@ pub struct PlayerState {
     ///
     /// This is true each time player receives [`PlayerAction`].
     pub(super) reset_to_idle_next_update: bool,
+
     /// Indicates the last movement.
     ///
     /// Helps coordinating between movement states (e.g. falling + double jumping). And resets
@@ -246,6 +261,7 @@ pub struct PlayerState {
     ///
     /// Clears when a priority action is completed or aborted.
     last_movement_priority_map: HashMap<LastMovement, u32>,
+
     /// Tracks a map of "reachable" y.
     ///
     /// A y is reachable if there is a platform the player can stand on.
@@ -260,6 +276,9 @@ pub struct PlayerState {
     auto_mob_last_quadrant_bound: Option<Rect>,
     /// The next auto-mobbing bound's quadrant relative to bottom-left player coordinate.
     auto_mob_next_quadrant_bound: Option<Rect>,
+    /// Task for detecting near and same direction mobs during pathing.
+    auto_mob_pathing_task: Option<Task<Result<Vec<Point>>>>,
+
     /// Tracks whether movement-related actions do not change the player position after a while.
     ///
     /// Resets when a limit is reached (for unstucking) or position did change.
@@ -270,6 +289,7 @@ pub struct PlayerState {
     unstuck_transitioned_count: u32,
     /// Unstuck task for detecting settings when mis-pressing ESC key.
     pub(super) unstuck_task: Option<Task<Result<bool>>>,
+
     /// The number of times [`Player::SolvingRune`] failed.
     rune_failed_count: u32,
     /// Indicates the state will be transitioned to [`Player::CashShopThenExit`] in the next tick.
@@ -278,11 +298,13 @@ pub struct PlayerState {
     ///
     /// This is [`Some`] when [`Player::SolvingRune`] successfully detects the rune
     /// and sends all the keys.
-    pub(super) rune_validate_timeout: Option<Timeout>,
+    rune_validate_timeout: Option<Timeout>,
+
     /// A state to return to after stalling.
     ///
     /// Resets when [`Player::Stalling`] timed out or in [`Player::Idle`].
     pub(super) stalling_timeout_state: Option<Player>,
+
     /// Stores a list of [`(Point, u64)`] pair samples for approximating velocity.
     velocity_samples: Array<(Point, u64), VELOCITY_SAMPLES>,
     /// Approximated player velocity.
@@ -339,10 +361,9 @@ impl PlayerState {
         self.normal_action.is_some()
     }
 
-    /// Sets the normal action to `id`, `action` and resets to [`Player::Idle`] on next update.
+    /// Sets the normal action to `id`, `action`.
     #[inline]
     pub fn set_normal_action(&mut self, id: Option<u32>, action: PlayerAction) {
-        self.reset_to_idle_next_update = true;
         self.normal_action_id = id;
         self.normal_action = Some(action);
     }
@@ -350,7 +371,6 @@ impl PlayerState {
     /// Removes the current normal action.
     #[inline]
     pub fn reset_normal_action(&mut self) {
-        self.reset_to_idle_next_update = true;
         self.normal_action = None;
     }
 
@@ -413,6 +433,12 @@ impl PlayerState {
         } else {
             None
         }
+    }
+
+    /// Starts validating whether the rune is solved.
+    #[inline]
+    pub(super) fn start_validating_rune(&mut self) {
+        self.rune_validate_timeout = Some(Timeout::default());
     }
 
     /// Whether the player is validating whether the rune is solved.
@@ -600,9 +626,78 @@ impl PlayerState {
                 && self.config.rune_platforms_pathing_up_jump_only)
     }
 
+    /// Gets the last auto mob [`Quadrant`] the player was in.
     #[inline]
     pub fn auto_mob_last_quadrant(&self) -> Option<Quadrant> {
         self.auto_mob_last_quadrant
+    }
+
+    #[inline]
+    pub(super) fn auto_mob_clear_pathing_task(&mut self) {
+        self.auto_mob_pathing_task = None;
+    }
+
+    /// Whether to use key when auto mob is currently pathing.
+    ///
+    /// TODO: Add unit tests
+    pub(super) fn auto_mob_pathing_should_use_key(&mut self, context: &Context) -> bool {
+        const USE_KEY_Y_RANGE: i32 = AUTO_MOB_USE_KEY_Y_THRESHOLD + 4;
+
+        if !self.config.auto_mob_use_key_when_pathing {
+            return false;
+        }
+        if !matches!(
+            self.normal_action,
+            Some(PlayerAction::AutoMob(AutoMob {
+                is_pathing: true,
+                ..
+            }))
+        ) {
+            return false;
+        }
+
+        let minimap_bbox = match context.minimap {
+            Minimap::Idle(idle) => idle.bbox,
+            Minimap::Detecting => return false,
+        };
+        let pos = self.last_known_pos.expect("in positional context");
+        let Update::Ok(points) = update_detection_task(
+            context,
+            self.config.auto_mob_use_key_when_pathing_update_millis,
+            &mut self.auto_mob_pathing_task,
+            move |detector| {
+                detector.detect_mobs(
+                    minimap_bbox,
+                    Rect::new(0, 0, minimap_bbox.width, minimap_bbox.height),
+                    pos,
+                )
+            },
+        ) else {
+            return false;
+        };
+        let pathing_point = match self.normal_action {
+            Some(PlayerAction::AutoMob(AutoMob { position, .. })) => {
+                Point::new(position.x, position.y)
+            }
+            _ => unreachable!(),
+        };
+
+        let use_key = points
+            .into_iter()
+            .filter_map(|point| {
+                let y = minimap_bbox.height - point.y;
+                let point = Point::new(point.x, y);
+                self.auto_mob_pick_reachable_y_position_inner(context, point, false)
+            })
+            .any(|point| {
+                let within_x_range = (point.x - pos.x).abs() <= AUTO_MOB_USE_KEY_X_THRESHOLD;
+                let within_y_range = point.y >= pos.y && point.y - pos.y <= USE_KEY_Y_RANGE;
+                let same_direction = (point - pos).dot(pathing_point - pos) > 0;
+                within_x_range && within_y_range && same_direction
+            });
+        debug!(target: "player", "auto mob use key during pathing {use_key}");
+
+        use_key
     }
 
     /// Picks a pathing point in auto mobbing to move to where `bound` is relative to the minimap
@@ -745,6 +840,15 @@ impl PlayerState {
         context: &Context,
         mob_pos: Point,
     ) -> Option<Point> {
+        self.auto_mob_pick_reachable_y_position_inner(context, mob_pos, true)
+    }
+
+    fn auto_mob_pick_reachable_y_position_inner(
+        &mut self,
+        context: &Context,
+        mob_pos: Point,
+        bound_to_quads: bool,
+    ) -> Option<Point> {
         if self.auto_mob_reachable_y_map.is_empty() {
             self.auto_mob_populate_reachable_y(context);
         }
@@ -772,12 +876,13 @@ impl PlayerState {
         }
 
         let mob_pos = Point::new(mob_pos.x, y.unwrap_or(mob_pos.y));
-        if self
-            .auto_mob_last_quadrant_bound
-            .zip(self.auto_mob_next_quadrant_bound)
-            .is_some_and(|(current_bound, next_bound)| {
-                !current_bound.contains(mob_pos) && !next_bound.contains(mob_pos)
-            })
+        if bound_to_quads
+            && self
+                .auto_mob_last_quadrant_bound
+                .zip(self.auto_mob_next_quadrant_bound)
+                .is_some_and(|(current_bound, next_bound)| {
+                    !current_bound.contains(mob_pos) && !next_bound.contains(mob_pos)
+                })
         {
             None
         } else {

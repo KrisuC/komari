@@ -134,7 +134,7 @@ pub fn update_solving_rune_context(
             PlayerAction::SolveRune => {
                 let is_terminal = matches!(next, Player::Idle);
                 if is_terminal {
-                    state.rune_validate_timeout = Some(Timeout::default());
+                    state.start_validating_rune();
                 }
                 Some((next, is_terminal))
             }

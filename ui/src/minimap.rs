@@ -296,6 +296,7 @@ struct MinimapState {
     detected_size: Option<(usize, usize)>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum MinimapUpdate {
     Set,

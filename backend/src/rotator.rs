@@ -438,7 +438,10 @@ impl DefaultRotator {
         key: MobbingKey,
         bound: Bound,
     ) {
-        debug_assert!(!player.has_normal_action() && !player.has_priority_action());
+        if player.has_normal_action() {
+            return;
+        }
+
         let Minimap::Idle(idle) = context.minimap else {
             return;
         };
@@ -495,13 +498,17 @@ impl DefaultRotator {
             }
         }
 
+        let mut is_pathing = use_pathing_point;
         let point = if use_pathing_point {
             player.auto_mob_pathing_point(context, bound)
         } else {
             context
                 .rng
                 .random_choose(points.into_iter())
-                .unwrap_or_else(|| player.auto_mob_pathing_point(context, bound))
+                .unwrap_or_else(|| {
+                    is_pathing = true;
+                    player.auto_mob_pathing_point(context, bound)
+                })
         };
         let wait_before_ticks = (key.wait_before_millis / MS_PER_TICK) as u32;
         let wait_before_ticks_random_range =
@@ -528,6 +535,7 @@ impl DefaultRotator {
                 wait_after_ticks,
                 wait_after_ticks_random_range,
                 position,
+                is_pathing,
             }),
         );
     }
@@ -539,7 +547,10 @@ impl DefaultRotator {
         key: MobbingKey,
         bound: Bound,
     ) {
-        debug_assert!(!player.has_normal_action() && !player.has_priority_action());
+        if player.has_normal_action() {
+            return;
+        }
+
         let Minimap::Idle(idle) = context.minimap else {
             return;
         };
@@ -582,13 +593,13 @@ impl DefaultRotator {
     }
 
     fn rotate_start_to_end(&mut self, player: &mut PlayerState) {
-        debug_assert!(!player.has_normal_action() && !player.has_priority_action());
-        if self.normal_actions.is_empty() {
+        if player.has_normal_action() || self.normal_actions.is_empty() {
             return;
         }
         if self.rotate_queuing_linked_action(player, false) {
             return;
         }
+
         debug_assert!(self.normal_index < self.normal_actions.len());
         let (id, action) = self.normal_actions[self.normal_index].clone();
         self.normal_index = (self.normal_index + 1) % self.normal_actions.len();
@@ -604,8 +615,7 @@ impl DefaultRotator {
     }
 
     fn rotate_start_to_end_then_reverse(&mut self, player: &mut PlayerState) {
-        debug_assert!(!player.has_normal_action() && !player.has_priority_action());
-        if self.normal_actions.is_empty() {
+        if player.has_normal_action() || self.normal_actions.is_empty() {
             return;
         }
         if self.rotate_queuing_linked_action(player, false) {
@@ -817,19 +827,17 @@ impl Rotator for DefaultRotator {
             }
             return;
         }
+
         self.rotate_priority_actions(context, player);
         self.rotate_priority_actions_queue(context, player);
-        if !player.has_priority_action() && !player.has_normal_action() {
-            match self.normal_rotate_mode {
-                RotatorMode::StartToEnd => self.rotate_start_to_end(player),
-                RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
-                RotatorMode::AutoMobbing(key, bound) => {
-                    self.rotate_auto_mobbing(context, player, key, bound)
-                }
-                RotatorMode::PingPong(key, bound) => {
-                    self.rotate_ping_pong(context, player, key, bound)
-                }
+
+        match self.normal_rotate_mode {
+            RotatorMode::StartToEnd => self.rotate_start_to_end(player),
+            RotatorMode::StartToEndThenReverse => self.rotate_start_to_end_then_reverse(player),
+            RotatorMode::AutoMobbing(key, bound) => {
+                self.rotate_auto_mobbing(context, player, key, bound)
             }
+            RotatorMode::PingPong(key, bound) => self.rotate_ping_pong(context, player, key, bound),
         }
     }
 }

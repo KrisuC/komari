@@ -12,9 +12,10 @@ use crate::{
     context::Context,
     player::{
         Player,
-        actions::{on_action_state, on_auto_mob_use_key_action},
+        actions::on_auto_mob_use_key_action,
         double_jump::DoubleJumping,
         moving::MOVE_TIMEOUT,
+        on_action_state_mut,
         state::LastMovement,
         timeout::{ChangeAxis, MovingLifecycle, Timeout, next_moving_lifecycle_with_axis},
     },
@@ -154,7 +155,7 @@ pub fn update_adjusting_context(
                 }
             }
 
-            on_action_state(
+            on_action_state_mut(
                 state,
                 |state, action| on_player_action(context, state, action, moving),
                 || {
@@ -178,7 +179,7 @@ pub fn update_adjusting_context(
 
 fn on_player_action(
     context: &Context,
-    state: &PlayerState,
+    state: &mut PlayerState,
     action: PlayerAction,
     moving: Moving,
 ) -> Option<(Player, bool)> {
@@ -222,9 +223,14 @@ fn on_player_action(
                 None
             }
         }
-        PlayerAction::AutoMob(_) => {
-            on_auto_mob_use_key_action(context, action, moving.pos, x_distance, y_distance)
-        }
+        PlayerAction::AutoMob(_) => on_auto_mob_use_key_action(
+            context,
+            Some(state),
+            action,
+            moving.pos,
+            x_distance,
+            y_distance,
+        ),
         PlayerAction::Key(Key {
             with: ActionKeyWith::Stationary,
             ..

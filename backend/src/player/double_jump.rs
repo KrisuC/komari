@@ -5,7 +5,7 @@ use opencv::core::{Point, Rect};
 
 use super::{
     Key, PingPongDirection, Player, PlayerAction, PlayerState,
-    actions::{PingPong, on_action_state, on_auto_mob_use_key_action},
+    actions::{PingPong, on_auto_mob_use_key_action},
     moving::Moving,
     timeout::{
         Lifecycle, MovingLifecycle, next_moving_lifecycle_with_axis, next_timeout_lifecycle,
@@ -19,6 +19,7 @@ use crate::{
     context::Context,
     player::{
         moving::MOVE_TIMEOUT,
+        on_action_state_mut,
         state::LastMovement,
         timeout::{ChangeAxis, Timeout},
     },
@@ -235,7 +236,7 @@ pub fn update_double_jumping_context(
                 }
             }
 
-            on_action_state(
+            on_action_state_mut(
                 state,
                 |state, action| {
                     on_player_action(
@@ -278,7 +279,7 @@ pub fn update_double_jumping_context(
 /// it will try to transition to [`Player::UseKey`] when the player is close enough.
 fn on_player_action(
     context: &Context,
-    state: &PlayerState,
+    state: &mut PlayerState,
     action: PlayerAction,
     moving: Moving,
     forced: bool,
@@ -300,9 +301,14 @@ fn on_player_action(
             direction,
             double_jumped_or_flying,
         ),
-        PlayerAction::AutoMob(_) => {
-            on_auto_mob_use_key_action(context, action, moving.pos, x_distance, y_distance)
-        }
+        PlayerAction::AutoMob(_) => on_auto_mob_use_key_action(
+            context,
+            Some(state),
+            action,
+            moving.pos,
+            x_distance,
+            y_distance,
+        ),
         PlayerAction::Key(Key {
             with: ActionKeyWith::DoubleJump | ActionKeyWith::Any,
             ..

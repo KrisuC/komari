@@ -589,6 +589,10 @@ pub struct Minimap {
     pub auto_mob_platforms_pathing: bool,
     pub auto_mob_platforms_pathing_up_jump_only: bool,
     pub auto_mob_platforms_bound: bool,
+    #[serde(default)]
+    pub auto_mob_use_key_when_pathing: bool,
+    #[serde(default)]
+    pub auto_mob_use_key_when_pathing_update_millis: u64,
     pub actions_any_reset_on_erda_condition: bool,
     pub actions: HashMap<String, Vec<Action>>,
     // Not FK, loose coupling to another navigation paths and its index
