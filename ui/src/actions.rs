@@ -29,6 +29,7 @@ const ITEM_TEXT_CLASS: &str =
     "text-center inline-block pt-1 text-ellipsis overflow-hidden whitespace-nowrap";
 const ITEM_BORDER_CLASS: &str = "border-r-2 border-gray-700";
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum ActionUpdate {
     Set,
@@ -410,7 +411,29 @@ fn SectionRotation(
                     },
                 }
                 ActionsCheckbox {
-                    label: "Reset normal actions on Erda Shower condition",
+                    label: "Auto mobbing uses key when pathing",
+                    disabled,
+                    on_value: move |auto_mob_use_key_when_pathing| {
+                        save_minimap(Minimap {
+                            auto_mob_use_key_when_pathing,
+                            ..minimap_view.peek().clone()
+                        })
+                    },
+                    value: minimap_view().auto_mob_use_key_when_pathing,
+                }
+                ActionsMillisInput {
+                    label: "Detect mobs when pathing every",
+                    disabled,
+                    on_value: move |auto_mob_use_key_when_pathing_update_millis| {
+                        save_minimap(Minimap {
+                            auto_mob_use_key_when_pathing_update_millis,
+                            ..minimap_view.peek().clone()
+                        })
+                    },
+                    value: minimap_view().auto_mob_use_key_when_pathing_update_millis,
+                }
+                ActionsCheckbox {
+                    label: "Reset normal actions on Erda Shower resets",
                     disabled,
                     on_value: move |actions_any_reset_on_erda_condition| {
                         save_minimap(Minimap {
@@ -1969,9 +1992,19 @@ fn ActionsNumberInputU32(
 }
 
 #[component]
-fn ActionsMillisInput(label: &'static str, on_value: EventHandler<u64>, value: u64) -> Element {
+fn ActionsMillisInput(
+    label: &'static str,
+    #[props(default = false)] disabled: bool,
+    on_value: EventHandler<u64>,
+    value: u64,
+) -> Element {
     rsx! {
-        MillisInput { label, on_value, value }
+        MillisInput {
+            label,
+            disabled,
+            on_value,
+            value,
+        }
     }
 }
 

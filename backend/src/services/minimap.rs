@@ -90,6 +90,12 @@ impl MinimapService for DefaultMinimapService {
             player_state.config.auto_mob_platforms_pathing_up_jump_only =
                 minimap.auto_mob_platforms_pathing_up_jump_only;
             player_state.config.auto_mob_platforms_bound = minimap.auto_mob_platforms_bound;
+            player_state.config.auto_mob_use_key_when_pathing =
+                minimap.auto_mob_use_key_when_pathing;
+            player_state
+                .config
+                .auto_mob_use_key_when_pathing_update_millis =
+                minimap.auto_mob_use_key_when_pathing_update_millis;
         }
     }
 

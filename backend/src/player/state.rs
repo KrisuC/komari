@@ -55,7 +55,7 @@ const AUTO_MOB_REACHABLE_Y_THRESHOLD: i32 = 10;
 
 /// The maximum number of times horizontal movement contextual state can be repeated in
 /// auto-mob before aborting.
-const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 4;
+const AUTO_MOB_HORIZONTAL_MOVEMENT_REPEAT_COUNT: u32 = 6;
 
 /// The maximum number of times vertical movement contextual state can be repeated in
 /// auto-mob before aborting.
@@ -109,10 +109,12 @@ pub struct PlayerConfiguration {
     pub class: Class,
     /// Whether to disable [`Player::Adjusting`].
     pub disable_adjusting: bool,
+
     /// Enables platform pathing for rune.
     pub rune_platforms_pathing: bool,
     /// Uses only up jump(s) in rune platform pathing.
     pub rune_platforms_pathing_up_jump_only: bool,
+
     /// Enables platform pathing for auto mob.
     pub auto_mob_platforms_pathing: bool,
     /// Uses only up jump(s) in auto mob platform pathing.
@@ -121,6 +123,9 @@ pub struct PlayerConfiguration {
     ///
     /// TODO: This shouldn't be here...
     pub auto_mob_platforms_bound: bool,
+    pub auto_mob_use_key_when_pathing: bool,
+    pub auto_mob_use_key_when_pathing_update_millis: u64,
+
     /// The interact key.
     pub interact_key: KeyKind,
     /// The `Rope Lift` skill key.
@@ -159,6 +164,8 @@ impl Default for PlayerConfiguration {
             auto_mob_platforms_pathing: Default::default(),
             auto_mob_platforms_pathing_up_jump_only: Default::default(),
             auto_mob_platforms_bound: Default::default(),
+            auto_mob_use_key_when_pathing: false,
+            auto_mob_use_key_when_pathing_update_millis: 0,
             interact_key: KeyKind::A,
             grappling_key: Default::default(),
             teleport_key: Default::default(),
@@ -631,7 +638,14 @@ impl PlayerState {
     }
 
     /// Whether to use key when auto mob is currently pathing.
+    ///
+    /// TODO: Add unit tests
     pub(super) fn auto_mob_pathing_should_use_key(&mut self, context: &Context) -> bool {
+        const USE_KEY_Y_RANGE: i32 = AUTO_MOB_USE_KEY_Y_THRESHOLD + 4;
+
+        if !self.config.auto_mob_use_key_when_pathing {
+            return false;
+        }
         if !matches!(
             self.normal_action,
             Some(PlayerAction::AutoMob(AutoMob {
@@ -649,7 +663,7 @@ impl PlayerState {
         let pos = self.last_known_pos.expect("in positional context");
         let Update::Ok(points) = update_detection_task(
             context,
-            0,
+            self.config.auto_mob_use_key_when_pathing_update_millis,
             &mut self.auto_mob_pathing_task,
             move |detector| {
                 detector.detect_mobs(
@@ -676,11 +690,10 @@ impl PlayerState {
                 self.auto_mob_pick_reachable_y_position_inner(context, point, false)
             })
             .any(|point| {
-                let within_hitting_range = (point.x - pos.x).abs() <= AUTO_MOB_USE_KEY_X_THRESHOLD;
-                let within_jump_range =
-                    point.y >= pos.y && point.y - pos.y <= AUTO_MOB_USE_KEY_Y_THRESHOLD;
+                let within_x_range = (point.x - pos.x).abs() <= AUTO_MOB_USE_KEY_X_THRESHOLD;
+                let within_y_range = point.y >= pos.y && point.y - pos.y <= USE_KEY_Y_RANGE;
                 let same_direction = (point - pos).dot(pathing_point - pos) > 0;
-                within_hitting_range && within_jump_range && same_direction
+                within_x_range && within_y_range && same_direction
             });
         debug!(target: "player", "auto mob use key during pathing {use_key}");
 
