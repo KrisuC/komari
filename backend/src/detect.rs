@@ -1414,7 +1414,7 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         BuffKind::Familiar => &*FAMILIAR_BUFF,
         BuffKind::SayramElixir => &*SAYRAM_ELIXIR_BUFF,
         BuffKind::AureliaElixir => &*AURELIA_ELIXIR_BUFF,
-        BuffKind::ExpCouponX2 => &*EXP_COUPON_X3_BUFF,
+        BuffKind::ExpCouponX2 => &*EXP_COUPON_X2_BUFF,
         BuffKind::ExpCouponX3 => &*EXP_COUPON_X3_BUFF,
         BuffKind::BonusExpCoupon => &*BONUS_EXP_COUPON_BUFF,
         BuffKind::LegionWealth => &*LEGION_WEALTH_BUFF,
@@ -1430,7 +1430,7 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
     };
 
     match kind {
-        BuffKind::SmallWealthAcquisitionPotion | BuffKind::SmallWealthAcquisitionPotion => {
+        BuffKind::SmallWealthAcquisitionPotion | BuffKind::SmallExpAccumulationPotion => {
             detect_template_single(
                 mat,
                 template,
