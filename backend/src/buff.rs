@@ -46,8 +46,11 @@ impl BuffState {
                 | BuffKind::LegionLuck
                 | BuffKind::WealthAcquisitionPotion
                 | BuffKind::ExpAccumulationPotion
+                | BuffKind::SmallWealthAcquisitionPotion
+                | BuffKind::SmallExpAccumulationPotion
                 | BuffKind::SayramElixir
                 | BuffKind::AureliaElixir
+                | BuffKind::ExpCouponX2
                 | BuffKind::ExpCouponX3
                 | BuffKind::BonusExpCoupon
                 | BuffKind::ExtremeRedPotion
@@ -66,12 +69,19 @@ impl BuffState {
             BuffKind::Familiar => character.familiar_buff_key.enabled,
             BuffKind::SayramElixir => character.sayram_elixir_key.enabled,
             BuffKind::AureliaElixir => character.aurelia_elixir_key.enabled,
+            BuffKind::ExpCouponX2 => character.exp_x2_key.enabled,
             BuffKind::ExpCouponX3 => character.exp_x3_key.enabled,
             BuffKind::BonusExpCoupon => character.bonus_exp_key.enabled,
             BuffKind::LegionWealth => character.legion_wealth_key.enabled,
             BuffKind::LegionLuck => character.legion_luck_key.enabled,
             BuffKind::WealthAcquisitionPotion => character.wealth_acquisition_potion_key.enabled,
             BuffKind::ExpAccumulationPotion => character.exp_accumulation_potion_key.enabled,
+            BuffKind::SmallWealthAcquisitionPotion => {
+                character.small_wealth_acquisition_potion_key.enabled
+            }
+            BuffKind::SmallExpAccumulationPotion => {
+                character.small_exp_accumulation_potion_key.enabled
+            }
             BuffKind::ExtremeRedPotion => character.extreme_red_potion_key.enabled,
             BuffKind::ExtremeBluePotion => character.extreme_blue_potion_key.enabled,
             BuffKind::ExtremeGreenPotion => character.extreme_green_potion_key.enabled,
@@ -105,12 +115,15 @@ pub enum BuffKind {
     Familiar,
     SayramElixir,
     AureliaElixir,
+    ExpCouponX2,
     ExpCouponX3,
     BonusExpCoupon,
     LegionWealth,
     LegionLuck,
     WealthAcquisitionPotion,
     ExpAccumulationPotion,
+    SmallWealthAcquisitionPotion,
+    SmallExpAccumulationPotion,
     ExtremeRedPotion,
     ExtremeBluePotion,
     ExtremeGreenPotion,
