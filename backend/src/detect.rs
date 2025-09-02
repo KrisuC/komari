@@ -1394,16 +1394,15 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
     let threshold = match kind {
         BuffKind::AureliaElixir => 0.8,
         BuffKind::LegionWealth | BuffKind::LegionLuck => 0.73,
-        BuffKind::SmallWealthAcquisitionPotion
-        | BuffKind::SmallExpAccumulationPotion
-        | BuffKind::WealthAcquisitionPotion
-        | BuffKind::ExpAccumulationPotion => 0.65,
-        BuffKind::BonusExpCoupon => 0.7,
+        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => 0.65,
         BuffKind::Rune
         | BuffKind::Familiar
         | BuffKind::SayramElixir
+        | BuffKind::SmallWealthAcquisitionPotion
+        | BuffKind::SmallExpAccumulationPotion
         | BuffKind::ExpCouponX2
         | BuffKind::ExpCouponX3
+        | BuffKind::BonusExpCoupon
         | BuffKind::ExtremeRedPotion
         | BuffKind::ExtremeBluePotion
         | BuffKind::ExtremeGreenPotion
@@ -1430,32 +1429,26 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
     };
 
     match kind {
-        BuffKind::SmallWealthAcquisitionPotion | BuffKind::SmallExpAccumulationPotion => {
-            detect_template_single(
-                mat,
-                template,
-                &*SMALL_WEALTH_EXP_POTION_MASK,
-                Point::default(),
-                threshold,
-            )
-            .is_ok()
-        }
-        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => {
+        BuffKind::SmallWealthAcquisitionPotion
+        | BuffKind::SmallExpAccumulationPotion
+        | BuffKind::WealthAcquisitionPotion
+        | BuffKind::ExpAccumulationPotion => {
             // Because the two potions are really similar, detecting one may mis-detect for the other.
             // Can't really think of a better way to do this.... But this seems working just fine.
-            // Also tested with the who-use-this? Invicibility Potion and Resistance Potion. Those two
-            // doesn't match at all so this should be fine.
-            let matches = detect_template_multiple(
-                mat,
-                template,
-                &*WEALTH_EXP_POTION_MASK,
-                Point::default(),
-                2,
-                threshold,
-            )
-            .into_iter()
-            .filter_map(|result| result.ok())
-            .collect::<Vec<_>>();
+            let mask = match kind {
+                BuffKind::SmallWealthAcquisitionPotion | BuffKind::SmallExpAccumulationPotion => {
+                    &*SMALL_WEALTH_EXP_POTION_MASK
+                }
+                BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => {
+                    &*WEALTH_EXP_POTION_MASK
+                }
+                _ => unreachable!(),
+            };
+            let matches =
+                detect_template_multiple(mat, template, mask, Point::default(), 2, threshold)
+                    .into_iter()
+                    .filter_map(|result| result.ok())
+                    .collect::<Vec<_>>();
             if matches.is_empty() {
                 return false;
             }
@@ -1464,19 +1457,16 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
                 return true;
             }
 
-            let template_other = if matches!(kind, BuffKind::WealthAcquisitionPotion) {
-                &*EXP_ACCUMULATION_POTION_BUFF
-            } else {
-                &*WEALTH_ACQUISITION_POTION_BUFF
+            let template_other = match kind {
+                BuffKind::SmallWealthAcquisitionPotion => &*SMALL_EXP_ACCUMULATION_POTION_BUFF,
+                BuffKind::SmallExpAccumulationPotion => &*SMALL_WEALTH_ACQUISITION_POTION_BUFF,
+                BuffKind::WealthAcquisitionPotion => &*EXP_ACCUMULATION_POTION_BUFF,
+                BuffKind::ExpAccumulationPotion => &*WEALTH_ACQUISITION_POTION_BUFF,
+                _ => unreachable!(),
             };
             let match_current = matches.into_iter().next().unwrap();
-            let match_other = detect_template_single(
-                mat,
-                template_other,
-                &*WEALTH_EXP_POTION_MASK,
-                Point::default(),
-                threshold,
-            );
+            let match_other =
+                detect_template_single(mat, template_other, mask, Point::default(), threshold);
 
             match_other.is_err()
                 || match_other.as_ref().copied().unwrap().0 != match_current.0
