@@ -84,8 +84,8 @@ impl BuffState {
             BuffKind::SmallExpAccumulationPotion => {
                 character.small_exp_accumulation_potion_key.enabled
             }
-            BuffKind::ForTheGuild => todo!(),
-            BuffKind::HardHitter => todo!(),
+            BuffKind::ForTheGuild => character.for_the_guild_key.enabled,
+            BuffKind::HardHitter => character.hard_hitter_key.enabled,
             BuffKind::ExtremeRedPotion => character.extreme_red_potion_key.enabled,
             BuffKind::ExtremeBluePotion => character.extreme_blue_potion_key.enabled,
             BuffKind::ExtremeGreenPotion => character.extreme_green_potion_key.enabled,
