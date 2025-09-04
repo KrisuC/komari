@@ -529,6 +529,28 @@ fn SectionBuffs(character_view: Memo<Character>, save_character: Callback<Charac
                     value: character_view().small_exp_accumulation_potion_key,
                 }
                 Buff {
+                    label: "For The Guild",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |for_the_guild_key| {
+                        save_character(Character {
+                            for_the_guild_key,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().for_the_guild_key,
+                }
+                Buff {
+                    label: "Hard Hitter",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |hard_hitter_key| {
+                        save_character(Character {
+                            hard_hitter_key,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().hard_hitter_key,
+                }
+                Buff {
                     label: "Extreme Red Potion",
                     disabled: character_view().id.is_none(),
                     on_value: move |extreme_red_potion_key| {

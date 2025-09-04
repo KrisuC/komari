@@ -341,6 +341,10 @@ pub struct Character {
     pub small_wealth_acquisition_potion_key: KeyBindingConfiguration,
     #[serde(default)]
     pub small_exp_accumulation_potion_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub for_the_guild_key: KeyBindingConfiguration,
+    #[serde(default)]
+    pub hard_hitter_key: KeyBindingConfiguration,
     pub extreme_red_potion_key: KeyBindingConfiguration,
     pub extreme_blue_potion_key: KeyBindingConfiguration,
     pub extreme_green_potion_key: KeyBindingConfiguration,
@@ -407,6 +411,8 @@ impl Default for Character {
             exp_accumulation_potion_key: KeyBindingConfiguration::default(),
             small_wealth_acquisition_potion_key: KeyBindingConfiguration::default(),
             small_exp_accumulation_potion_key: KeyBindingConfiguration::default(),
+            for_the_guild_key: KeyBindingConfiguration::default(),
+            hard_hitter_key: KeyBindingConfiguration::default(),
             extreme_red_potion_key: KeyBindingConfiguration::default(),
             extreme_blue_potion_key: KeyBindingConfiguration::default(),
             extreme_green_potion_key: KeyBindingConfiguration::default(),

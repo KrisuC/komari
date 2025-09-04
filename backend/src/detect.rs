@@ -439,7 +439,9 @@ impl Detector for CachedDetector {
             | BuffKind::AureliaElixir
             | BuffKind::ExpCouponX2
             | BuffKind::ExpCouponX3
-            | BuffKind::BonusExpCoupon => &**self.buffs_grayscale,
+            | BuffKind::BonusExpCoupon
+            | BuffKind::ForTheGuild
+            | BuffKind::HardHitter => &**self.buffs_grayscale,
             BuffKind::LegionWealth
             | BuffKind::LegionLuck
             | BuffKind::WealthAcquisitionPotion
@@ -1362,6 +1364,20 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         )
         .unwrap()
     });
+    static FOR_THE_GUILD_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("FOR_THE_GUILD_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static HARD_HITTER_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("HARD_HITTER_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
     static EXTREME_RED_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("EXTREME_RED_POTION_BUFF_TEMPLATE")),
@@ -1403,6 +1419,8 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         | BuffKind::ExpCouponX2
         | BuffKind::ExpCouponX3
         | BuffKind::BonusExpCoupon
+        | BuffKind::ForTheGuild
+        | BuffKind::HardHitter
         | BuffKind::ExtremeRedPotion
         | BuffKind::ExtremeBluePotion
         | BuffKind::ExtremeGreenPotion
@@ -1422,6 +1440,8 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         BuffKind::ExpAccumulationPotion => &*EXP_ACCUMULATION_POTION_BUFF,
         BuffKind::SmallWealthAcquisitionPotion => &*SMALL_WEALTH_ACQUISITION_POTION_BUFF,
         BuffKind::SmallExpAccumulationPotion => &*SMALL_EXP_ACCUMULATION_POTION_BUFF,
+        BuffKind::ForTheGuild => &*FOR_THE_GUILD_BUFF,
+        BuffKind::HardHitter => &*HARD_HITTER_BUFF,
         BuffKind::ExtremeRedPotion => &*EXTREME_RED_POTION_BUFF,
         BuffKind::ExtremeBluePotion => &*EXTREME_BLUE_POTION_BUFF,
         BuffKind::ExtremeGreenPotion => &*EXTREME_GREEN_POTION_BUFF,

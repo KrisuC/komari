@@ -313,6 +313,14 @@ fn buffs_from(character: &Character) -> Vec<(BuffKind, KeyBinding)> {
                     .small_exp_accumulation_potion_key
                     .enabled
                     .then_some(character.small_exp_accumulation_potion_key.key),
+                BuffKind::ForTheGuild => character
+                    .for_the_guild_key
+                    .enabled
+                    .then_some(character.for_the_guild_key.key),
+                BuffKind::HardHitter => character
+                    .hard_hitter_key
+                    .enabled
+                    .then_some(character.hard_hitter_key.key),
                 BuffKind::ExtremeRedPotion => character
                     .extreme_red_potion_key
                     .enabled

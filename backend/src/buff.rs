@@ -53,6 +53,8 @@ impl BuffState {
                 | BuffKind::ExpCouponX2
                 | BuffKind::ExpCouponX3
                 | BuffKind::BonusExpCoupon
+                | BuffKind::ForTheGuild
+                | BuffKind::HardHitter
                 | BuffKind::ExtremeRedPotion
                 | BuffKind::ExtremeBluePotion
                 | BuffKind::ExtremeGreenPotion
@@ -82,6 +84,8 @@ impl BuffState {
             BuffKind::SmallExpAccumulationPotion => {
                 character.small_exp_accumulation_potion_key.enabled
             }
+            BuffKind::ForTheGuild => todo!(),
+            BuffKind::HardHitter => todo!(),
             BuffKind::ExtremeRedPotion => character.extreme_red_potion_key.enabled,
             BuffKind::ExtremeBluePotion => character.extreme_blue_potion_key.enabled,
             BuffKind::ExtremeGreenPotion => character.extreme_green_potion_key.enabled,
@@ -124,6 +128,8 @@ pub enum BuffKind {
     ExpAccumulationPotion,
     SmallWealthAcquisitionPotion,
     SmallExpAccumulationPotion,
+    ForTheGuild,
+    HardHitter,
     ExtremeRedPotion,
     ExtremeBluePotion,
     ExtremeGreenPotion,

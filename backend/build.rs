@@ -34,12 +34,16 @@ fn main() {
     let player_guildie = dir.join("player_guildie_ideal_ratio.png");
     let player_friend = dir.join("player_friend_ideal_ratio.png");
 
+    let cash_shop = dir.join("cash_shop.png");
     let erda_shower = dir.join("erda_shower_ideal_ratio.png");
     let portal = dir.join("portal_ideal_ratio.png");
+    let change_channel_menu = dir.join("change_channel_menu_ideal_ratio.png");
+    let chat_menu = dir.join("chat_menu_ideal_ratio.png");
 
     let rune = dir.join("rune_ideal_ratio.png");
     let rune_mask = dir.join("rune_mask_ideal_ratio.png");
     let rune_buff = dir.join("rune_buff_ideal_ratio.png");
+    let spin_test = dir.join("spin_test_2");
 
     let sayram_elixir_buff = dir.join("sayram_elixir_buff_ideal_ratio.png");
     let aurelia_elixir_buff = dir.join("aurelia_elixir_buff_ideal_ratio.png");
@@ -63,18 +67,20 @@ fn main() {
     let small_exp_accumulation_potion_buff =
         dir.join("small_exp_accumulation_potion_ideal_ratio.png");
 
+    let for_the_guild_buff = dir.join("for_the_guild_buff_ideal_ratio.png");
+    let hard_hitter_buff = dir.join("hard_hitter_buff_ideal_ratio.png");
+
     let extreme_red_potion_buff = dir.join("extreme_red_potion_ideal_ratio.png");
     let extreme_blue_potion_buff = dir.join("extreme_blue_potion_ideal_ratio.png");
     let extreme_green_potion_buff = dir.join("extreme_green_potion_ideal_ratio.png");
     let extreme_gold_potion_buff = dir.join("extreme_gold_potion_ideal_ratio.png");
 
-    let cash_shop = dir.join("cash_shop.png");
     let hp_start = dir.join("hp_start_ideal_ratio.png");
     let hp_separator_1 = dir.join("hp_separator_ideal_ratio_1.png");
     let hp_separator_2 = dir.join("hp_separator_ideal_ratio_2.png");
     let hp_shield = dir.join("hp_shield_ideal_ratio.png");
     let hp_end = dir.join("hp_end_ideal_ratio.png");
-    let spin_test = dir.join("spin_test_2");
+
     let familiar_button_save = dir.join("familiar_button_save_ideal_ratio.png");
     let familiar_button_setup = dir.join("familiar_button_setup_ideal_ratio.png");
     let familiar_button_level = dir.join("familiar_button_level_ideal_ratio.png");
@@ -90,17 +96,16 @@ fn main() {
     let familiar_buff = dir.join("familiar_buff_ideal_ratio.png");
     let familiar_menu = dir.join("familiar_menu_ideal_ratio.png");
     let familiar_essence_deplete = dir.join("familiar_essence_deplete_ideal_ratio.png");
-    let change_channel_menu = dir.join("change_channel_menu_ideal_ratio.png");
-    let chat_menu = dir.join("chat_menu_ideal_ratio.png");
 
-    let mob_model = dir.join("mob_nms.onnx");
-    let rune_model = dir.join("rune_nms.onnx");
-    let minimap_model = dir.join("minimap_nms.onnx");
     let onnx_runtime = dir.join("onnxruntime/onnxruntime.dll");
     #[cfg(feature = "gpu")]
     let onnx_runtime_cuda = dir.join("onnxruntime/onnxruntime_providers_cuda.dll");
     #[cfg(feature = "gpu")]
     let onnx_runtime_shared = dir.join("onnxruntime/onnxruntime_providers_shared.dll");
+
+    let mob_model = dir.join("mob_nms.onnx");
+    let rune_model = dir.join("rune_nms.onnx");
+    let minimap_model = dir.join("minimap_nms.onnx");
     let text_detection_model = dir.join("text_detection.onnx");
     let text_recognition_model = dir.join("text_recognition.onnx");
     let text_alphabet_txt = dir.join("alphabet_94.txt");
@@ -200,12 +205,24 @@ fn main() {
     );
 
     println!(
+        "cargo:rustc-env=CASH_SHOP_TEMPLATE={}",
+        cash_shop.to_str().unwrap()
+    );
+    println!(
         "cargo:rustc-env=ERDA_SHOWER_TEMPLATE={}",
         erda_shower.to_str().unwrap()
     );
     println!(
         "cargo:rustc-env=PORTAL_TEMPLATE={}",
         portal.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=CHANGE_CHANNEL_MENU_TEMPLATE={}",
+        change_channel_menu.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=CHAT_MENU_TEMPLATE={}",
+        chat_menu.to_str().unwrap()
     );
 
     println!("cargo:rustc-env=RUNE_TEMPLATE={}", rune.to_str().unwrap());
@@ -217,7 +234,12 @@ fn main() {
         "cargo:rustc-env=RUNE_BUFF_TEMPLATE={}",
         rune_buff.to_str().unwrap()
     );
+    println!(
+        "cargo:rustc-env=SPIN_TEST_DIR={}",
+        spin_test.to_str().unwrap()
+    );
 
+    // Collector's buffs
     println!(
         "cargo:rustc-env=SAYRAM_ELIXIR_BUFF_TEMPLATE={}",
         sayram_elixir_buff.to_str().unwrap()
@@ -227,6 +249,7 @@ fn main() {
         aurelia_elixir_buff.to_str().unwrap()
     );
 
+    // Exp buffs
     println!(
         "cargo:rustc-env=EXP_COUPON_X2_BUFF_TEMPLATE={}",
         exp_coupon_x2_buff.to_str().unwrap()
@@ -240,6 +263,7 @@ fn main() {
         bonus_exp_coupon_buff.to_str().unwrap()
     );
 
+    // Legion buffs
     println!(
         "cargo:rustc-env=LEGION_WEALTH_BUFF_TEMPLATE={}",
         legion_wealth_buff.to_str().unwrap()
@@ -257,6 +281,7 @@ fn main() {
         legion_luck_buff_mask.to_str().unwrap()
     );
 
+    // Wealth/exp potions
     println!(
         "cargo:rustc-env=WEALTH_ACQUISITION_POTION_BUFF_TEMPLATE={}",
         wealth_acquisition_potion_buff.to_str().unwrap()
@@ -270,6 +295,7 @@ fn main() {
         exp_accumulation_potion_buff.to_str().unwrap()
     );
 
+    // Small wealth/exp potions
     println!(
         "cargo:rustc-env=SMALL_WEALTH_ACQUISITION_POTION_BUFF_TEMPLATE={}",
         small_wealth_acquisition_potion_buff.to_str().unwrap()
@@ -283,6 +309,17 @@ fn main() {
         small_exp_accumulation_potion_buff.to_str().unwrap()
     );
 
+    // Guild buffs
+    println!(
+        "cargo:rustc-env=FOR_THE_GUILD_BUFF_TEMPLATE={}",
+        for_the_guild_buff.to_str().unwrap()
+    );
+    println!(
+        "cargo:rustc-env=HARD_HITTER_BUFF_TEMPLATE={}",
+        hard_hitter_buff.to_str().unwrap()
+    );
+
+    // Monster park potions
     println!(
         "cargo:rustc-env=EXTREME_RED_POTION_BUFF_TEMPLATE={}",
         extreme_red_potion_buff.to_str().unwrap()
@@ -300,10 +337,6 @@ fn main() {
         extreme_gold_potion_buff.to_str().unwrap()
     );
 
-    println!(
-        "cargo:rustc-env=CASH_SHOP_TEMPLATE={}",
-        cash_shop.to_str().unwrap()
-    );
     println!(
         "cargo:rustc-env=HP_START_TEMPLATE={}",
         hp_start.to_str().unwrap()
@@ -324,10 +357,7 @@ fn main() {
         "cargo:rustc-env=HP_END_TEMPLATE={}",
         hp_end.to_str().unwrap()
     );
-    println!(
-        "cargo:rustc-env=SPIN_TEST_DIR={}",
-        spin_test.to_str().unwrap()
-    );
+
     println!(
         "cargo:rustc-env=FAMILIAR_BUTTON_SAVE_TEMPLATE={}",
         familiar_button_save.to_str().unwrap()
@@ -387,14 +417,6 @@ fn main() {
     println!(
         "cargo:rustc-env=FAMILIAR_ESSENCE_DEPLETE_TEMPLATE={}",
         familiar_essence_deplete.to_str().unwrap()
-    );
-    println!(
-        "cargo:rustc-env=CHANGE_CHANNEL_MENU_TEMPLATE={}",
-        change_channel_menu.to_str().unwrap()
-    );
-    println!(
-        "cargo:rustc-env=CHAT_MENU_TEMPLATE={}",
-        chat_menu.to_str().unwrap()
     );
 
     // onnxruntime dependencies
