@@ -437,12 +437,17 @@ impl Detector for CachedDetector {
             | BuffKind::Familiar
             | BuffKind::SayramElixir
             | BuffKind::AureliaElixir
+            | BuffKind::ExpCouponX2
             | BuffKind::ExpCouponX3
-            | BuffKind::BonusExpCoupon => &**self.buffs_grayscale,
+            | BuffKind::BonusExpCoupon
+            | BuffKind::ForTheGuild
+            | BuffKind::HardHitter => &**self.buffs_grayscale,
             BuffKind::LegionWealth
             | BuffKind::LegionLuck
             | BuffKind::WealthAcquisitionPotion
             | BuffKind::ExpAccumulationPotion
+            | BuffKind::SmallWealthAcquisitionPotion
+            | BuffKind::SmallExpAccumulationPotion
             | BuffKind::ExtremeRedPotion
             | BuffKind::ExtremeBluePotion
             | BuffKind::ExtremeGreenPotion
@@ -1256,6 +1261,13 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         )
         .unwrap()
     });
+    static EXP_COUPON_X2_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("EXP_COUPON_X2_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
     static EXP_COUPON_X3_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("EXP_COUPON_X3_BUFF_TEMPLATE")),
@@ -1325,6 +1337,47 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         )
         .unwrap()
     });
+    static SMALL_WEALTH_EXP_POTION_MASK: LazyLock<Mat> = LazyLock::new(|| {
+        let mut mat = imgcodecs::imdecode(
+            include_bytes!(env!("SMALL_WEALTH_EXP_POTION_MASK_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap();
+        unsafe {
+            mat.modify_inplace(|mat, mat_mut| {
+                mat.convert_to(mat_mut, CV_32FC3, 1.0 / 255.0, 0.0).unwrap();
+            });
+        }
+        mat
+    });
+    static SMALL_WEALTH_ACQUISITION_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("SMALL_WEALTH_ACQUISITION_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static SMALL_EXP_ACCUMULATION_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("SMALL_EXP_ACCUMULATION_POTION_BUFF_TEMPLATE")),
+            IMREAD_COLOR,
+        )
+        .unwrap()
+    });
+    static FOR_THE_GUILD_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("FOR_THE_GUILD_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
+    static HARD_HITTER_BUFF: LazyLock<Mat> = LazyLock::new(|| {
+        imgcodecs::imdecode(
+            include_bytes!(env!("HARD_HITTER_BUFF_TEMPLATE")),
+            IMREAD_GRAYSCALE,
+        )
+        .unwrap()
+    });
     static EXTREME_RED_POTION_BUFF: LazyLock<Mat> = LazyLock::new(|| {
         imgcodecs::imdecode(
             include_bytes!(env!("EXTREME_RED_POTION_BUFF_TEMPLATE")),
@@ -1361,8 +1414,13 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         BuffKind::Rune
         | BuffKind::Familiar
         | BuffKind::SayramElixir
+        | BuffKind::SmallWealthAcquisitionPotion
+        | BuffKind::SmallExpAccumulationPotion
+        | BuffKind::ExpCouponX2
         | BuffKind::ExpCouponX3
         | BuffKind::BonusExpCoupon
+        | BuffKind::ForTheGuild
+        | BuffKind::HardHitter
         | BuffKind::ExtremeRedPotion
         | BuffKind::ExtremeBluePotion
         | BuffKind::ExtremeGreenPotion
@@ -1373,12 +1431,17 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
         BuffKind::Familiar => &*FAMILIAR_BUFF,
         BuffKind::SayramElixir => &*SAYRAM_ELIXIR_BUFF,
         BuffKind::AureliaElixir => &*AURELIA_ELIXIR_BUFF,
+        BuffKind::ExpCouponX2 => &*EXP_COUPON_X2_BUFF,
         BuffKind::ExpCouponX3 => &*EXP_COUPON_X3_BUFF,
         BuffKind::BonusExpCoupon => &*BONUS_EXP_COUPON_BUFF,
         BuffKind::LegionWealth => &*LEGION_WEALTH_BUFF,
         BuffKind::LegionLuck => &*LEGION_LUCK_BUFF,
         BuffKind::WealthAcquisitionPotion => &*WEALTH_ACQUISITION_POTION_BUFF,
         BuffKind::ExpAccumulationPotion => &*EXP_ACCUMULATION_POTION_BUFF,
+        BuffKind::SmallWealthAcquisitionPotion => &*SMALL_WEALTH_ACQUISITION_POTION_BUFF,
+        BuffKind::SmallExpAccumulationPotion => &*SMALL_EXP_ACCUMULATION_POTION_BUFF,
+        BuffKind::ForTheGuild => &*FOR_THE_GUILD_BUFF,
+        BuffKind::HardHitter => &*HARD_HITTER_BUFF,
         BuffKind::ExtremeRedPotion => &*EXTREME_RED_POTION_BUFF,
         BuffKind::ExtremeBluePotion => &*EXTREME_BLUE_POTION_BUFF,
         BuffKind::ExtremeGreenPotion => &*EXTREME_GREEN_POTION_BUFF,
@@ -1386,22 +1449,26 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
     };
 
     match kind {
-        BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => {
+        BuffKind::SmallWealthAcquisitionPotion
+        | BuffKind::SmallExpAccumulationPotion
+        | BuffKind::WealthAcquisitionPotion
+        | BuffKind::ExpAccumulationPotion => {
             // Because the two potions are really similar, detecting one may mis-detect for the other.
             // Can't really think of a better way to do this.... But this seems working just fine.
-            // Also tested with the who-use-this? Invicibility Potion and Resistance Potion. Those two
-            // doesn't match at all so this should be fine.
-            let matches = detect_template_multiple(
-                mat,
-                template,
-                &*WEALTH_EXP_POTION_MASK,
-                Point::default(),
-                2,
-                threshold,
-            )
-            .into_iter()
-            .filter_map(|result| result.ok())
-            .collect::<Vec<_>>();
+            let mask = match kind {
+                BuffKind::SmallWealthAcquisitionPotion | BuffKind::SmallExpAccumulationPotion => {
+                    &*SMALL_WEALTH_EXP_POTION_MASK
+                }
+                BuffKind::WealthAcquisitionPotion | BuffKind::ExpAccumulationPotion => {
+                    &*WEALTH_EXP_POTION_MASK
+                }
+                _ => unreachable!(),
+            };
+            let matches =
+                detect_template_multiple(mat, template, mask, Point::default(), 2, threshold)
+                    .into_iter()
+                    .filter_map(|result| result.ok())
+                    .collect::<Vec<_>>();
             if matches.is_empty() {
                 return false;
             }
@@ -1410,19 +1477,16 @@ fn detect_player_buff<T: MatTraitConst + ToInputArray>(mat: &T, kind: BuffKind) 
                 return true;
             }
 
-            let template_other = if matches!(kind, BuffKind::WealthAcquisitionPotion) {
-                &*EXP_ACCUMULATION_POTION_BUFF
-            } else {
-                &*WEALTH_ACQUISITION_POTION_BUFF
+            let template_other = match kind {
+                BuffKind::SmallWealthAcquisitionPotion => &*SMALL_EXP_ACCUMULATION_POTION_BUFF,
+                BuffKind::SmallExpAccumulationPotion => &*SMALL_WEALTH_ACQUISITION_POTION_BUFF,
+                BuffKind::WealthAcquisitionPotion => &*EXP_ACCUMULATION_POTION_BUFF,
+                BuffKind::ExpAccumulationPotion => &*WEALTH_ACQUISITION_POTION_BUFF,
+                _ => unreachable!(),
             };
             let match_current = matches.into_iter().next().unwrap();
-            let match_other = detect_template_single(
-                mat,
-                template_other,
-                &*WEALTH_EXP_POTION_MASK,
-                Point::default(),
-                threshold,
-            );
+            let match_other =
+                detect_template_single(mat, template_other, mask, Point::default(), threshold);
 
             match_other.is_err()
                 || match_other.as_ref().copied().unwrap().0 != match_current.0

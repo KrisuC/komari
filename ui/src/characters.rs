@@ -429,6 +429,18 @@ fn SectionBuffs(character_view: Memo<Character>, save_character: Callback<Charac
                     value: character_view().aurelia_elixir_key,
                 }
                 Buff {
+                    label: "2x EXP Coupon",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |exp_x2_key| {
+                        save_character(Character {
+                            exp_x2_key,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().exp_x2_key,
+                }
+                div {}
+                Buff {
                     label: "3x EXP Coupon",
                     disabled: character_view().id.is_none(),
                     on_value: move |exp_x3_key| {
@@ -493,6 +505,50 @@ fn SectionBuffs(character_view: Memo<Character>, save_character: Callback<Charac
                         });
                     },
                     value: character_view().exp_accumulation_potion_key,
+                }
+                Buff {
+                    label: "Small Wealth Acquisition Potion",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |small_wealth_acquisition_potion_key| {
+                        save_character(Character {
+                            small_wealth_acquisition_potion_key,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().small_wealth_acquisition_potion_key,
+                }
+                Buff {
+                    label: "Small EXP Accumulation Potion",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |small_exp_accumulation_potion_key| {
+                        save_character(Character {
+                            small_exp_accumulation_potion_key,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().small_exp_accumulation_potion_key,
+                }
+                Buff {
+                    label: "For The Guild",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |for_the_guild_key| {
+                        save_character(Character {
+                            for_the_guild_key,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().for_the_guild_key,
+                }
+                Buff {
+                    label: "Hard Hitter",
+                    disabled: character_view().id.is_none(),
+                    on_value: move |hard_hitter_key| {
+                        save_character(Character {
+                            hard_hitter_key,
+                            ..character_view.peek().clone()
+                        });
+                    },
+                    value: character_view().hard_hitter_key,
                 }
                 Buff {
                     label: "Extreme Red Potion",

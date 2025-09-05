@@ -277,6 +277,10 @@ fn buffs_from(character: &Character) -> Vec<(BuffKind, KeyBinding)> {
                     .aurelia_elixir_key
                     .enabled
                     .then_some(character.aurelia_elixir_key.key),
+                BuffKind::ExpCouponX2 => character
+                    .exp_x2_key
+                    .enabled
+                    .then_some(character.exp_x2_key.key),
                 BuffKind::ExpCouponX3 => character
                     .exp_x3_key
                     .enabled
@@ -301,6 +305,22 @@ fn buffs_from(character: &Character) -> Vec<(BuffKind, KeyBinding)> {
                     .exp_accumulation_potion_key
                     .enabled
                     .then_some(character.exp_accumulation_potion_key.key),
+                BuffKind::SmallWealthAcquisitionPotion => character
+                    .small_wealth_acquisition_potion_key
+                    .enabled
+                    .then_some(character.small_wealth_acquisition_potion_key.key),
+                BuffKind::SmallExpAccumulationPotion => character
+                    .small_exp_accumulation_potion_key
+                    .enabled
+                    .then_some(character.small_exp_accumulation_potion_key.key),
+                BuffKind::ForTheGuild => character
+                    .for_the_guild_key
+                    .enabled
+                    .then_some(character.for_the_guild_key.key),
+                BuffKind::HardHitter => character
+                    .hard_hitter_key
+                    .enabled
+                    .then_some(character.hard_hitter_key.key),
                 BuffKind::ExtremeRedPotion => character
                     .extreme_red_potion_key
                     .enabled
