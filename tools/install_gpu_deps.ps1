@@ -110,7 +110,8 @@ if ($cudaInstallDirs.Count -gt 0) {
         } else {
             Write-Host "    Found CUDA at $($dir.FullName)" -ForegroundColor Green
         }
-        $dllCount = @(Get-ChildItem "$($dir.FullName)\bin\*64_*.dll" -ErrorAction SilentlyContinue).Count
+        $dllCount = @(Get-ChildItem $dir.FullName -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '_6\d+\.dll$|_12\d+\.dll$|cudart|cublas|cufft|curand|cusparse|cusolver|nvrtc|nvJit|npp|nvblas|nvjpeg|cuinj' }).Count
         Write-Host "      Contains $dllCount CUDA runtime DLLs" -ForegroundColor Gray
     }
 } else {
@@ -152,11 +153,12 @@ if ($existingGpuDlls.Count -gt 0) {
 # ---- HELPER FUNCTIONS ----
 function Find-Dll {
     param([string]$Pattern)
-    # Accepts wildcards (e.g. "nvrtc64_12*.dll", "cudnn_eng*.dll")
+    # Accepts wildcards (e.g. "nvrtc64_*.dll", "cudnn_eng*.dll")
+    # Searches target dir, then CUDA installation recursively
     $foundDlls = @(Get-ChildItem "$script:TargetDir" -Filter $Pattern -ErrorAction SilentlyContinue)
     if ($foundDlls.Count -gt 0) { return $foundDlls[0].FullName }
     foreach ($dir in Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA" -ErrorAction SilentlyContinue) {
-        $foundDlls = @(Get-ChildItem "$($dir.FullName)\bin" -Filter $Pattern -ErrorAction SilentlyContinue)
+        $foundDlls = @(Get-ChildItem "$($dir.FullName)" -Recurse -Filter $Pattern -ErrorAction SilentlyContinue)
         if ($foundDlls.Count -gt 0) { return $foundDlls[0].FullName }
     }
     return $null
@@ -203,46 +205,55 @@ if ($SkipCuda) {
             Write-Host "    - $dll" -ForegroundColor Yellow
         }
 
-        $cudaInstall = @(Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin" -ErrorAction SilentlyContinue) |
+        $cudaInstall = @(Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*" -ErrorAction SilentlyContinue) |
             Sort-Object -Descending |
             Select-Object -First 1
 
         if ($cudaInstall) {
-            Write-Host "  Using CUDA installation at: $($cudaInstall.Parent.FullName)" -ForegroundColor Green
-            Write-Host "  Copying DLLs to target directory..." -ForegroundColor White
-            $copiedCount = 0
-            $totalSize = 0
+            Write-Host "  Using CUDA installation at: $($cudaInstall.FullName)" -ForegroundColor Green
+            Write-Host "  Searching for CUDA runtime DLLs (recursive)..." -ForegroundColor White
 
-            # Copy requested DLLs
-            foreach ($dll in $missingCuda) {
-                $src = "$($cudaInstall.FullName)\$dll"
-                if (Test-Path $src) {
-                    $size = (Get-Item $src).Length
-                    $totalSize += $size
-                    $sizeMB = [math]::Round($size / 1MB, 1)
-                    Copy-Item $src $TargetDir -Force
-                    Write-Host "    Copied $dll ($sizeMB MB)" -ForegroundColor Green
-                    $copiedCount++
-                } else {
-                    Write-Host "    NOT FOUND in CUDA: $dll" -ForegroundColor Yellow
+            # Find ALL DLLs in the CUDA directory that look like runtime libraries
+            $allCudaDlls = @(Get-ChildItem $cudaInstall.FullName -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '_6\d+\.dll$|_12\d+\.dll$|cudart|cublas|cufft|curand|cusparse|cusolver|nvrtc|nvJit|npp|nvblas|nvjpeg|cuinj' })
+
+            if ($allCudaDlls.Count -eq 0) {
+                Write-Host "  WARNING: No CUDA runtime DLLs found in CUDA installation." -ForegroundColor Yellow
+                Write-Host "  CUDA 13+ may use a different layout. Trying alternate paths..." -ForegroundColor Yellow
+                # CUDA 13 might use Library/bin or other subdirs
+                $altPaths = @(
+                    "$($cudaInstall.FullName)\Library\bin",
+                    "$($cudaInstall.FullName)\bin",
+                    "$($cudaInstall.FullName)\cuda\bin"
+                )
+                foreach ($alt in $altPaths) {
+                    if (Test-Path $alt) {
+                        Write-Host "    Checking: $alt" -ForegroundColor Gray
+                        $allCudaDlls = @(Get-ChildItem $alt -Filter "*.dll" -ErrorAction SilentlyContinue)
+                        if ($allCudaDlls.Count -gt 0) { break }
+                    }
                 }
             }
 
-            # Also copy any extra *64_*.dll that might be useful
-            Write-Host "  Copying additional CUDA runtime DLLs..." -ForegroundColor White
-            foreach ($dll in Get-ChildItem "$($cudaInstall.FullName)\*64_*.dll" -Name) {
-                if (-not (Test-Path "$TargetDir\$dll")) {
-                    $size = (Get-Item "$($cudaInstall.FullName)\$dll").Length
-                    $sizeMB = [math]::Round($size / 1MB, 1)
-                    Copy-Item "$($cudaInstall.FullName)\$dll" $TargetDir -Force
-                    Write-Host "    Copied extra: $dll ($sizeMB MB)" -ForegroundColor Green
-                    $copiedCount++
-                    $totalSize += $size
+            if ($allCudaDlls.Count -gt 0) {
+                Write-Host "  Found $($allCudaDlls.Count) CUDA DLLs. Copying to target..." -ForegroundColor White
+                $copiedCount = 0
+                $totalSize = 0
+                foreach ($dll in $allCudaDlls) {
+                    if (-not (Test-Path "$TargetDir\$($dll.Name)")) {
+                        $sizeMB = [math]::Round($dll.Length / 1MB, 1)
+                        Copy-Item $dll.FullName $TargetDir -Force
+                        Write-Host "    Copied $($dll.Name) ($sizeMB MB)" -ForegroundColor Green
+                        $copiedCount++
+                        $totalSize += $dll.Length
+                    }
                 }
+                $totalSizeMB = [math]::Round($totalSize / 1MB, 1)
+                Write-Host "  Done. Copied $copiedCount DLL(s) ($totalSizeMB MB total)." -ForegroundColor Green
+            } else {
+                Write-Host "  ERROR: Could not locate any CUDA DLLs. The CUDA installation may be incomplete." -ForegroundColor Red
+                Write-Host "  Try reinstalling CUDA with the 'Development' and 'Runtime' components checked." -ForegroundColor Yellow
             }
-
-            $totalSizeMB = [math]::Round($totalSize / 1MB, 1)
-            Write-Host "  Done. Copied $copiedCount DLL(s) ($totalSizeMB MB total)." -ForegroundColor Green
         } else {
             Write-Host "  No CUDA Toolkit found locally." -ForegroundColor Yellow
             Write-Host "  NOTE: Full CUDA installation is recommended." -ForegroundColor Yellow
