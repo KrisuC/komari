@@ -4,9 +4,10 @@ use std::{
 };
 
 use backend::{
-    Action, ActionKey, ActionMove, DatabaseEvent, Map, Operation, OperationUpdate, Position,
-    RotationMode, create_map, database_event_receiver, delete_map, query_maps, redetect_minimap,
-    state_receiver, update_map, update_operation, upsert_map,
+    Action, ActionKey, ActionMove, Character, DatabaseEvent, Map, Operation, OperationUpdate,
+    Position, RotationMode, Settings, create_map, database_event_receiver, delete_map, query_maps,
+    redetect_minimap, state_receiver, update_map, update_operation, upsert_character, upsert_map,
+    upsert_settings,
 };
 use dioxus::{document::EvalError, html::FileData, prelude::*};
 use futures_util::StreamExt;
@@ -773,6 +774,7 @@ fn Buttons(state: ReadSignal<Option<MinimapState>>, map: ReadSignal<Option<Map>>
 #[component]
 fn ImportExport(map: ReadSignal<Option<Map>>) -> Element {
     let coroutine = use_coroutine_handle::<MinimapUpdate>();
+    let mut bulk_key = use_signal(|| 0);
 
     let export_name = use_memo(move || {
         let name = map().map(|map| map.name).unwrap_or_default();
@@ -796,6 +798,49 @@ fn ImportExport(map: ReadSignal<Option<Map>>) -> Element {
         coroutine.send(MinimapUpdate::Import(map));
     });
 
+    let handle_bulk_import = move |files: Vec<FileData>| {
+        for file in files {
+            if !file.name().ends_with(".json") {
+                continue;
+            }
+            spawn(async move {
+                let file_name = file.name();
+                let Ok(bytes) = file.read_bytes().await else {
+                    log::error!("[bulk_import] failed to read: {}", file_name);
+                    return;
+                };
+
+                // Auto-detect type: try Map first (has required width/height fields),
+                // then Settings (has required capture_mode), then Character (fallback).
+                if let Ok(map) = serde_json::from_slice::<'_, Map>(&bytes) {
+                    log::info!("[bulk_import] detected Map '{}' from '{}'", map.name, file_name);
+                    coroutine.send(MinimapUpdate::Import(map));
+                } else if let Ok(mut settings) = serde_json::from_slice::<'_, Settings>(&bytes) {
+                    log::info!("[bulk_import] detected Settings from '{}'", file_name);
+                    // Preserve the existing settings id so we update rather than duplicate
+                    settings.id = None;
+                    let upserted = upsert_settings(settings).await;
+                    log::info!("[bulk_import] upserted Settings (id={:?})", upserted.id);
+                } else if let Ok(character) = serde_json::from_slice::<'_, Character>(&bytes) {
+                    log::info!(
+                        "[bulk_import] detected Character '{}' from '{}'",
+                        character.name,
+                        file_name
+                    );
+                    if let Some(upserted) = upsert_character(character).await {
+                        log::info!(
+                            "[bulk_import] upserted Character '{}' (id={:?})",
+                            upserted.name,
+                            upserted.id
+                        );
+                    }
+                } else {
+                    log::error!("[bulk_import] unrecognized JSON format: {}", file_name);
+                }
+            });
+        }
+    };
+
     rsx! {
         div { class: "flex gap-3",
             FileInput {
@@ -815,6 +860,25 @@ fn ImportExport(map: ReadSignal<Option<Map>>) -> Element {
 
                     "Export"
                 }
+            }
+            label {
+                class: "inline-block h-6 text-xs text-center font-medium content-center
+                        px-2 bg-primary-surface text-primary-text cursor-pointer",
+                input {
+                    key: "{bulk_key}",
+                    class: "sr-only",
+                    r#type: "file",
+                    accept: ".json,application/json",
+                    "webkitdirectory": "",
+                    multiple: true,
+                    onchange: move |e: Event<FormData>| {
+                        let files = e.data.files();
+                        log::info!("[bulk_import] folder selected, {} file(s)", files.len());
+                        handle_bulk_import(files);
+                        bulk_key += 1;
+                    },
+                }
+                "Bulk import"
             }
         }
     }
