@@ -18,6 +18,11 @@ param(
     [switch]$SkipCudnn
 )
 
+# Force output immediately, even if the window is about to close
+$Host.UI.RawUI.WindowTitle = "GPU Dependency Installer"
+
+# Wrap everything so we pause on ANY error
+try {
 $ErrorActionPreference = "Continue"
 $ScriptStartTime = Get-Date
 
@@ -46,8 +51,12 @@ if ($Local) {
     }
     Write-Host "  System-wide install to: $TargetDir" -ForegroundColor Green
 } else {
-    $TargetDir = $PSScriptRoot
-    Write-Host "  Using script directory: $TargetDir" -ForegroundColor Green
+    if ($PSScriptRoot) {
+        $TargetDir = $PSScriptRoot
+    } else {
+        $TargetDir = Get-Location
+    }
+    Write-Host "  Using directory: $TargetDir" -ForegroundColor Green
 }
 
 Write-Host ""
@@ -410,3 +419,24 @@ Write-Host "============================================" -ForegroundColor DarkG
 Write-Host "  Press any key to close this window..." -ForegroundColor DarkGray
 Write-Host "============================================" -ForegroundColor DarkGray
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+
+} catch {
+    # Catch ALL errors and show them before pausing
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Red
+    Write-Host "  SCRIPT ERROR" -ForegroundColor Red
+    Write-Host "============================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  $_" -ForegroundColor Red
+    Write-Host ""
+    if ($_.Exception.StackTrace) {
+        Write-Host "  Stack trace:" -ForegroundColor Yellow
+        Write-Host "  $($_.Exception.StackTrace)" -ForegroundColor Yellow
+    }
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor DarkGray
+    Write-Host "  Press any key to close this window..." -ForegroundColor DarkGray
+    Write-Host "============================================" -ForegroundColor DarkGray
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
+}
