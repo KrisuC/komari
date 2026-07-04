@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, thread::sleep, time::Duration};
 
 use log::{debug, info};
 use opencv::core::{Point, Rect};
@@ -18,6 +18,11 @@ use crate::{
 
 /// Number of familiar slots available.
 const FAMILIAR_SLOTS: usize = 3;
+
+/// Delay between mouse move and click events during familiar swapping.
+/// Gives the game UI time to react to cursor movement before clicking,
+/// which is especially important for hardware input devices like KMBox.
+const MOUSE_MOVE_CLICK_DELAY_MS: u64 = 100;
 
 /// Internal state machine representing the current state of familiar swapping.
 #[derive(Debug, Clone, Copy)]
@@ -293,7 +298,9 @@ fn update_free_slot(resources: &mut Resources, swapping: &mut FamiliarsSwapping)
                         Ok(FamiliarLevel::Level5) => {
                             // Double click to free
                             resources.input.send_mouse(x, y, MouseKind::Click);
+                            sleep(Duration::from_millis(MOUSE_MOVE_CLICK_DELAY_MS));
                             resources.input.send_mouse(x, y, MouseKind::Click);
+                            sleep(Duration::from_millis(MOUSE_MOVE_CLICK_DELAY_MS));
                             // Move mouse to rest position to check if it has been truely freed
                             resources.input.send_mouse(x, bbox.y - 20, MouseKind::Move);
                         }
@@ -441,6 +448,7 @@ fn update_swapping(resources: &mut Resources, swapping: &mut FamiliarsSwapping) 
                         let bbox = swapping.cards[index];
                         let (x, y) = bbox_click_point(bbox);
                         resources.input.send_mouse(x, y, MouseKind::Click);
+                        sleep(Duration::from_millis(MOUSE_MOVE_CLICK_DELAY_MS));
                         resources.input.send_mouse(rest.x, rest.y, MouseKind::Move);
                     }
                     Err(_) => {
