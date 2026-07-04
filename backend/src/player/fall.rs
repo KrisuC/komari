@@ -120,14 +120,21 @@ pub fn update_falling_state(
             player.state = Player::Falling(falling.moving(moving));
 
             // Do the fall: hold Down, press Jump while Down is held, then release.
-            // This ensures the game registers a proper down+jump combo, which is
-            // especially important for hardware input devices like KMBox where
-            // sequential send_key() calls may not overlap correctly.
+            // The KMBox gRPC protocol processes each key command immediately:
+            // SendDown → keydown, Send → keydown + scheduled keyup, SendUp → keyup.
+            // Without delays, all three complete within milliseconds, so the game
+            // only sees Down pressed for a few ms before it's released — it
+            // registers as a plain Jump. Sleeping between commands gives the game
+            // time to register each state: Down → Down+Jump → release.
             use crate::bridge::{InputKeyDownOptions, InputKeyOptions};
+            use std::thread::sleep;
+            use std::time::Duration;
 
             resources
                 .input
                 .send_key_down_with_options(KeyKind::Down, InputKeyDownOptions::default());
+            // Give the game time to register the Down key before pressing Jump.
+            sleep(Duration::from_millis(30));
             let y_distance = moving.y_distance_direction_from(true, moving.pos).0;
             let teleport_fall_threshold = if player.context.config.has_extended_teleport_range {
                 EXTENDED_TELEPORT_FALL_THRESHOLD
@@ -150,6 +157,8 @@ pub fn update_falling_state(
                     InputKeyOptions::default().down_ms(80),
                 );
             }
+            // Give the game time to register Down+Jump before releasing Down.
+            sleep(Duration::from_millis(30));
             resources.input.send_key_up(KeyKind::Down);
         }
         MovingLifecycle::Ended(moving) => {
