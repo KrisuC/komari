@@ -144,21 +144,22 @@ if ($existingGpuDlls.Count -gt 0) {
 
 # ---- HELPER FUNCTIONS ----
 function Find-Dll {
-    param([string]$Name)
-    if (Test-Path "$script:TargetDir\$Name") { return "$script:TargetDir\$Name" }
+    param([string]$Pattern)
+    # Accepts wildcards (e.g. "nvrtc64_12*.dll", "cudnn_eng*.dll")
+    $foundDlls = @(Get-ChildItem "$script:TargetDir" -Filter $Pattern -ErrorAction SilentlyContinue)
+    if ($foundDlls.Count -gt 0) { return $foundDlls[0].FullName }
     foreach ($dir in Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA" -ErrorAction SilentlyContinue) {
-        if (Test-Path "$($dir.FullName)\bin\$Name") { return "$($dir.FullName)\bin\$Name" }
+        $foundDlls = @(Get-ChildItem "$($dir.FullName)\bin" -Filter $Pattern -ErrorAction SilentlyContinue)
+        if ($foundDlls.Count -gt 0) { return $foundDlls[0].FullName }
     }
-    $found = (Get-Command $Name -ErrorAction SilentlyContinue)
-    if ($found) { return $found.Source }
     return $null
 }
 
 function Test-Dlls {
-    param([string[]]$Names)
+    param([string[]]$Patterns)
     $missing = @()
-    foreach ($n in $Names) {
-        if (-not (Find-Dll $n)) { $missing += $n }
+    foreach ($p in $Patterns) {
+        if (-not (Find-Dll $p)) { $missing += $p }
     }
     return $missing
 }
@@ -169,16 +170,16 @@ Write-Host "Step 3/5: Installing CUDA runtime DLLs..." -ForegroundColor Cyan
 Write-Host ""
 
 $cudaDlls = @(
-    "cudart64_12.dll",
-    "cublas64_12.dll",
-    "cublasLt64_12.dll",
-    "cufft64_11.dll",
-    "curand64_10.dll",
-    "cusparse64_12.dll",
-    "cusolver64_11.dll",
-    "nvrtc64_12.dll",
-    "nvrtc-builtins64_12.dll",
-    "nvJitLink_12.dll"
+    "cudart64_*.dll",
+    "cublas64_*.dll",
+    "cublasLt64_*.dll",
+    "cufft64_*.dll",
+    "curand64_*.dll",
+    "cusparse64_*.dll",
+    "cusolver64_*.dll",
+    "nvrtc64_*.dll",
+    "nvrtc-builtins64_*.dll",
+    "nvJitLink_*.dll"
 )
 
 if ($SkipCuda) {
@@ -251,12 +252,12 @@ Write-Host "Step 4/5: Installing cuDNN 9.x DLLs..." -ForegroundColor Cyan
 Write-Host ""
 
 $cudnnDlls = @(
-    "cudnn64_9.dll",
-    "cudnn_ops64_9.dll",
-    "cudnn_cnn64_9.dll",
-    "cudnn_adv64_9.dll",
-    "cudnn_eng64_9.dll",
-    "cudnn_graph64_9.dll"
+    "cudnn64_*.dll",
+    "cudnn_ops64_*.dll",
+    "cudnn_cnn64_*.dll",
+    "cudnn_adv64_*.dll",
+    "cudnn_eng*.dll",
+    "cudnn_graph64_*.dll"
 )
 
 if ($SkipCudnn) {
@@ -394,13 +395,17 @@ Write-Host ""
 $allDlls = $cudaDlls + $cudnnDlls
 $stillMissing = Test-Dlls $allDlls
 
-Write-Host "  Checking all $($allDlls.Count) required DLLs:" -ForegroundColor White
+Write-Host "  Checking all $($allDlls.Count) required DLL patterns:" -ForegroundColor White
 
-$allGpuDlls = @(Get-ChildItem $TargetDir -Filter "*64_*.dll" -ErrorAction SilentlyContinue) + @(Get-ChildItem $TargetDir -Filter "cudnn*.dll" -ErrorAction SilentlyContinue)
+$allGpuDlls = @(Get-ChildItem $TargetDir -Filter "*64_*.dll" -ErrorAction SilentlyContinue) + @(Get-ChildItem $TargetDir -Filter "cudnn*.dll" -ErrorAction SilentlyContinue) | Sort-Object -Property Name -Unique
 $totalInstalledSize = 0
 foreach ($dll in $allGpuDlls | Sort-Object Name) {
     $sizeMB = [math]::Round($dll.Length / 1MB, 1)
-    $status = if ($dll.Name -in $stillMissing) { "MISSING" } else { "OK" }
+    $matched = $false
+    foreach ($p in $stillMissing) {
+        if ($dll.Name -like $p) { $matched = $true; break }
+    }
+    $status = if ($matched) { "MISSING" } else { "OK" }
     $color = if ($status -eq "OK") { "Green" } else { "Red" }
     Write-Host "    [$status] $($dll.Name) ($sizeMB MB)" -ForegroundColor $color
     $totalInstalledSize += $dll.Length
