@@ -301,17 +301,38 @@ if ($SkipCudnn) {
             Write-Host ""
 
             try {
-                $pipArgs = @("-m", "pip", "install", "nvidia-cudnn-cu12", "--disable-pip-version-check", "--progress-bar", "on")
+                # Use --user to avoid needing admin, --default-timeout for the 700MB+ download
+                $pipArgs = @(
+                    "-m", "pip", "install", "nvidia-cudnn-cu12",
+                    "--user",
+                    "--default-timeout=600",
+                    "--disable-pip-version-check",
+                    "--progress-bar", "on"
+                )
+                Write-Host "  Running: pip install nvidia-cudnn-cu12 --user --default-timeout=600" -ForegroundColor Gray
+                Write-Host "  (Download is ~700MB — this WILL take several minutes. Please wait...)" -ForegroundColor Gray
+                Write-Host ""
+
                 & $python.Source @pipArgs 2>&1 | ForEach-Object {
-                    if ($_ -match "Successfully|already satisfied|Downloading|Installing") {
+                    if ($_ -match "Successfully|already satisfied|Downloading|Installing|ERROR|WARNING") {
                         Write-Host "  pip: $_" -ForegroundColor Gray
                     }
                 }
 
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Host "  WARNING: pip install may have failed (exit code: $LASTEXITCODE)." -ForegroundColor Yellow
-                    Write-Host "  Trying with --user flag..." -ForegroundColor Yellow
-                    & $python.Source -m pip install nvidia-cudnn-cu12 --user --disable-pip-version-check 2>&1 | Out-Null
+                    Write-Host "  WARNING: pip exited with code $LASTEXITCODE." -ForegroundColor Yellow
+                    Write-Host "  Retrying without --user (may need admin)..." -ForegroundColor Yellow
+                    $pipArgsNoUser = @(
+                        "-m", "pip", "install", "nvidia-cudnn-cu12",
+                        "--default-timeout=600",
+                        "--disable-pip-version-check",
+                        "--progress-bar", "on"
+                    )
+                    & $python.Source @pipArgsNoUser 2>&1 | ForEach-Object {
+                        if ($_ -match "Successfully|already satisfied|ERROR") {
+                            Write-Host "  pip: $_" -ForegroundColor Gray
+                        }
+                    }
                 }
 
                 # Find where pip installed it
