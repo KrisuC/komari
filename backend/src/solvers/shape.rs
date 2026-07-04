@@ -16,6 +16,13 @@ use crate::{
 /// 0.35 = move 35% of the way each tick. Lower = smoother but more lag.
 const CURSOR_SMOOTHING: f64 = 0.35;
 
+/// Reduced smoothing factor used for the first few frames after switching
+/// to a distant track, to avoid a visible "lurch."
+const CURSOR_SMOOTHING_SLOW: f64 = 0.12;
+
+/// Frames to use the slow smoothing factor after a distant track switch.
+const CURSOR_SMOOTHING_SLOW_FRAMES: u32 = 10;
+
 #[derive(Debug)]
 pub struct TransparentShapeSolver {
     tracker: ByteTracker,
@@ -26,6 +33,10 @@ pub struct TransparentShapeSolver {
     last_velocity: Option<Point2d>,
     bg_direction: Point2d,
     smoothed_cursor: Option<Point2d>,
+    /// How many consecutive frames the current track has been tracked.
+    current_track_tenure: u32,
+    /// Countdown of frames to use slow cursor smoothing after a track switch.
+    slow_smoothing_remaining: u32,
     #[cfg(debug_assertions)]
     is_debugging: bool,
 }
@@ -41,6 +52,8 @@ impl Default for TransparentShapeSolver {
             last_velocity: None,
             bg_direction: Point2d::default(),
             smoothed_cursor: None,
+            current_track_tenure: 0,
+            slow_smoothing_remaining: 0,
             #[cfg(debug_assertions)]
             is_debugging: false,
         }
@@ -69,6 +82,8 @@ impl TransparentShapeSolver {
             last_velocity: None,
             bg_direction: Point2d::default(),
             smoothed_cursor: None,
+            current_track_tenure: 0,
+            slow_smoothing_remaining: 0,
             is_debugging: true,
         }
     }
@@ -169,14 +184,19 @@ impl TransparentShapeSolver {
 
     /// Applies exponential smoothing to the raw cursor position.
     ///
-    /// Each frame, the cursor moves `CURSOR_SMOOTHING` (35%) toward the raw
-    /// target. This eliminates jitter from frame-to-frame detection noise while
-    /// still tracking real movement smoothly. The 35% factor means the cursor
-    /// reaches ~88% of the target within 5 frames (~0.17s at 30fps).
+    /// Each frame, the cursor moves toward the raw target. Normally 35% per
+    /// frame (~88% in 5 frames). After a distant track switch, uses 12% for
+    /// 10 frames to avoid a visible lurch.
     fn smooth_cursor(&mut self, raw: Point) -> Point {
+        let factor = if self.slow_smoothing_remaining > 0 {
+            self.slow_smoothing_remaining -= 1;
+            CURSOR_SMOOTHING_SLOW
+        } else {
+            CURSOR_SMOOTHING
+        };
         let raw_f = Point2d::new(raw.x as f64, raw.y as f64);
         let smoothed = match self.smoothed_cursor {
-            Some(prev) => prev + (raw_f - prev) * CURSOR_SMOOTHING,
+            Some(prev) => prev + (raw_f - prev) * factor,
             None => raw_f,
         };
         self.smoothed_cursor = Some(smoothed);
@@ -210,20 +230,45 @@ impl TransparentShapeSolver {
         let current_track_id = self.current_track_id?;
         let last_cursor = self.last_cursor?;
         let bg_direction = self.bg_direction;
+
+        // Tenure bonus: the longer we've tracked the current shape, the
+        // harder it is to switch away. Disabled for the first 15 frames
+        // (grace period) so the solver can find the right shape at start.
+        // After that, grows from 3.0x to 6.0x over 60 frames.
+        let tenure_bonus = if self.current_track_tenure < 15 {
+            1.0 // No bonus during grace period — allow free switching
+        } else {
+            ((self.current_track_tenure - 15) as f64)
+                .min(60.0)
+                .mul_add(0.05, 3.0)
+        };
+
         let match_track = tracks
             .iter()
             .filter(|track| track.track_id() == current_track_id || track.tracklet_len() >= 1)
             .filter_map(|track| {
-                let score = track_background_score(track, last_cursor, bg_direction, region)?;
+                let mut score =
+                    track_background_score(track, last_cursor, bg_direction, region)?;
+                if track.track_id() == current_track_id {
+                    score *= tenure_bonus;
+                }
                 Some((track, score))
             })
-            .max_by(|(_, a_score), (_, b_score)| a_score.partial_cmp(b_score).unwrap())
-            .map(|(track, _)| track);
+            .max_by(|(_, a_score), (_, b_score)| a_score.partial_cmp(b_score).unwrap());
 
-        if let Some(track) = match_track {
+        if let Some((track, score)) = match_track {
             if track.track_id() == current_track_id {
+                self.current_track_tenure += 1;
                 self.candidate_track_id = None;
                 self.candidate_track_count = 0;
+                return Some(track);
+            }
+
+            // If the best candidate is a big jump with low penalized score,
+            // don't switch — let the solver extrapolate from last known
+            // position instead of jumping to an uncertain distant shape.
+            if score < 0.15 {
+                return None;
             }
 
             if self.candidate_track_id == Some(track.track_id()) {
@@ -233,16 +278,23 @@ impl TransparentShapeSolver {
                 self.candidate_track_count = 0;
             }
 
-            if self.candidate_track_count >= 1 {
+            // Need 5 consecutive frames as best before switching
+            if self.candidate_track_count >= 4 {
+                self.current_track_tenure = 0; // reset tenure for new track
                 self.candidate_track_id = None;
                 self.candidate_track_count = 0;
+                self.slow_smoothing_remaining = CURSOR_SMOOTHING_SLOW_FRAMES;
                 return Some(track);
             }
         }
 
-        tracks
-            .iter()
-            .find(|track| track.track_id() == current_track_id)
+        // Fallback: current track still in list but didn't win the scoring.
+        // Still prefer it over switching to prevent oscillation.
+        if let Some(current) = tracks.iter().find(|t| t.track_id() == current_track_id) {
+            self.current_track_tenure += 1;
+            return Some(current);
+        }
+        None
     }
 }
 
@@ -325,19 +377,24 @@ fn track_background_score(
         return None;
     }
 
-    // Anti-jump penalty: if the track center is more than 1.5x the track's
-    // own diagonal size away from the current cursor, it's likely a false
-    // detection. Heavily penalize to prevent the tracker from jumping to
-    // spurious detections far from the expected position.
+    // Anti-jump penalty: if the track center is far from the current cursor,
+    // it's likely a false detection. Use a progressive penalty starting at
+    // 0.5x the track's diagonal (~90px for typical shapes). Normal movement
+    // stays within this; jumps of 100px+ get penalized.
     let track_center = mid_point(track.rect());
     let dx = (track_center.x - last_cursor.x) as f64;
     let dy = (track_center.y - last_cursor.y) as f64;
     let distance = (dx * dx + dy * dy).sqrt();
     let track_diag = ((track.rect().width.pow(2) + track.rect().height.pow(2)) as f64).sqrt();
-    let jump_penalty = if distance > 1.5 * track_diag {
-        0.1
-    } else {
+    let ratio = distance / track_diag.max(1.0);
+    // Progressive: 0.5x = no penalty, 2.0x = 0.01x (near-zero)
+    let jump_penalty = if ratio <= 0.5 {
         1.0
+    } else if ratio >= 2.0 {
+        0.01
+    } else {
+        // Linear interpolation between 0.5 and 2.0
+        1.0 - 0.99 * ((ratio - 0.5) / 1.5)
     };
 
     let final_score = score * distance_penalty * jump_penalty;
