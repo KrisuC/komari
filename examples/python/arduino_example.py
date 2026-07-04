@@ -119,7 +119,7 @@ class KeyInput(KeyInputServicer):
 
 
 async def serve():
-    serial_port = serial.Serial("COM6")
+    serial_port = serial.Serial("COM3")
 
     keys_map = {
         Key.A: ord('a'), Key.B: ord('b'), Key.C: ord('c'),

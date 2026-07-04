@@ -111,7 +111,7 @@ class KeyInput(KeyInputServicer):
 
 
 async def serve():
-    kmNet.init("192.168.2.188", "8704", "33005C53")
+    kmNet.init("192.168.2.188", "8808", "90A9E466")
     kmNet.monitor(1)
 
     keys_map = {

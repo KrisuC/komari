@@ -302,7 +302,27 @@ fn track_background_score(
         return None;
     }
 
-    Some(score * distance_penalty)
+    // Anti-jump penalty: if the track center is more than 1.5x the track's
+    // own diagonal size away from the current cursor, it's likely a false
+    // detection. Heavily penalize to prevent the tracker from jumping to
+    // spurious detections far from the expected position.
+    let track_center = mid_point(track.rect());
+    let dx = (track_center.x - last_cursor.x) as f64;
+    let dy = (track_center.y - last_cursor.y) as f64;
+    let distance = (dx * dx + dy * dy).sqrt();
+    let track_diag = ((track.rect().width.pow(2) + track.rect().height.pow(2)) as f64).sqrt();
+    let jump_penalty = if distance > 1.5 * track_diag {
+        0.1
+    } else {
+        1.0
+    };
+
+    let final_score = score * distance_penalty * jump_penalty;
+    if final_score < 0.01 {
+        return None;
+    }
+
+    Some(final_score)
 }
 
 fn track_background_degree(track: &STrack, bg_direction: Point2d) -> Option<f64> {
