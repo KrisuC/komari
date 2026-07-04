@@ -60,8 +60,10 @@ pub fn DebugScreen() -> Element {
                     }
                     Button {
                         style: ButtonStyle::Secondary,
-                        on_click: move |_| async {
+                        on_click: move |_| async move {
+                            log::info!("[UI] Test transparent shape hard clicked");
                             test_transparent_shape(TransparentShapeDifficulty::Hard).await;
+                            log::info!("[UI] Test transparent shape hard completed");
                         },
 
                         "Test transparent shape hard"

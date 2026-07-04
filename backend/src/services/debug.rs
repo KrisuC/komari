@@ -9,7 +9,7 @@ use std::{
 use include_dir::{Dir, include_dir};
 use opencv::{
     core::{copy_make_border, BorderTypes, Mat, MatTraitConst, ModifyInplace, Rect, Scalar, Vector},
-    highgui::{destroy_all_windows, imshow, wait_key},
+    highgui::{imshow, wait_key},
     imgcodecs::{IMREAD_COLOR, imdecode},
     imgproc::{COLOR_BGR2BGRA, cvt_color_def},
     videoio::{VideoCapture, VideoCaptureTrait, VideoCaptureTraitConst, VideoWriter, VideoWriterTrait},
@@ -123,7 +123,7 @@ impl DebugService {
             {
                 solver.solve(&detector);
             }
-            destroy_all_windows().unwrap();
+            let _ = opencv::highgui::destroy_window("Spin Rune Debug");
         });
     }
 

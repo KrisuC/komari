@@ -243,9 +243,9 @@ impl Drop for ViolettaSolver {
     fn drop(&mut self) {
         #[cfg(debug_assertions)]
         if self.is_debugging {
-            use opencv::highgui::destroy_all_windows;
+            use opencv::highgui::destroy_window;
 
-            let _ = destroy_all_windows();
+            let _ = destroy_window("Violetta Debug");
         }
     }
 }
