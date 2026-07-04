@@ -305,7 +305,7 @@ if ($SkipCudnn) {
                 $pipArgs = @(
                     "-m", "pip", "install", "nvidia-cudnn-cu12",
                     "--user",
-                    "--default-timeout=600",
+                    "--default-timeout=3600",
                     "--disable-pip-version-check",
                     "--progress-bar", "on"
                 )
@@ -324,7 +324,7 @@ if ($SkipCudnn) {
                     Write-Host "  Retrying without --user (may need admin)..." -ForegroundColor Yellow
                     $pipArgsNoUser = @(
                         "-m", "pip", "install", "nvidia-cudnn-cu12",
-                        "--default-timeout=600",
+                        "--default-timeout=3600",
                         "--disable-pip-version-check",
                         "--progress-bar", "on"
                     )
