@@ -51,12 +51,14 @@ if ($Local) {
     }
     Write-Host "  System-wide install to: $TargetDir" -ForegroundColor Green
 } else {
-    if ($PSScriptRoot) {
-        $TargetDir = $PSScriptRoot
-    } else {
-        $TargetDir = Get-Location
-    }
-    Write-Host "  Using directory: $TargetDir" -ForegroundColor Green
+    Write-Host "  ERROR: No target specified." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Use -SystemWide to install globally, or -Local <path> for a specific app." -ForegroundColor Yellow
+    Write-Host "  Example: powershell -ExecutionPolicy Bypass -File install_gpu_deps.ps1 -SystemWide" -ForegroundColor White
+    Write-Host "  Example: powershell -ExecutionPolicy Bypass -File install_gpu_deps.ps1 -Local 'C:\MyApp'" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Use the .bat file to avoid this: just double-click install_gpu_deps.bat" -ForegroundColor Cyan
+    throw "No target directory specified. Use -SystemWide or -Local."
 }
 
 Write-Host ""

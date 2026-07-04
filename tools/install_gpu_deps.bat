@@ -1,15 +1,19 @@
 @echo off
-:: Double-click this file to install GPU dependencies.
-:: It will launch the PowerShell script with the correct settings.
+:: GPU Dependency Installer for ONNX Runtime
 ::
-:: To specify a custom target folder, drag-and-drop your app folder onto this file,
-:: or run from command line:
-::   install_gpu_deps.bat "C:\Path\To\App"
+:: Double-click to install system-wide (requires admin) — recommended.
+:: Or drag-and-drop an app folder to install locally (no admin needed).
 
 set TARGET=%~1
+
 if "%TARGET%"=="" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install_gpu_deps.ps1"
+    echo Installing GPU dependencies system-wide...
+    echo This requires Administrator privileges.
+    echo.
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File ""%~dp0install_gpu_deps.ps1"" -SystemWide'"
 ) else (
+    echo Installing GPU dependencies to: %TARGET%
+    echo.
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install_gpu_deps.ps1" -Local "%TARGET%"
 )
 pause
