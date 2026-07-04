@@ -55,18 +55,47 @@ impl ByteTracker {
 
     pub fn update(&mut self, detections: Vec<Detection>) -> Vec<STrack> {
         self.frame_id += 1;
+        let total_detections = detections.len();
 
         self.predict();
 
         let (low_detection_tracks, high_detection_tracks): (Vec<STrack>, Vec<STrack>) = detections
             .into_iter()
             .map(|detection| STrack::new(detection.bbox, detection.score))
+            .inspect(|t| {
+                if t.score > 0.5 {
+                    log::debug!(
+                        "[byte_tracker] detection score={:.4} bbox=({},{},{},{})",
+                        t.score,
+                        t.tlwh[0] as i32,
+                        t.tlwh[1] as i32,
+                        t.tlwh[2] as i32,
+                        t.tlwh[3] as i32,
+                    );
+                }
+            })
             .filter(|track| track.score > self.low_match_score_threshold)
             .partition(|track| {
                 self.low_match_score_threshold < track.score
                     && track.score < self.high_match_score_threshold
             });
+        log::debug!(
+            "[byte_tracker] frame={} total={} after_filter=({} low + {} high) initialized={} thresh=({},{},{})",
+            self.frame_id,
+            total_detections,
+            low_detection_tracks.len(),
+            high_detection_tracks.len(),
+            self.initialized,
+            self.low_match_score_threshold,
+            self.high_match_score_threshold,
+            self.new_track_score_threshold,
+        );
         if self.init(&low_detection_tracks, &high_detection_tracks) {
+            log::info!(
+                "[byte_tracker] INIT frame={} activated {} tracks",
+                self.frame_id,
+                self.tracked.len()
+            );
             return self.tracked.clone();
         }
 
@@ -103,8 +132,7 @@ impl ByteTracker {
             return false;
         }
 
-        self.initialized = true;
-        self.tracked = low_detection_tracks
+        let all_tracks: Vec<STrack> = low_detection_tracks
             .iter()
             .cloned()
             .chain(high_detection_tracks.iter().cloned())
@@ -114,6 +142,16 @@ impl ByteTracker {
             })
             .collect();
 
+        // Don't initialize with zero tracks — wait for a frame with actual
+        // detections. This prevents the tracker from getting stuck when the
+        // first few frames have all-zero confidence scores (e.g. when the
+        // video starts before the transparent shape puzzle phase).
+        if all_tracks.is_empty() {
+            return false;
+        }
+
+        self.initialized = true;
+        self.tracked = all_tracks;
         true
     }
 

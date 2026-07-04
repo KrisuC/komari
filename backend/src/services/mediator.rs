@@ -1,5 +1,8 @@
 use std::{fmt::Debug, ops::DerefMut};
 
+#[cfg(debug_assertions)]
+use std::path::PathBuf;
+
 use opencv::{
     core::{MatTraitConst, MatTraitConstManual, Rect, Vec4b, Vector},
     imgcodecs::{IMREAD_COLOR, IMREAD_GRAYSCALE, imdecode},
@@ -245,6 +248,13 @@ fn handle_ui_request(
             test_transparent_shape(context, difficulty);
             Response::TestTransparentShape
         }
+        #[cfg(debug_assertions)]
+        Request::TestTransparentShapeFile(path) => {
+            log::info!("[mediator] TestTransparentShapeFile received: {:?}", path);
+            test_transparent_shape_file(context, path);
+            log::info!("[mediator] TestTransparentShapeFile handler done");
+            Response::TestTransparentShapeFile
+        }
     };
     let _ = response.send(result);
 }
@@ -369,6 +379,13 @@ fn test_transparent_shape(context: &mut EventContext<'_>, difficulty: Transparen
     context
         .debug_service
         .test_transparent_shape(context.resources.input.clone(), difficulty);
+}
+
+#[cfg(debug_assertions)]
+fn test_transparent_shape_file(context: &mut EventContext<'_>, path: PathBuf) {
+    context
+        .debug_service
+        .test_transparent_shape_file(context.resources.input.clone(), path);
 }
 
 #[inline]

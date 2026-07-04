@@ -131,6 +131,8 @@ enum Request {
     TestVioletta,
     #[cfg(debug_assertions)]
     TestTransparentShape(TransparentShapeDifficulty),
+    #[cfg(debug_assertions)]
+    TestTransparentShapeFile(std::path::PathBuf),
 }
 
 /// Represents response to UI [`Request`].
@@ -166,6 +168,8 @@ enum Response {
     TestVioletta,
     #[cfg(debug_assertions)]
     TestTransparentShape,
+    #[cfg(debug_assertions)]
+    TestTransparentShapeFile,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -427,6 +431,13 @@ pub async fn test_violetta() {
 #[cfg(debug_assertions)]
 pub async fn test_transparent_shape(difficulty: TransparentShapeDifficulty) {
     send_request!(TestTransparentShape(difficulty))
+}
+
+#[cfg(debug_assertions)]
+pub async fn test_transparent_shape_file(path: std::path::PathBuf) {
+    log::info!("[backend::lib] test_transparent_shape_file called with: {:?}", path);
+    send_request!(TestTransparentShapeFile(path));
+    log::info!("[backend::lib] test_transparent_shape_file request completed");
 }
 
 async fn recv_request() -> Option<PendingRequest> {

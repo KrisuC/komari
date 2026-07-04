@@ -1,6 +1,7 @@
 use backend::{
     DebugState, TransparentShapeDifficulty, auto_record_lie_detector, auto_save_rune,
-    debug_state_receiver, record_video, test_spin_rune, test_transparent_shape, test_violetta,
+    debug_state_receiver, record_video, test_spin_rune, test_transparent_shape,
+    test_transparent_shape_file, test_violetta,
 };
 use dioxus::prelude::*;
 use tokio::sync::broadcast::error::RecvError;
@@ -13,6 +14,7 @@ use crate::components::{
 #[component]
 pub fn DebugScreen() -> Element {
     let mut state = use_signal(DebugState::default);
+    let mut file_input_key = use_signal(|| 0);
 
     use_future(move || async move {
         let mut rx = debug_state_receiver().await;
@@ -63,6 +65,31 @@ pub fn DebugScreen() -> Element {
                         },
 
                         "Test transparent shape hard"
+                    }
+                    label {
+                        class: "inline-block h-6 text-xs text-center font-medium content-center
+                                px-2 bg-secondary-surface text-secondary-text cursor-pointer",
+                        input {
+                            key: "{file_input_key}",
+                            class: "sr-only",
+                            r#type: "file",
+                            accept: ".mp4,video/mp4",
+                            onchange: move |e: Event<FormData>| {
+                                let files = e.data.files();
+                                log::info!("[UI] file input onchange, {} file(s) selected", files.len());
+                                if let Some(file) = files.into_iter().next() {
+                                    let path = file.path();
+                                    log::info!("[UI] selected file path: {:?}", path);
+                                    file_input_key += 1;
+                                    spawn(async move {
+                                        log::info!("[UI] spawning backend call for: {:?}", path);
+                                        test_transparent_shape_file(path).await;
+                                        log::info!("[UI] backend call completed for transparent shape test");
+                                    });
+                                }
+                            },
+                        }
+                        "Test transparent shape..."
                     }
                     Button {
                         style: ButtonStyle::Secondary,

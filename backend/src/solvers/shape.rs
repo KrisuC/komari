@@ -1,6 +1,9 @@
-use std::ops::Div;
+use std::{
+    ops::Div,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
-use log::debug;
+use log::{debug, info};
 use opencv::core::{Point, Point_, Point2d, Rect};
 
 use crate::{
@@ -41,19 +44,64 @@ impl Default for TransparentShapeSolver {
 impl TransparentShapeSolver {
     #[cfg(debug_assertions)]
     pub fn debug() -> Self {
-        let mut default = Self::default();
-        default.is_debugging = true;
-        default
+        // Use very permissive tracker thresholds for debug/testing mode.
+        // The user's video may have different visual characteristics than the
+        // training data, resulting in lower confidence scores. Lowering thresholds
+        // ensures the tracker doesn't filter out all detections.
+        Self {
+            tracker: ByteTracker::new(
+                FPS as u64, // max_time_lost
+                0.05,       // high_match_score_threshold (was 0.25)
+                0.01,       // low_match_score_threshold  (was 0.1)
+                0.05,       // new_track_score_threshold  (was 0.25)
+                IouGating::None,
+            ),
+            current_track_id: None,
+            candidate_track_id: None,
+            candidate_track_count: 0,
+            last_cursor: None,
+            last_velocity: None,
+            bg_direction: Point2d::default(),
+            is_debugging: true,
+        }
     }
 
     pub fn solve(&mut self, detector: &dyn Detector, region: Rect) -> Option<Point> {
         let shapes = detector.detect_transparent_shapes(region);
+        let shape_count = shapes.len();
+
+        #[cfg(debug_assertions)]
+        let top_scores: Vec<f32> = if self.is_debugging {
+            let mut scores: Vec<f32> = shapes.iter().map(|(_, s)| *s).collect();
+            scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+            scores.into_iter().take(5).collect()
+        } else {
+            Vec::new()
+        };
+
         let tracks = self.tracker.update(
             shapes
                 .into_iter()
                 .map(|(bbox, score)| Detection::new(bbox, score))
                 .collect(),
         );
+
+        #[cfg(debug_assertions)]
+        if self.is_debugging {
+            static CALL_COUNT: AtomicU64 = AtomicU64::new(0);
+            let call = CALL_COUNT.fetch_add(1, Ordering::Relaxed);
+            if call % 30 == 0 {
+                info!(
+                    "[solver] call#{} shapes={} tracks={} current_track={:?} last_cursor={:?} top_scores={:?}",
+                    call,
+                    shape_count,
+                    tracks.len(),
+                    self.current_track_id,
+                    self.last_cursor,
+                    top_scores,
+                );
+            }
+        }
 
         self.update_initial_track_if_needed(region, &tracks);
         self.update_background_direction(&tracks);
