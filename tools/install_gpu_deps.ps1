@@ -143,7 +143,7 @@ if ($existingGpuDlls.Count -gt 0) {
 # ---- HELPER FUNCTIONS ----
 function Find-Dll {
     param([string]$Name)
-    if (Test-Path "$using:TargetDir\$Name") { return "$using:TargetDir\$Name" }
+    if (Test-Path "$script:TargetDir\$Name") { return "$script:TargetDir\$Name" }
     foreach ($dir in Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA" -ErrorAction SilentlyContinue) {
         if (Test-Path "$($dir.FullName)\bin\$Name") { return "$($dir.FullName)\bin\$Name" }
     }
