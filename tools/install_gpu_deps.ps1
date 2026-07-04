@@ -26,6 +26,12 @@ try {
 $ErrorActionPreference = "Continue"
 $ScriptStartTime = Get-Date
 
+$ProxyUrl = "http://127.0.0.1:7890"
+$env:HTTP_PROXY = $ProxyUrl
+$env:HTTPS_PROXY = $ProxyUrl
+$env:http_proxy = $ProxyUrl
+$env:https_proxy = $ProxyUrl
+
 # ---- RESOLVE TARGET DIRECTORY ----
 Write-Host "Step 1/5: Resolving target directory..." -ForegroundColor Cyan
 
@@ -68,6 +74,7 @@ Write-Host "  ONNX Runtime 1.22 / CUDA 12.x / cuDNN 9.x" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  Started at : $ScriptStartTime" -ForegroundColor Gray
 Write-Host "  Target     : $TargetDir" -ForegroundColor Gray
+Write-Host "  Proxy      : $ProxyUrl" -ForegroundColor Gray
 Write-Host "  PC name    : $env:COMPUTERNAME" -ForegroundColor Gray
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
@@ -306,11 +313,12 @@ if ($SkipCudnn) {
                 $pipArgs = @(
                     "-m", "pip", "install", "nvidia-cudnn-cu12",
                     "--user",
+                    "--proxy=$ProxyUrl",
                     "--default-timeout=3600",
                     "--disable-pip-version-check",
                     "--progress-bar", "on"
                 )
-                Write-Host "  Running: pip install nvidia-cudnn-cu12 --user --default-timeout=600" -ForegroundColor Gray
+                Write-Host "  Running: pip install nvidia-cudnn-cu12 --user --proxy=$ProxyUrl" -ForegroundColor Gray
                 Write-Host "  (Download is ~700MB — this WILL take several minutes. Please wait...)" -ForegroundColor Gray
                 Write-Host ""
 
@@ -325,6 +333,7 @@ if ($SkipCudnn) {
                     Write-Host "  Retrying without --user (may need admin)..." -ForegroundColor Yellow
                     $pipArgsNoUser = @(
                         "-m", "pip", "install", "nvidia-cudnn-cu12",
+                        "--proxy=$ProxyUrl",
                         "--default-timeout=3600",
                         "--disable-pip-version-check",
                         "--progress-bar", "on"
