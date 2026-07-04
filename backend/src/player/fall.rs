@@ -119,8 +119,15 @@ pub fn update_falling_state(
             player.context.last_movement = Some(LastMovement::Falling);
             player.state = Player::Falling(falling.moving(moving));
 
-            // Do the fall
-            resources.input.send_key(KeyKind::Down);
+            // Do the fall: hold Down, press Jump while Down is held, then release.
+            // This ensures the game registers a proper down+jump combo, which is
+            // especially important for hardware input devices like KMBox where
+            // sequential send_key() calls may not overlap correctly.
+            use crate::bridge::{InputKeyDownOptions, InputKeyOptions};
+
+            resources
+                .input
+                .send_key_down_with_options(KeyKind::Down, InputKeyDownOptions::default());
             let y_distance = moving.y_distance_direction_from(true, moving.pos).0;
             let teleport_fall_threshold = if player.context.config.has_extended_teleport_range {
                 EXTENDED_TELEPORT_FALL_THRESHOLD
@@ -133,10 +140,17 @@ pub fn update_falling_state(
             if can_teleport {
                 resources
                     .input
-                    .send_key(player.context.config.teleport_key.unwrap());
+                    .send_key_with_options(
+                        player.context.config.teleport_key.unwrap(),
+                        InputKeyOptions::default().down_ms(80),
+                    );
             } else {
-                resources.input.send_key(player.context.config.jump_key);
+                resources.input.send_key_with_options(
+                    player.context.config.jump_key,
+                    InputKeyOptions::default().down_ms(80),
+                );
             }
+            resources.input.send_key_up(KeyKind::Down);
         }
         MovingLifecycle::Ended(moving) => {
             player.state = Player::Moving(moving.dest, moving.exact, moving.intermediates);
