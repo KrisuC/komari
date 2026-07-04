@@ -25,10 +25,6 @@ $Host.UI.RawUI.WindowTitle = "GPU Dependency Installer"
 try {
 $ErrorActionPreference = "Continue"
 $ScriptStartTime = Get-Date
-$LogFile = "$env:TEMP\gpu_deps_install.log"
-
-# Also tee all output to a log file
-Start-Transcript -Path $LogFile -Force | Out-Null
 
 # ---- RESOLVE TARGET DIRECTORY ----
 Write-Host "Step 1/5: Resolving target directory..." -ForegroundColor Cyan

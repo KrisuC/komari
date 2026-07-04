@@ -1,21 +1,20 @@
 @echo off
-set TARGET=%~1
-set LOG=%TEMP%\gpu_deps_install.log
+setlocal enabledelayedexpansion
 
+set TARGET=%~1
+
+:: If no target and not admin, self-elevate
 if "%TARGET%"=="" (
-    echo Installing GPU dependencies system-wide...
-    echo This requires Administrator privileges (UAC popup incoming).
-    echo.
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File ""%~dp0install_gpu_deps.ps1"" -SystemWide'"
-    echo.
-    if exist "%LOG%" (
-        echo --- INSTALL LOG ---
-        type "%LOG%"
-        echo --- END OF LOG ---
-        del "%LOG%"
-    ) else (
-        echo WARNING: No log file found. The elevated window may not have run.
+    net session >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo Requesting Administrator privileges...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process '%~f0' -Verb RunAs -Wait"
+        exit /b
     )
+
+    echo Installing GPU dependencies system-wide...
+    echo.
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install_gpu_deps.ps1" -SystemWide
 ) else (
     echo Installing GPU dependencies to: %TARGET%
     echo.
