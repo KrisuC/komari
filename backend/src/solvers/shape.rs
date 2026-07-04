@@ -12,6 +12,10 @@ use crate::{
     tracker::{ByteTracker, Detection, IouGating, STrack},
 };
 
+/// How aggressively the cursor moves toward the target each frame.
+/// 0.35 = move 35% of the way each tick. Lower = smoother but more lag.
+const CURSOR_SMOOTHING: f64 = 0.35;
+
 #[derive(Debug)]
 pub struct TransparentShapeSolver {
     tracker: ByteTracker,
@@ -21,6 +25,7 @@ pub struct TransparentShapeSolver {
     last_cursor: Option<Point>,
     last_velocity: Option<Point2d>,
     bg_direction: Point2d,
+    smoothed_cursor: Option<Point2d>,
     #[cfg(debug_assertions)]
     is_debugging: bool,
 }
@@ -35,6 +40,7 @@ impl Default for TransparentShapeSolver {
             last_cursor: None,
             last_velocity: None,
             bg_direction: Point2d::default(),
+            smoothed_cursor: None,
             #[cfg(debug_assertions)]
             is_debugging: false,
         }
@@ -62,6 +68,7 @@ impl TransparentShapeSolver {
             last_cursor: None,
             last_velocity: None,
             bg_direction: Point2d::default(),
+            smoothed_cursor: None,
             is_debugging: true,
         }
     }
@@ -127,7 +134,7 @@ impl TransparentShapeSolver {
                     );
                 }
 
-                Some(region.tl() + next_cursor)
+                Some(self.smooth_cursor(region.tl() + next_cursor))
             }
             None => {
                 let last_cursor = self.last_cursor?;
@@ -155,9 +162,25 @@ impl TransparentShapeSolver {
                     );
                 }
 
-                Some(absolute_next_cursor)
+                Some(self.smooth_cursor(absolute_next_cursor))
             }
         }
+    }
+
+    /// Applies exponential smoothing to the raw cursor position.
+    ///
+    /// Each frame, the cursor moves `CURSOR_SMOOTHING` (35%) toward the raw
+    /// target. This eliminates jitter from frame-to-frame detection noise while
+    /// still tracking real movement smoothly. The 35% factor means the cursor
+    /// reaches ~88% of the target within 5 frames (~0.17s at 30fps).
+    fn smooth_cursor(&mut self, raw: Point) -> Point {
+        let raw_f = Point2d::new(raw.x as f64, raw.y as f64);
+        let smoothed = match self.smoothed_cursor {
+            Some(prev) => prev + (raw_f - prev) * CURSOR_SMOOTHING,
+            None => raw_f,
+        };
+        self.smoothed_cursor = Some(smoothed);
+        Point::new(smoothed.x.round() as i32, smoothed.y.round() as i32)
     }
 
     fn update_initial_track_if_needed(&mut self, region: Rect, tracks: &[STrack]) {
