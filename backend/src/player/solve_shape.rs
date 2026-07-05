@@ -45,6 +45,10 @@ pub struct SolvingShape {
     state: State,
     solving: Option<Rc<RefCell<Solving>>>,
     lie_detector_task: Rc<RefCell<Option<Task<Result<bool>>>>>,
+    /// Number of consecutive times the title detection has failed after the
+    /// preparing phase ended. Reset to 0 while the preparing phase is still
+    /// active.
+    title_retries: u8,
 }
 
 impl Display for SolvingShape {
@@ -100,7 +104,9 @@ pub fn update_solving_shape_state(resources: &mut Resources, player: &mut Player
 }
 
 fn update_waiting(resources: &mut Resources, solving_shape: &mut SolvingShape) {
-    const CHECK_INTERVAL: u64 = 30;
+    const CHECK_INTERVAL: u64 = 10;
+    /// How many times the title detection can fail before giving up.
+    const MAX_TITLE_RETRIES: u8 = 10;
 
     let State::Waiting = solving_shape.state else {
         panic!("solving shape state is not waiting")
@@ -109,14 +115,39 @@ fn update_waiting(resources: &mut Resources, solving_shape: &mut SolvingShape) {
     if !resources.tick.is_multiple_of(CHECK_INTERVAL) {
         return;
     }
-    if resources.detector().detect_lie_detector_shape_preparing() {
+
+    let is_preparing = resources
+        .detector()
+        .detect_lie_detector_shape_preparing();
+    debug!(
+        target: "backend/player",
+        "lie detector waiting: tick={} preparing={is_preparing}",
+        resources.tick
+    );
+
+    if is_preparing {
+        // Reset retry counter while the preparing phase is still active,
+        // so we have all retries available once shapes appear.
+        solving_shape.title_retries = 0;
         return;
     }
 
     let title = match resources.detector().detect_lie_detector_shape() {
         Ok(val) => val,
-        Err(_) => {
-            solving_shape.state = State::Completed;
+        Err(err) => {
+            solving_shape.title_retries += 1;
+            debug!(
+                target: "backend/player",
+                "lie detector title detection failed ({}/{}): {err:?}",
+                solving_shape.title_retries, MAX_TITLE_RETRIES
+            );
+            if solving_shape.title_retries >= MAX_TITLE_RETRIES {
+                debug!(
+                    target: "backend/player",
+                    "lie detector title detection giving up after {MAX_TITLE_RETRIES} retries"
+                );
+                solving_shape.state = State::Completed;
+            }
             return;
         }
     };

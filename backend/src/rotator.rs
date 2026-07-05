@@ -1234,8 +1234,18 @@ fn solve_transparent_shape_priority_action() -> PriorityAction {
             }
 
             match update_detection_task(resources, 3000, &mut task, task_fn) {
-                Update::Ok(true) => ConditionResult::Queue,
-                Update::Err(_) | Update::Ok(false) => ConditionResult::Ignore,
+                Update::Ok(true) => {
+                    debug!(target: "backend/rotator", "transparent shape: lie detector title detected, queuing SolveShape");
+                    ConditionResult::Queue
+                }
+                Update::Ok(false) => {
+                    debug!(target: "backend/rotator", "transparent shape: lie detector title NOT detected (Ok(false))");
+                    ConditionResult::Ignore
+                }
+                Update::Err(err) => {
+                    debug!(target: "backend/rotator", "transparent shape: lie detector title detection error: {err:?}");
+                    ConditionResult::Ignore
+                }
                 Update::Pending => ConditionResult::Skip,
             }
         })),

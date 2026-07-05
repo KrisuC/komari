@@ -2310,7 +2310,7 @@ fn detect_lie_detector_shape(bgr: &impl ToInputArray, localization: &Localizatio
             .as_ref()
             .unwrap_or(&*LIE_DETECTOR_TRANSPARENT_SHAPE_TEMPLATE),
         Point::default(),
-        0.6,
+        0.5,
     )?;
 
     Ok(Rect::new(
@@ -2335,7 +2335,7 @@ fn detect_lie_detector_shape_preparing(bgr: &impl ToInputArray) -> Result<Rect> 
     let scale = 0.5;
     resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
 
-    let rect = detect_template(&small, &*TEMPLATE, Point::default(), 0.6)?;
+    let rect = detect_template(&small, &*TEMPLATE, Point::default(), 0.5)?;
 
     Ok(Rect::new(
         (rect.x as f64 / scale).round() as i32,
