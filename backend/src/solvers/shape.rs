@@ -473,16 +473,6 @@ fn mid_point(rect: Rect) -> Point {
     rect.tl() + Point::new(rect.width / 2, rect.height / 2)
 }
 
-fn predicted_center(track: &STrack) -> Point {
-    let v = track.kalman_velocity();
-    let point = mid_point(track.kalman_rect());
-
-    Point::new(
-        (point.x as f64 + v.x).round() as i32,
-        (point.y as f64 + v.y).round() as i32,
-    )
-}
-
 fn track_background_score(
     track: &STrack,
     last_cursor: Point,
