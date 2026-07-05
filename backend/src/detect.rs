@@ -2304,14 +2304,30 @@ fn detect_lie_detector_shape(bgr: &impl ToInputArray, localization: &Localizatio
     let scale = 0.5;
     resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
 
-    let rect = detect_template(
+    let default_template = &*LIE_DETECTOR_TRANSPARENT_SHAPE_TEMPLATE;
+    let used_template = template.as_ref().unwrap_or(default_template);
+    let (rect, score) = match detect_template_single(
         &small,
-        template
-            .as_ref()
-            .unwrap_or(&*LIE_DETECTOR_TRANSPARENT_SHAPE_TEMPLATE),
+        used_template,
+        no_array(),
         Point::default(),
         0.5,
-    )?;
+    ) {
+        Ok(result) => result,
+        Err(err) => {
+            debug!(
+                target: "backend/detect",
+                "lie_detector_shape title: NOT FOUND ({err:?})"
+            );
+            return Err(err);
+        }
+    };
+
+    debug!(
+        target: "backend/detect",
+        "lie_detector_shape title: MATCHED score={score:.4} at ({}, {}) {}x{} (downscaled)",
+        rect.x, rect.y, rect.width, rect.height,
+    );
 
     Ok(Rect::new(
         (rect.x as f64 / scale).round() as i32,
@@ -2335,7 +2351,28 @@ fn detect_lie_detector_shape_preparing(bgr: &impl ToInputArray) -> Result<Rect> 
     let scale = 0.5;
     resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
 
-    let rect = detect_template(&small, &*TEMPLATE, Point::default(), 0.5)?;
+    let (rect, score) = match detect_template_single(
+        &small,
+        &*TEMPLATE,
+        no_array(),
+        Point::default(),
+        0.5,
+    ) {
+        Ok(result) => result,
+        Err(err) => {
+            debug!(
+                target: "backend/detect",
+                "lie_detector_shape preparing: NOT FOUND ({err:?})"
+            );
+            return Err(err);
+        }
+    };
+
+    debug!(
+        target: "backend/detect",
+        "lie_detector_shape preparing: MATCHED score={score:.4} at ({}, {}) {}x{} (downscaled)",
+        rect.x, rect.y, rect.width, rect.height,
+    );
 
     Ok(Rect::new(
         (rect.x as f64 / scale).round() as i32,
