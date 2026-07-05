@@ -34,7 +34,7 @@ use windows::{
                 VK_Y, VK_Z,
             },
             WindowsAndMessaging::{
-                CallNextHookEx, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
+                CallNextHookEx, GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
                 GetWindowThreadProcessId, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED,
                 LLKHF_LOWER_IL_INJECTED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
                 SM_YVIRTUALSCREEN, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
@@ -171,6 +171,10 @@ impl WindowsInput {
         }
 
         let (dx, dy) = client_to_absolute_coordinate_raw(handle, x, y)?;
+        log::debug!(
+            "[send_mouse] client=({}, {}) -> absolute=({}, {}) kind={:?}",
+            x, y, dx, dy, kind
+        );
         let base_flags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK;
 
         match kind {
@@ -469,6 +473,14 @@ fn client_to_absolute_coordinate_raw(handle: HWND, x: i32, y: i32) -> Result<(i3
     let mut point = POINT { x, y };
     unsafe { ClientToScreen(handle, &raw mut point).ok()? };
 
+    // Log the window's client rect to compare with the detection frame size.
+    let mut rect = RECT::default();
+    let client_size = if unsafe { GetClientRect(handle, &raw mut rect).is_ok() } {
+        Some((rect.right - rect.left, rect.bottom - rect.top))
+    } else {
+        None
+    };
+
     let virtual_left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
     let virtual_top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
     let virtual_width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
@@ -479,6 +491,14 @@ fn client_to_absolute_coordinate_raw(handle: HWND, x: i32, y: i32) -> Result<(i3
 
     let dx = (point.x - virtual_left) * 65536 / virtual_width;
     let dy = (point.y - virtual_top) * 65536 / virtual_height;
+
+    log::debug!(
+        "[coord_conv] client=({}, {}) -> screen=({}, {}) -> abs=({}, {}) win_client={:?} virt=({},{} {},{})",
+        x, y, point.x, point.y, dx, dy,
+        client_size,
+        virtual_left, virtual_top, virtual_width, virtual_height
+    );
+
     Ok((dx, dy))
 }
 

@@ -13,15 +13,7 @@ use crate::{
     tracker::{ByteTracker, Detection, IouGating, STrack},
 };
 
-/// How aggressively the cursor moves toward the target each frame.
-/// 0.35 = move 35% of the way each tick. Lower = smoother but more lag.
-const CURSOR_SMOOTHING: f64 = 0.35;
-
-/// Reduced smoothing factor used for the first few frames after switching
-/// to a distant track, to avoid a visible "lurch."
-const CURSOR_SMOOTHING_SLOW: f64 = 0.12;
-
-/// Frames to use the slow smoothing factor after a distant track switch.
+/// Frames to use slow cursor transition after a distant track switch.
 const CURSOR_SMOOTHING_SLOW_FRAMES: u32 = 10;
 
 #[derive(Debug)]
@@ -33,7 +25,6 @@ pub struct TransparentShapeSolver {
     last_cursor: Option<Point>,
     last_velocity: Option<Point2d>,
     bg_direction: Point2d,
-    smoothed_cursor: Option<Point2d>,
     /// How many consecutive frames the current track has been tracked.
     current_track_tenure: u32,
     /// Countdown of frames to use slow cursor smoothing after a track switch.
@@ -56,7 +47,6 @@ impl Default for TransparentShapeSolver {
             last_cursor: None,
             last_velocity: None,
             bg_direction: Point2d::default(),
-            smoothed_cursor: None,
             current_track_tenure: 0,
             slow_smoothing_remaining: 0,
             aspect_history: HashMap::new(),
@@ -87,7 +77,6 @@ impl TransparentShapeSolver {
             last_cursor: None,
             last_velocity: None,
             bg_direction: Point2d::default(),
-            smoothed_cursor: None,
             current_track_tenure: 0,
             slow_smoothing_remaining: 0,
             aspect_history: HashMap::new(),
@@ -221,13 +210,24 @@ impl TransparentShapeSolver {
 
         match self.update_and_find_best_track(&tracks, region) {
             Some(track) => {
-                let next_cursor = predicted_center(track);
+                let cursor = mid_point(track.rect());
+                let absolute = region.tl() + cursor;
                 if self.current_track_id != Some(track.track_id()) {
                     debug!(target: "backend/player", "shape id switches from {:?} to {}", self.current_track_id, track.track_id());
                 }
                 self.current_track_id = Some(track.track_id());
-                self.last_cursor = Some(next_cursor);
+                self.last_cursor = Some(cursor);
                 self.last_velocity = Some(track.kalman_velocity());
+
+                log::debug!(
+                    target: "backend/player",
+                    "solve: cursor=({}, {}) region=({},{}) bbox=({},{},{},{}) track_id={}",
+                    absolute.x, absolute.y,
+                    region.x, region.y,
+                    track.rect().x, track.rect().y,
+                    track.rect().width, track.rect().height,
+                    track.track_id()
+                );
 
                 #[cfg(debug_assertions)]
                 if self.is_debugging {
@@ -235,12 +235,12 @@ impl TransparentShapeSolver {
                         detector,
                         &tracks,
                         region,
-                        next_cursor,
+                        cursor,
                         self.bg_direction,
                     );
                 }
 
-                Some(self.smooth_cursor(region.tl() + next_cursor))
+                Some(absolute)
             }
             None => {
                 let last_cursor = self.last_cursor?;
@@ -257,18 +257,7 @@ impl TransparentShapeSolver {
 
                 self.last_cursor = Some(next_cursor);
 
-                #[cfg(debug_assertions)]
-                if self.is_debugging {
-                    debug_transparent_shapes(
-                        detector,
-                        &tracks,
-                        region,
-                        next_cursor,
-                        self.bg_direction,
-                    );
-                }
-
-                Some(self.smooth_cursor(absolute_next_cursor))
+                Some(absolute_next_cursor)
             }
         }
     }
@@ -278,22 +267,6 @@ impl TransparentShapeSolver {
     /// Each frame, the cursor moves toward the raw target. Normally 35% per
     /// frame (~88% in 5 frames). After a distant track switch, uses 12% for
     /// 10 frames to avoid a visible lurch.
-    fn smooth_cursor(&mut self, raw: Point) -> Point {
-        let factor = if self.slow_smoothing_remaining > 0 {
-            self.slow_smoothing_remaining -= 1;
-            CURSOR_SMOOTHING_SLOW
-        } else {
-            CURSOR_SMOOTHING
-        };
-        let raw_f = Point2d::new(raw.x as f64, raw.y as f64);
-        let smoothed = match self.smoothed_cursor {
-            Some(prev) => prev + (raw_f - prev) * factor,
-            None => raw_f,
-        };
-        self.smoothed_cursor = Some(smoothed);
-        Point::new(smoothed.x.round() as i32, smoothed.y.round() as i32)
-    }
-
     fn update_initial_track_if_needed(&mut self, region: Rect, tracks: &[STrack]) {
         if self.current_track_id.is_none() {
             let region_mid = mid_point(Rect::new(0, 0, region.width, region.height));
