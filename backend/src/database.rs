@@ -1,5 +1,5 @@
 use std::{
-    env,
+    path::PathBuf,
     sync::{LazyLock, Mutex},
 };
 
@@ -20,11 +20,14 @@ const SEEDS: &str = "seeds";
 const LOCALIZATIONS: &str = "localizations";
 
 static CONNECTION: LazyLock<Mutex<Connection>> = LazyLock::new(|| {
-    let path = env::current_exe()
-        .unwrap()
+    // Store in project root so the database survives `dx build` wipes of
+    // the target directory. CARGO_MANIFEST_DIR = <project>/backend.
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("local.db");
+        .join("dataset");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("local.db");
     let conn = Connection::open(path.to_str().unwrap()).expect("failed to open local.db");
     conn.execute_batch(
         format!(
@@ -116,6 +119,17 @@ pub fn query_settings() -> Settings {
 }
 
 pub fn upsert_settings(settings: &mut Settings) -> Result<()> {
+    // Settings is a singleton table — always update the existing row
+    // rather than inserting a new one. If no id is provided, use the
+    // id of the current settings row so ON CONFLICT updates properly.
+    if settings.id.is_none() {
+        let existing: Option<Settings> = query_from_table::<Settings>(SETTINGS)
+            .ok()
+            .and_then(|v| v.into_iter().next());
+        if let Some(existing) = existing {
+            settings.id = existing.id;
+        }
+    }
     upsert_to_table(SETTINGS, settings).inspect(|_| {
         let _ = EVENT.send(DatabaseEvent::SettingsUpdated(settings.clone()));
     })
