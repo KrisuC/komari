@@ -1224,7 +1224,7 @@ fn solve_rune_priority_action() -> PriorityAction {
 fn solve_transparent_shape_priority_action() -> PriorityAction {
     let mut task: Option<Task<Result<bool>>> = None;
     let task_fn = move |detector: Arc<dyn Detector>| -> Result<bool> {
-        Ok(detector.detect_lie_detector_shape().is_ok())
+        Ok(detector.detect_lie_detector_shape_preparing())
     };
 
     PriorityAction {
@@ -1235,15 +1235,15 @@ fn solve_transparent_shape_priority_action() -> PriorityAction {
 
             match update_detection_task(resources, 3000, &mut task, task_fn) {
                 Update::Ok(true) => {
-                    debug!(target: "backend/rotator", "transparent shape: lie detector title detected, queuing SolveShape");
+                    debug!(target: "backend/rotator", "transparent shape: lie detector preparing detected, queuing SolveShape");
                     ConditionResult::Queue
                 }
                 Update::Ok(false) => {
-                    debug!(target: "backend/rotator", "transparent shape: lie detector title NOT detected (Ok(false))");
+                    debug!(target: "backend/rotator", "transparent shape: lie detector preparing NOT detected");
                     ConditionResult::Ignore
                 }
                 Update::Err(err) => {
-                    debug!(target: "backend/rotator", "transparent shape: lie detector title detection error: {err:?}");
+                    debug!(target: "backend/rotator", "transparent shape: lie detector preparing detection error: {err:?}");
                     ConditionResult::Ignore
                 }
                 Update::Pending => ConditionResult::Skip,
