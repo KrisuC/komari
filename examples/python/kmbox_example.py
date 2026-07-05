@@ -33,7 +33,7 @@ class KeyInput(KeyInputServicer):
 
     async def Init(self, request: KeyInitRequest, context):
         self.seed = request.seed
-        return KeyInitResponse(mouse_coordinate=Coordinate.Relative)
+        return KeyInitResponse(mouse_coordinate=Coordinate.Screen)
 
     async def KeyState(self, request: KeyStateRequest, context):
         key = self.keys_map[request.key]
@@ -43,25 +43,14 @@ class KeyInput(KeyInputServicer):
             return KeyStateResponse(state=KeyState.Released)
 
     async def SendMouse(self, request: MouseRequest, context):
-        width = request.width
-        height = request.height
         x = request.x
         y = request.y
         action = request.action
 
-        screen_width, screen_height = pyautogui.size()
+        # Backend sends absolute screen coordinates (Coordinate.Screen).
         position = pyautogui.position()
-
-        crop_left_px = 0
-        crop_top_px = 30
-
-        scaled_x = int(
-            ((x - crop_left_px) / (width - crop_left_px)) * screen_width)
-        scaled_y = int(
-            ((y - crop_top_px) / (height - crop_top_px)) * screen_height)
-
-        dx = scaled_x - position.x
-        dy = scaled_y - position.y
+        dx = x - position.x
+        dy = y - position.y
 
         if action == MouseAction.Move:
             kmNet.move(dx, dy)
