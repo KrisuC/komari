@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashMap, VecDeque},
     ops::Div,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -37,6 +38,10 @@ pub struct TransparentShapeSolver {
     current_track_tenure: u32,
     /// Countdown of frames to use slow cursor smoothing after a track switch.
     slow_smoothing_remaining: u32,
+    /// Per-track aspect-ratio history for rotation detection.
+    /// The correct shape self-rotates, causing its aspect ratio to oscillate.
+    /// Distractors only translate, so their aspect ratio stays stable.
+    aspect_history: HashMap<u64, VecDeque<f64>>,
     #[cfg(debug_assertions)]
     is_debugging: bool,
 }
@@ -54,6 +59,7 @@ impl Default for TransparentShapeSolver {
             smoothed_cursor: None,
             current_track_tenure: 0,
             slow_smoothing_remaining: 0,
+            aspect_history: HashMap::new(),
             #[cfg(debug_assertions)]
             is_debugging: false,
         }
@@ -84,6 +90,7 @@ impl TransparentShapeSolver {
             smoothed_cursor: None,
             current_track_tenure: 0,
             slow_smoothing_remaining: 0,
+            aspect_history: HashMap::new(),
             is_debugging: true,
         }
     }
@@ -125,8 +132,92 @@ impl TransparentShapeSolver {
             }
         }
 
+        // ── rotation detection via aspect-ratio oscillation ──
+        // The correct shape self-rotates, causing its bounding-box
+        // aspect ratio to oscillate. Distractors only translate, so
+        // their aspect ratio stays nearly constant. We track the
+        // width/height ratio per track over a sliding window and
+        // compute the variance — the highest-variance track is the
+        // rotating one.
+        const ASPECT_WINDOW: usize = 20;
+        const ROTATION_CHECK_INTERVAL: u64 = 30;
+
+        for t in &tracks {
+            let bbox = t.rect();
+            let aspect = if bbox.height > 0 {
+                bbox.width as f64 / bbox.height as f64
+            } else {
+                0.0
+            };
+            let history = self.aspect_history.entry(t.track_id()).or_default();
+            history.push_back(aspect);
+            if history.len() > ASPECT_WINDOW {
+                history.pop_front();
+            }
+        }
+        // Purge dead tracks from history.
+        let live_ids: Vec<u64> = tracks.iter().map(|t| t.track_id()).collect();
+        self.aspect_history.retain(|id, _| live_ids.contains(id));
+
         self.update_initial_track_if_needed(region, &tracks);
         self.update_background_direction(&tracks);
+
+        // Periodically check whether we should switch to a track with
+        // much stronger rotation signal.
+        static SOLVE_COUNT: AtomicU64 = AtomicU64::new(0);
+        let solve_n = SOLVE_COUNT.fetch_add(1, Ordering::Relaxed);
+        if solve_n % ROTATION_CHECK_INTERVAL == 0
+            && self.current_track_id.is_some()
+        {
+            let mut scores: Vec<(u64, f64)> = self
+                .aspect_history
+                .iter()
+                .filter_map(|(id, history)| {
+                    if history.len() < ASPECT_WINDOW / 2 {
+                        return None; // not enough data yet
+                    }
+                    let mean: f64 = history.iter().sum::<f64>() / history.len() as f64;
+                    let variance: f64 = history
+                        .iter()
+                        .map(|a| (a - mean).powi(2))
+                        .sum::<f64>()
+                        / history.len() as f64;
+                    Some((*id, variance))
+                })
+                .collect();
+
+            // Sort by variance descending — highest rotation first.
+            scores.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
+
+            if let Some(current_id) = self.current_track_id {
+                let current_score = scores
+                    .iter()
+                    .find(|(id, _)| *id == current_id)
+                    .map(|(_, s)| *s)
+                    .unwrap_or(0.0);
+
+                // Switch if another track has at least 3× higher
+                // aspect-ratio variance AND we have enough tenure
+                // that we're not just in the initial grace period.
+                if let Some((best_id, best_score)) = scores.first() {
+                    if *best_id != current_id
+                        && *best_score > current_score * 3.0
+                        && *best_score > 0.001
+                        && self.current_track_tenure > ASPECT_WINDOW as u32
+                    {
+                        debug!(
+                            target: "backend/player",
+                            "shape id switches from {} to {} (rotation: {:.6} vs {:.6})",
+                            current_id, best_id, best_score, current_score
+                        );
+                        self.current_track_id = Some(*best_id);
+                        self.current_track_tenure = 0;
+                        self.slow_smoothing_remaining =
+                            CURSOR_SMOOTHING_SLOW_FRAMES;
+                    }
+                }
+            }
+        }
 
         match self.update_and_find_best_track(&tracks, region) {
             Some(track) => {
