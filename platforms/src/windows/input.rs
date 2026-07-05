@@ -53,36 +53,33 @@ use crate::{
 static KEY_CHANNEL: LazyLock<Sender<KeyKind>> = LazyLock::new(|| broadcast::channel(1).0);
 static PROCESS_ID: LazyLock<u32> = LazyLock::new(|| unsafe { GetCurrentProcessId() });
 
-pub fn init() -> Owned<HHOOK> {
-    unsafe extern "system" fn keyboard_ll(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        let msg = wparam.0 as u32;
-        if code as u32 == HC_ACTION && (msg == WM_KEYUP || msg == WM_KEYDOWN) {
-            let lparam_ptr = lparam.0 as *mut KBDLLHOOKSTRUCT;
-            let mut key = unsafe { lparam_ptr.read() };
-            let vkey = unsafe { mem::transmute::<u16, VIRTUAL_KEY>(key.vkCode as u16) };
-            let key_kind = KeyKind::try_from(vkey);
-            let ignore = key.dwExtraInfo == *PROCESS_ID as usize;
-            if !ignore
-                && msg == WM_KEYUP
-                && let Ok(key) = key_kind
-            {
-                log::debug!("[hook] key up: {key:?} (vk={vkey:?})");
-                match KEY_CHANNEL.send(key) {
-                    Ok(n) => log::debug!("[hook] sent to {n} receivers"),
-                    Err(_) => log::debug!("[hook] send failed (no receivers)"),
+pub fn init() {
+    // Poll GetAsyncKeyState on a background thread. WH_KEYBOARD_LL hooks are
+    // blocked by some game anti-cheat systems (e.g. Nexon Game Security), but
+    // GetAsyncKeyState just reads keyboard state without interception.
+    log::info!("[key_poll] starting polling thread");
+    std::thread::spawn(move || {
+        log::info!("[key_poll] thread running");
+        let mut prev: [u8; 32] = [0; 32]; // 256 bits for VK codes 0x08-0xFF
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(15));
+            for vk in 0x08u16..0xC0u16 {
+                let result = unsafe { GetAsyncKeyState(vk as i32) } as u16;
+                let down = (result & 0x8000) != 0;
+                let idx = (vk as usize) / 8;
+                let bit = 1u8 << ((vk as usize) % 8);
+                let was_down = (prev[idx] & bit) != 0;
+                if down && !was_down {
+                    let vk = VIRTUAL_KEY(vk);
+                    if let Ok(key) = KeyKind::try_from(vk) {
+                        log::info!("[key_poll] {key:?}");
+                        let _ = KEY_CHANNEL.send(key);
+                    }
                 }
-            } else if ignore {
-                // Won't work if the hook is not on the top of the chain
-                key.flags &= !LLKHF_INJECTED;
-                key.flags &= !LLKHF_LOWER_IL_INJECTED;
-                unsafe {
-                    *lparam_ptr = key;
-                }
+                if down { prev[idx] |= bit; } else { prev[idx] &= !bit; }
             }
         }
-        unsafe { CallNextHookEx(None, code, wparam, lparam) }
-    }
-    unsafe { Owned::new(SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_ll), None, 0).unwrap()) }
+    });
 }
 
 #[derive(Debug)]
@@ -100,14 +97,11 @@ impl WindowsInputReceiver {
     }
 
     pub fn as_stream(&self) -> BoxStream<'static, KeyKind> {
-        let cell = self.handle_cell.clone();
-        let kind = self.input_kind;
-
-        log::info!("[as_stream] subscribing to KEY_CHANNEL, kind={kind:?}");
+        log::info!("[as_stream] subscribing to KEY_CHANNEL");
         BroadcastStream::new(KEY_CHANNEL.subscribe())
             .filter_map(|result| match result {
                 Ok(key) => {
-                    log::debug!("[as_stream] got key from channel: {key:?}");
+                    log::info!("[as_stream] got key from channel: {key:?}");
                     future::ready(Some(key))
                 }
                 Err(_) => {
@@ -115,7 +109,6 @@ impl WindowsInputReceiver {
                     future::ready(None)
                 }
             })
-            .filter(move |_| future::ready(can_process_key(&cell, kind)))
             .boxed()
     }
 }
@@ -374,6 +367,7 @@ impl TryFrom<VIRTUAL_KEY> for KeyKind {
             VK_NEXT => KeyKind::PageDown,
             VK_INSERT => KeyKind::Insert,
             VK_DELETE => KeyKind::Delete,
+            VK_BACK => KeyKind::Backspace,
             VK_CONTROL => KeyKind::Ctrl,
             VK_RETURN => KeyKind::Enter,
             VK_SPACE => KeyKind::Space,
@@ -500,26 +494,6 @@ fn client_to_absolute_coordinate_raw(handle: HWND, x: i32, y: i32) -> Result<(i3
     );
 
     Ok((dx, dy))
-}
-
-fn can_process_key(cell: &HandleCell, kind: InputKind) -> bool {
-    let fg = unsafe { GetForegroundWindow() };
-    let mut fg_pid = 0;
-    unsafe { GetWindowThreadProcessId(fg, Some(&raw mut fg_pid)) };
-    if fg_pid == *PROCESS_ID {
-        log::debug!("[can_process_key] komari is foreground → accept");
-        return true;
-    }
-
-    let result = cell
-        .as_inner()
-        .map(|handle| is_foreground(handle, kind))
-        .unwrap_or_default();
-    log::debug!(
-        "[can_process_key] fg_pid={fg_pid}, kind={kind:?}, has_handle={}, is_fg={result}",
-        cell.as_inner().is_some()
-    );
-    result
 }
 
 #[inline]

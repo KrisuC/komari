@@ -143,6 +143,7 @@ fn update_waiting(resources: &mut Resources, solving_shape: &mut SolvingShape) {
     );
     solving_shape.solving = Some(Rc::new(RefCell::new(solving)));
     solving_shape.state = State::Solving(Timeout::default());
+    resources.lie_detector_count += 1;
     debug!(target:"backend/player","lie detector transparent shape region: {region:?}");
 }
 

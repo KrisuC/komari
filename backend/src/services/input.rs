@@ -63,8 +63,10 @@ impl DefaultInputService {
         log::info!("[input_service] starting key listener task");
         let task = spawn(async move {
             log::info!("[input_service] key listener task started");
+            let mut tick = 0u64;
             while let Some(key) = input_stream.next().await {
-                log::info!("[input_service] key from stream: {key:?}");
+                tick += 1;
+                log::info!("[input_service] key from stream: {key:?} (tick={tick})");
                 let _ = event_tx.send(InputEvent::KeyReceived(key));
                 let _ = input_tx.send(key.into());
             }
@@ -104,7 +106,7 @@ impl EventHandler<InputEvent> for InputEventHandler {
         match event {
             InputEvent::KeyReceived(received_key) => {
                 let toggle_actions_key = context.settings_service.settings().toggle_actions_key;
-                log::debug!(
+                log::info!(
                     "[input] key received: {:?}, toggle key: {:?} (enabled={})",
                     received_key,
                     toggle_actions_key.key,
@@ -117,14 +119,22 @@ impl EventHandler<InputEvent> for InputEventHandler {
 
                 let key_binding: crate::models::KeyBinding = received_key.into();
                 if toggle_actions_key.key == key_binding {
-                    log::info!("[input] toggle actions hotkey matched!");
+                    log::info!("[input] toggle hotkey matched!");
                     let update = if context.resources.operation.halting() {
                         OperationUpdate::Run
                     } else {
                         OperationUpdate::TemporaryHalt
                     };
-
+                    log::info!(
+                        "[input] toggle! halting={} update={update:?} state={:?}",
+                        context.resources.operation.halting(),
+                        context.resources.operation.state
+                    );
                     context.operation_service.update(context.resources, update);
+                    log::info!(
+                        "[input] toggle done, new_state={:?}",
+                        context.resources.operation.state
+                    );
                 }
             }
         }

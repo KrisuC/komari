@@ -101,6 +101,9 @@ fn systems_loop() {
             state: OperationState::Halting,
         },
         tick: 0,
+        lie_detector_count: 0,
+        total_runtime: Duration::ZERO,
+        last_runtime_tick: Instant::now(),
     };
 
     let minimap = MinimapEntity {
@@ -169,6 +172,17 @@ fn systems_loop() {
                     Err(Error::WindowNotFound | Error::WindowInvalidSize)
                 ));
         resources.tick += 1;
+
+        // Accumulate total runtime whenever the bot is actively running.
+        let now = Instant::now();
+        if matches!(
+            resources.operation.state,
+            OperationState::Running | OperationState::RunUntil { .. }
+        ) {
+            resources.total_runtime += now - resources.last_runtime_tick;
+        }
+        resources.last_runtime_tick = now;
+
         if let Ok(detector) = detector {
             let was_running_cycle =
                 matches!(resources.operation.state, OperationState::RunUntil { .. });

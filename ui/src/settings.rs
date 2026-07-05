@@ -70,7 +70,7 @@ pub fn SettingsScreen() -> Element {
     });
 
     rsx! {
-        div { class: "flex flex-col h-full overflow-y-auto",
+        div { class: "flex flex-col h-full",
             SectionCapture {}
             SectionInput {}
             SectionNotifications {}

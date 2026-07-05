@@ -147,6 +147,7 @@ fn update_waiting(resources: &mut Resources, solving_violetta: &mut SolvingViole
     debug!(target: "backend/player","lie detector violetta region: {region:?}");
     solving_violetta.solving = Some(Rc::new(RefCell::new(solving)));
     solving_violetta.state = State::Solving(Timeout::default());
+    resources.lie_detector_count += 1;
 }
 
 fn update_solving(resources: &mut Resources, solving_violetta: &mut SolvingVioletta) {

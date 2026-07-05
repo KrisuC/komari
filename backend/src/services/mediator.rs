@@ -97,6 +97,9 @@ impl MediatorService for DefaultMediatorService {
             .collect();
 
         let input_state = resources.input.state();
+        let gpu_enabled = crate::detect::is_gpu_available();
+        let lie_detector_count = resources.lie_detector_count;
+        let total_runtime = resources.total_runtime;
         let erda_shower_state = world.skills[SkillKind::ErdaShower].state.to_string();
 
         let idle = match world.minimap.state {
@@ -114,6 +117,7 @@ impl MediatorService for DefaultMediatorService {
             OperationState::Running => Operation::Running,
             OperationState::RunUntil { instant, .. } => Operation::RunUntil(instant),
         };
+        log::info!("[broadcast_state] operation={:?}", operation);
 
         let auto_mob_quadrant =
             player_context
@@ -144,6 +148,9 @@ impl MediatorService for DefaultMediatorService {
                 priority_action,
                 erda_shower_state,
                 input_state,
+                gpu_enabled,
+                lie_detector_count,
+                total_runtime,
                 destinations,
                 operation,
                 frame,

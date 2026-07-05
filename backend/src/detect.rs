@@ -2299,14 +2299,26 @@ fn detect_lie_detector_shape(bgr: &impl ToInputArray, localization: &Localizatio
         .as_ref()
         .and_then(|base64| to_mat_from_base64(base64, false).ok());
 
-    detect_template(
-        bgr,
+    // Downscale to 50 % before template matching for a ~4× speedup.
+    let mut small = Mat::default();
+    let scale = 0.5;
+    resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
+
+    let rect = detect_template(
+        &small,
         template
             .as_ref()
             .unwrap_or(&*LIE_DETECTOR_TRANSPARENT_SHAPE_TEMPLATE),
         Point::default(),
         0.6,
-    )
+    )?;
+
+    Ok(Rect::new(
+        (rect.x as f64 / scale).round() as i32,
+        (rect.y as f64 / scale).round() as i32,
+        (rect.width as f64 / scale).round() as i32,
+        (rect.height as f64 / scale).round() as i32,
+    ))
 }
 
 fn detect_lie_detector_shape_preparing(bgr: &impl ToInputArray) -> Result<Rect> {
@@ -2318,7 +2330,19 @@ fn detect_lie_detector_shape_preparing(bgr: &impl ToInputArray) -> Result<Rect> 
         .unwrap()
     });
 
-    detect_template(bgr, &*TEMPLATE, Point::default(), 0.6)
+    // Downscale to 50 % before template matching (~4× speedup).
+    let mut small = Mat::default();
+    let scale = 0.5;
+    resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
+
+    let rect = detect_template(&small, &*TEMPLATE, Point::default(), 0.6)?;
+
+    Ok(Rect::new(
+        (rect.x as f64 / scale).round() as i32,
+        (rect.y as f64 / scale).round() as i32,
+        (rect.width as f64 / scale).round() as i32,
+        (rect.height as f64 / scale).round() as i32,
+    ))
 }
 
 pub static LIE_DETECTOR_VIOLETTA_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
@@ -2338,14 +2362,26 @@ fn detect_lie_detector_violetta(
         .as_ref()
         .and_then(|base64| to_mat_from_base64(base64, false).ok());
 
-    detect_template(
-        bgr,
+    // Downscale to 50 % before template matching (~4× speedup).
+    let mut small = Mat::default();
+    let scale = 0.5;
+    resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
+
+    let rect = detect_template(
+        &small,
         template
             .as_ref()
             .unwrap_or(&*LIE_DETECTOR_VIOLETTA_TEMPLATE),
         Point::default(),
         0.6,
-    )
+    )?;
+
+    Ok(Rect::new(
+        (rect.x as f64 / scale).round() as i32,
+        (rect.y as f64 / scale).round() as i32,
+        (rect.width as f64 / scale).round() as i32,
+        (rect.height as f64 / scale).round() as i32,
+    ))
 }
 
 #[allow(unused)]
@@ -2358,7 +2394,19 @@ fn detect_lie_detector_violetta_preparing(bgr: &impl ToInputArray) -> Result<Rec
         .unwrap()
     });
 
-    detect_template(bgr, &*TEMPLATE, Point::default(), 0.6)
+    // Downscale to 50 % before template matching (~4× speedup).
+    let mut small = Mat::default();
+    let scale = 0.5;
+    resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
+
+    let rect = detect_template(&small, &*TEMPLATE, Point::default(), 0.6)?;
+
+    Ok(Rect::new(
+        (rect.x as f64 / scale).round() as i32,
+        (rect.y as f64 / scale).round() as i32,
+        (rect.width as f64 / scale).round() as i32,
+        (rect.height as f64 / scale).round() as i32,
+    ))
 }
 
 fn detect_quick_slots_hexa_booster<T: MatTraitConst + ToInputArray>(
@@ -3361,4 +3409,19 @@ fn build_session(model: &[u8]) -> Result<Session> {
     Ok(Session::builder()?
         .with_execution_providers([CUDAExecutionProvider::default().build()])?
         .commit_from_memory(model)?)
+}
+
+/// Whether a CUDA GPU is available for ONNX inference. Computed once at
+/// first call and cached.
+pub fn is_gpu_available() -> bool {
+    use std::sync::LazyLock;
+
+    static GPU_AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
+        Session::builder()
+            .and_then(|b| {
+                b.with_execution_providers([CUDAExecutionProvider::default().build()])
+            })
+            .is_ok()
+    });
+    *GPU_AVAILABLE
 }

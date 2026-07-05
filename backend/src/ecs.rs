@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 #[cfg(debug_assertions)]
 use opencv::{
@@ -96,6 +99,12 @@ pub struct Resources {
     pub operation: Operation,
     /// A resource indicating current tick.
     pub tick: u64,
+    /// How many lie detectors have been encountered so far.
+    pub lie_detector_count: u64,
+    /// Accumulated time the bot has been running since startup.
+    pub total_runtime: Duration,
+    /// Tracks when the last runtime accumulation happened.
+    pub last_runtime_tick: Instant,
 }
 
 impl Resources {
@@ -120,6 +129,9 @@ impl Resources {
                 state: OperationState::Running,
             },
             tick: 0,
+            lie_detector_count: 0,
+            total_runtime: Duration::ZERO,
+            last_runtime_tick: Instant::now(),
         }
     }
 

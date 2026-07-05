@@ -294,6 +294,9 @@ struct MinimapState {
     priority_action: Option<String>,
     erda_shower_state: String,
     input_state: String,
+    gpu_enabled: bool,
+    lie_detector_count: u64,
+    total_runtime: Duration,
     operation: Operation,
     detected_size: Option<(usize, usize)>,
 }
@@ -549,6 +552,9 @@ fn Canvas(
                 priority_action: current_state.priority_action,
                 erda_shower_state: current_state.erda_shower_state,
                 input_state: current_state.input_state,
+                gpu_enabled: current_state.gpu_enabled,
+                lie_detector_count: current_state.lie_detector_count,
+                total_runtime: current_state.total_runtime,
                 operation: current_state.operation,
                 detected_size: frame.as_ref().map(|(_, width, height)| (*width, *height)),
             };
@@ -556,7 +562,9 @@ fn Canvas(
             if *position.peek() != current_state.position.unwrap_or_default() {
                 position.set(current_state.position.unwrap_or_default());
             }
+            let operation = current_state.operation;
             state.set(Some(current_state));
+            log::info!("[ui] state updated: operation={:?}", operation);
             sleep(Duration::from_millis(50)).await;
 
             let bound = rotation_bound_and_type
@@ -603,9 +611,12 @@ fn Info(state: ReadSignal<Option<MinimapState>>, map: ReadSignal<Option<Map>>) -
         priority_action: String,
         erda_shower_state: String,
         input_state: String,
+        gpu_enabled: String,
+        lie_detector_count: String,
         detected_map_size: String,
         selected_map_size: String,
-        run_timer_duration: String,
+        time_until_stop: String,
+        run_time: String,
     }
 
     let info = use_memo(move || {
@@ -617,9 +628,12 @@ fn Info(state: ReadSignal<Option<MinimapState>>, map: ReadSignal<Option<Map>>) -
             priority_action: "None".to_string(),
             erda_shower_state: "Unknown".to_string(),
             input_state: "Unknown".to_string(),
+            gpu_enabled: "Unknown".to_string(),
+            lie_detector_count: "0".to_string(),
             detected_map_size: "Unknown".to_string(),
             selected_map_size: "Unknown".to_string(),
-            run_timer_duration: "None".to_string(),
+            time_until_stop: "None".to_string(),
+            run_time: "0s".to_string(),
         };
 
         if let Some(map) = map() {
@@ -630,13 +644,16 @@ fn Info(state: ReadSignal<Option<MinimapState>>, map: ReadSignal<Option<Map>>) -
             info.state = state.state;
             info.erda_shower_state = state.erda_shower_state;
             info.input_state = state.input_state;
-            info.run_timer_duration = match state.operation {
+            info.gpu_enabled = state.gpu_enabled.to_string();
+            info.lie_detector_count = state.lie_detector_count.to_string();
+            info.time_until_stop = match state.operation {
                 Operation::Halting | Operation::Running => "None".to_string(),
                 Operation::TemporaryHalting(duration) => duration_from(duration),
                 Operation::RunUntil(instant) => {
                     duration_from(instant.saturating_duration_since(Instant::now()))
                 }
             };
+            info.run_time = duration_from(state.total_runtime);
             if let Some((x, y)) = state.position {
                 info.position = format!("{x}, {y}");
             }
@@ -661,14 +678,16 @@ fn Info(state: ReadSignal<Option<MinimapState>>, map: ReadSignal<Option<Map>>) -
         div { class: "grid grid-cols-2 items-center justify-center px-4 py-3 gap-1",
             InfoItem { name: "State", value: info().state }
             InfoItem { name: "Position", value: info().position }
-            InfoItem { name: "HP", value: info().health }
             InfoItem { name: "Priority action", value: info().priority_action }
             InfoItem { name: "Normal action", value: info().normal_action }
             InfoItem { name: "Erda Shower", value: info().erda_shower_state }
             InfoItem { name: "Detected size", value: info().detected_map_size }
             InfoItem { name: "Selected size", value: info().selected_map_size }
-            InfoItem { name: "Run timer", value: info().run_timer_duration }
+            InfoItem { name: "Time Until Stop", value: info().time_until_stop }
+            InfoItem { name: "Run Time", value: info().run_time }
             InfoItem { name: "Input method", value: info().input_state }
+            InfoItem { name: "Use GPU", value: info().gpu_enabled }
+            InfoItem { name: "Lie Detectors", value: info().lie_detector_count }
         }
     }
 }

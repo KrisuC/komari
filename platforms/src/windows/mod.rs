@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        Arc, Barrier,
+        Arc, Barrier, LazyLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -11,11 +11,12 @@ use windows::{
         Foundation::{HWND, LPARAM},
         Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute},
         UI::WindowsAndMessaging::{
-            DispatchMessageW, EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetMessageW, GetWindowLongPtrW,
-            IsWindowVisible, MSG, TranslateMessage, WS_DISABLED, WS_EX_TOOLWINDOW,
+            DispatchMessageW, EnumWindows, GetMessageW, GWL_EXSTYLE, GWL_STYLE,
+            GetWindowLongPtrW, IsWindowVisible, MSG, TranslateMessage, WS_DISABLED,
+            WS_EX_TOOLWINDOW,
         },
     },
-    core::BOOL,
+    core::{BOOL, Owned},
 };
 
 mod bitblt;
@@ -53,20 +54,8 @@ pub fn init() {
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire)
         .is_ok()
     {
-        let barrier = Arc::new(Barrier::new(2));
-        let keys_barrier = barrier.clone();
-        thread::spawn(move || {
-            let _hook = input::init();
-            let mut msg = MSG::default();
-            keys_barrier.wait();
-            while unsafe { GetMessageW(&raw mut msg, None, 0, 0) }.as_bool() {
-                unsafe {
-                    let _ = TranslateMessage(&raw const msg);
-                    let _ = DispatchMessageW(&raw const msg);
-                }
-            }
-        });
-        barrier.wait();
+        // Install on the main thread — Dioxus/tao provides the message pump.
+        input::init();
     }
 }
 

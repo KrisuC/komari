@@ -76,7 +76,7 @@ fn main() {
         .level(level)
         .filter(|metadata| {
             let target = metadata.target();
-            target.starts_with("backend") || target.starts_with("ui")
+            target.starts_with("backend") || target.starts_with("ui") || target.starts_with("platforms")
         })
         .chain(stdout())
         .chain(fern::log_file(current_exe().unwrap().parent().unwrap().join("log.txt")).unwrap())
@@ -87,8 +87,8 @@ fn main() {
     backend::init();
     let window = WindowBuilder::new()
         .with_drag_and_drop(false)
-        .with_inner_size(Size::new(PhysicalSize::new(1024, 483)))
-        .with_min_inner_size(Size::new(PhysicalSize::new(320, 483)))
+        .with_inner_size(Size::new(PhysicalSize::new(1024, 513)))
+        .with_min_inner_size(Size::new(PhysicalSize::new(320, 513)))
         .with_title(Alphanumeric.sample_string(&mut rand::rng(), 16));
     let cfg = dioxus::desktop::Config::default()
         .with_menu(None)
@@ -133,7 +133,7 @@ fn App() -> Element {
                     },
                     selected_tab: selected_tab(),
                 }
-                div { class: "relative w-full h-full overflow-x-hidden overflow-y-auto pl-2 lg:pl-0",
+                div { class: "relative w-full h-full overflow-y-auto pl-2 lg:pl-0",
                     match selected_tab().as_str() {
                         TAB_ACTIONS => rsx! {
                             ActionsScreen {}
