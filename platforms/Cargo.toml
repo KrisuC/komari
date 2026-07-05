@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+log = { workspace = true }
 thiserror = "2.0.12"
 tokio = { workspace = true }
 tokio-stream = { workspace = true }

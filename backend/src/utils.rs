@@ -9,11 +9,22 @@ use std::{
 use opencv::{core::ToInputArray, imgcodecs::imwrite_def};
 
 static DATASET_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
-    let dir = env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("dataset");
+    // In debug builds, store the dataset in the project root so it survives
+    // `dx build` wipes of the target directory. In release builds, store
+    // it next to the executable for portability.
+    let dir = if cfg!(debug_assertions) {
+        // env!("CARGO_MANIFEST_DIR") = <project>/backend, parent = <project>
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("dataset")
+    } else {
+        env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("dataset")
+    };
     fs::create_dir_all(dir.clone()).unwrap();
     dir
 });

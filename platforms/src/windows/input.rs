@@ -66,7 +66,11 @@ pub fn init() -> Owned<HHOOK> {
                 && msg == WM_KEYUP
                 && let Ok(key) = key_kind
             {
-                let _ = KEY_CHANNEL.send(key);
+                log::debug!("[hook] key up: {key:?} (vk={vkey:?})");
+                match KEY_CHANNEL.send(key) {
+                    Ok(n) => log::debug!("[hook] sent to {n} receivers"),
+                    Err(_) => log::debug!("[hook] send failed (no receivers)"),
+                }
             } else if ignore {
                 // Won't work if the hook is not on the top of the chain
                 key.flags &= !LLKHF_INJECTED;
@@ -99,10 +103,17 @@ impl WindowsInputReceiver {
         let cell = self.handle_cell.clone();
         let kind = self.input_kind;
 
+        log::info!("[as_stream] subscribing to KEY_CHANNEL, kind={kind:?}");
         BroadcastStream::new(KEY_CHANNEL.subscribe())
             .filter_map(|result| match result {
-                Ok(key) => future::ready(Some(key)),
-                Err(_) => future::ready(None),
+                Ok(key) => {
+                    log::debug!("[as_stream] got key from channel: {key:?}");
+                    future::ready(Some(key))
+                }
+                Err(_) => {
+                    log::debug!("[as_stream] broadcast error (lagged)");
+                    future::ready(None)
+                }
             })
             .filter(move |_| future::ready(can_process_key(&cell, kind)))
             .boxed()
@@ -476,12 +487,19 @@ fn can_process_key(cell: &HandleCell, kind: InputKind) -> bool {
     let mut fg_pid = 0;
     unsafe { GetWindowThreadProcessId(fg, Some(&raw mut fg_pid)) };
     if fg_pid == *PROCESS_ID {
+        log::debug!("[can_process_key] komari is foreground → accept");
         return true;
     }
 
-    cell.as_inner()
+    let result = cell
+        .as_inner()
         .map(|handle| is_foreground(handle, kind))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    log::debug!(
+        "[can_process_key] fg_pid={fg_pid}, kind={kind:?}, has_handle={}, is_fg={result}",
+        cell.as_inner().is_some()
+    );
+    result
 }
 
 #[inline]

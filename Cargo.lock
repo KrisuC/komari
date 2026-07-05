@@ -3807,6 +3807,7 @@ version = "0.26.0"
 dependencies = [
  "bit-vec",
  "futures",
+ "log",
  "softbuffer",
  "tao 0.33.0",
  "tauri-winres",

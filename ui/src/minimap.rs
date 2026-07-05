@@ -733,7 +733,7 @@ fn Buttons(state: ReadSignal<Option<MinimapState>>, map: ReadSignal<Option<Map>>
                 class: "w-20",
                 style: ButtonStyle::Primary,
                 disabled: disabled(),
-                on_click: move || async move {
+                on_click: move |_| async move {
                     let kind = match *kind.peek() {
                         OperationUpdate::Halt => OperationUpdate::Run,
                         OperationUpdate::TemporaryHalt | OperationUpdate::Run => {
@@ -748,7 +748,7 @@ fn Buttons(state: ReadSignal<Option<MinimapState>>, map: ReadSignal<Option<Map>>
                 class: "w-20",
                 style: ButtonStyle::Primary,
                 disabled: suspend_resume_disabled(),
-                on_click: move || async move {
+                on_click: move |_| async move {
                     let kind = match *kind.peek() {
                         OperationUpdate::Run => OperationUpdate::TemporaryHalt,
                         OperationUpdate::TemporaryHalt | OperationUpdate::Halt => {
