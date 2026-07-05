@@ -6,6 +6,10 @@ const NPX: &str = "npx.cmd";
 const NPX: &str = "npx";
 
 fn main() {
+    // Embed requireAdministrator manifest so ui.exe always runs elevated.
+    println!("cargo:rustc-link-arg=/MANIFESTUAC:level='requireAdministrator'");
+    println!("cargo:rustc-link-arg=/MANIFESTUAC:uiAccess='false'");
+
     let public = env::current_dir().unwrap().join("public");
     let assets = env::current_dir().unwrap().join("assets");
     let tailwind_in = assets.join("tailwind.css");
