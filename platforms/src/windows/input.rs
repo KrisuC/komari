@@ -1,5 +1,5 @@
 use std::{
-    mem::{self, size_of},
+    mem::size_of,
     sync::{Arc, LazyLock, Mutex},
     thread,
     time::Duration,
@@ -15,7 +15,7 @@ use tokio::{
 use tokio_stream::wrappers::BroadcastStream;
 use windows::{
     Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
+        Foundation::{HWND, POINT, RECT},
         Graphics::Gdi::{ClientToScreen, IntersectRect, MONITOR_DEFAULTTONULL, MonitorFromWindow},
         System::Threading::GetCurrentProcessId,
         UI::{
@@ -34,14 +34,11 @@ use windows::{
                 VK_Y, VK_Z,
             },
             WindowsAndMessaging::{
-                CallNextHookEx, GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
-                GetWindowThreadProcessId, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED,
-                LLKHF_LOWER_IL_INJECTED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-                SM_YVIRTUALSCREEN, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
+                GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
+                SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
             },
         },
     },
-    core::Owned,
 };
 
 use super::{HandleCell, handle::Handle};
@@ -84,7 +81,9 @@ pub fn init() {
 
 #[derive(Debug)]
 pub struct WindowsInputReceiver {
+    #[allow(dead_code)]
     handle_cell: HandleCell,
+    #[allow(dead_code)]
     input_kind: InputKind,
 }
 

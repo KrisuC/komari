@@ -1,22 +1,15 @@
-use std::{
-    sync::{
-        Arc, Barrier, LazyLock,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows::{
     Win32::{
         Foundation::{HWND, LPARAM},
         Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute},
         UI::WindowsAndMessaging::{
-            DispatchMessageW, EnumWindows, GetMessageW, GWL_EXSTYLE, GWL_STYLE,
-            GetWindowLongPtrW, IsWindowVisible, MSG, TranslateMessage, WS_DISABLED,
+            EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, IsWindowVisible, WS_DISABLED,
             WS_EX_TOOLWINDOW,
         },
     },
-    core::{BOOL, Owned},
+    core::BOOL,
 };
 
 mod bitblt;
@@ -54,7 +47,6 @@ pub fn init() {
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire)
         .is_ok()
     {
-        // Install on the main thread — Dioxus/tao provides the message pump.
         input::init();
     }
 }
