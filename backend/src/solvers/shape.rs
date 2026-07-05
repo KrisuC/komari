@@ -5,7 +5,10 @@ use std::{
 };
 
 use log::{debug, info};
-use opencv::core::{Point, Point_, Point2d, Rect};
+use opencv::{
+    core::{Mat, MatTraitConst, Point, Point_, Point2d, Rect, ToInputArray},
+    imgproc,
+};
 
 use crate::{
     detect::Detector,
@@ -15,6 +18,9 @@ use crate::{
 
 /// Frames to use slow cursor transition after a distant track switch.
 const CURSOR_SMOOTHING_SLOW_FRAMES: u32 = 10;
+
+/// Sliding-window size for orientation-angle history used in rotation detection.
+const ANGLE_WINDOW: usize = 20;
 
 #[derive(Debug)]
 pub struct TransparentShapeSolver {
@@ -29,10 +35,11 @@ pub struct TransparentShapeSolver {
     current_track_tenure: u32,
     /// Countdown of frames to use slow cursor smoothing after a track switch.
     slow_smoothing_remaining: u32,
-    /// Per-track aspect-ratio history for rotation detection.
-    /// The correct shape self-rotates, causing its aspect ratio to oscillate.
-    /// Distractors only translate, so their aspect ratio stays stable.
-    aspect_history: HashMap<u64, VecDeque<f64>>,
+    /// Per-track orientation-angle history for rotation detection.
+    /// The correct shape self-rotates, causing its principal-axis angle
+    /// (computed via image moments) to drift. Distractors only translate,
+    /// so their orientation stays nearly constant.
+    angle_history: HashMap<u64, VecDeque<f64>>,
     #[cfg(debug_assertions)]
     is_debugging: bool,
 }
@@ -49,7 +56,7 @@ impl Default for TransparentShapeSolver {
             bg_direction: Point2d::default(),
             current_track_tenure: 0,
             slow_smoothing_remaining: 0,
-            aspect_history: HashMap::new(),
+            angle_history: HashMap::new(),
             #[cfg(debug_assertions)]
             is_debugging: false,
         }
@@ -79,7 +86,7 @@ impl TransparentShapeSolver {
             bg_direction: Point2d::default(),
             current_track_tenure: 0,
             slow_smoothing_remaining: 0,
-            aspect_history: HashMap::new(),
+            angle_history: HashMap::new(),
             is_debugging: true,
         }
     }
@@ -121,61 +128,74 @@ impl TransparentShapeSolver {
             }
         }
 
-        // ── rotation detection via aspect-ratio oscillation ──
-        // The correct shape self-rotates, causing its bounding-box
-        // aspect ratio to oscillate. Distractors only translate, so
-        // their aspect ratio stays nearly constant. We track the
-        // width/height ratio per track over a sliding window and
-        // compute the variance — the highest-variance track is the
-        // rotating one.
-        const ASPECT_WINDOW: usize = 20;
-        const ROTATION_CHECK_INTERVAL: u64 = 30;
+        // ── rotation detection via image-moments orientation ──
+        // Compute each shape's principal-axis angle from its pixel
+        // content. A self-rotating shape's angle drifts continuously;
+        // a translating shape's angle stays stable. We track the
+        // frame-to-frame angle deltas — the track with the largest
+        // cumulative absolute drift is the rotating one.
+        const ROTATION_CHECK_INTERVAL: u64 = 15;
 
-        for t in &tracks {
-            let bbox = t.rect();
-            let aspect = if bbox.height > 0 {
-                bbox.width as f64 / bbox.height as f64
-            } else {
-                0.0
-            };
-            let history = self.aspect_history.entry(t.track_id()).or_default();
-            history.push_back(aspect);
-            if history.len() > ASPECT_WINDOW {
-                history.pop_front();
+        if let Ok(region_mat) = detector.mat().roi(region) {
+            for t in &tracks {
+                if let Ok(shape_roi) = region_mat.roi(t.rect()) {
+                    if let Some(angle) = compute_principal_axis_angle(&shape_roi)
+                    {
+                        let history =
+                            self.angle_history.entry(t.track_id()).or_default();
+                        // Unwrap to avoid π-periodic jumps before storing.
+                        if let Some(&prev) = history.back() {
+                            let mut adjusted = angle;
+                            while adjusted - prev > std::f64::consts::FRAC_PI_2
+                            {
+                                adjusted -= std::f64::consts::PI;
+                            }
+                            while adjusted - prev < -std::f64::consts::FRAC_PI_2
+                            {
+                                adjusted += std::f64::consts::PI;
+                            }
+                            history.push_back(adjusted);
+                        } else {
+                            history.push_back(angle);
+                        }
+                        if history.len() > ANGLE_WINDOW {
+                            history.pop_front();
+                        }
+                    }
+                }
             }
         }
-        // Purge dead tracks from history.
+        // Purge dead tracks.
         let live_ids: Vec<u64> = tracks.iter().map(|t| t.track_id()).collect();
-        self.aspect_history.retain(|id, _| live_ids.contains(id));
+        self.angle_history.retain(|id, _| live_ids.contains(id));
 
         self.update_initial_track_if_needed(region, &tracks);
         self.update_background_direction(&tracks);
 
-        // Periodically check whether we should switch to a track with
-        // much stronger rotation signal.
+        // Periodically check whether to switch to a track with a much
+        // stronger rotation signal.
         static SOLVE_COUNT: AtomicU64 = AtomicU64::new(0);
         let solve_n = SOLVE_COUNT.fetch_add(1, Ordering::Relaxed);
         if solve_n % ROTATION_CHECK_INTERVAL == 0
             && self.current_track_id.is_some()
         {
             let mut scores: Vec<(u64, f64)> = self
-                .aspect_history
+                .angle_history
                 .iter()
                 .filter_map(|(id, history)| {
-                    if history.len() < ASPECT_WINDOW / 2 {
-                        return None; // not enough data yet
+                    if history.len() < ANGLE_WINDOW / 2 {
+                        return None;
                     }
-                    let mean: f64 = history.iter().sum::<f64>() / history.len() as f64;
-                    let variance: f64 = history
+                    // Total absolute angle drift over the window.
+                    let drift: f64 = history
                         .iter()
-                        .map(|a| (a - mean).powi(2))
-                        .sum::<f64>()
-                        / history.len() as f64;
-                    Some((*id, variance))
+                        .zip(history.iter().skip(1))
+                        .map(|(prev, curr)| (curr - prev).abs())
+                        .sum();
+                    Some((*id, drift))
                 })
                 .collect();
 
-            // Sort by variance descending — highest rotation first.
             scores.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
 
             if let Some(current_id) = self.current_track_id {
@@ -185,18 +205,15 @@ impl TransparentShapeSolver {
                     .map(|(_, s)| *s)
                     .unwrap_or(0.0);
 
-                // Switch if another track has at least 3× higher
-                // aspect-ratio variance AND we have enough tenure
-                // that we're not just in the initial grace period.
                 if let Some((best_id, best_score)) = scores.first() {
                     if *best_id != current_id
-                        && *best_score > current_score * 3.0
-                        && *best_score > 0.001
-                        && self.current_track_tenure > ASPECT_WINDOW as u32
+                        && *best_score > current_score * 2.0
+                        && *best_score > 0.05
+                        && self.current_track_tenure > ANGLE_WINDOW as u32
                     {
                         debug!(
                             target: "backend/player",
-                            "shape id switches from {} to {} (rotation: {:.6} vs {:.6})",
+                            "shape id switches from {} to {} (angle drift: {:.4} vs {:.4})",
                             current_id, best_id, best_score, current_score
                         );
                         self.current_track_id = Some(*best_id);
@@ -269,13 +286,51 @@ impl TransparentShapeSolver {
     /// 10 frames to avoid a visible lurch.
     fn update_initial_track_if_needed(&mut self, region: Rect, tracks: &[STrack]) {
         if self.current_track_id.is_none() {
-            let region_mid = mid_point(Rect::new(0, 0, region.width, region.height));
-            if let Some(track) = find_track_closest_to(region_mid, tracks) {
+            // If we have enough aspect-ratio history, prefer the track
+            // with the strongest rotation signal. Otherwise fall back
+            // to closest-to-centre.
+            let has_history = self
+                .angle_history
+                .values()
+                .any(|h| h.len() >= ANGLE_WINDOW / 2);
+            let picked = if has_history {
+                tracks
+                    .iter()
+                    .max_by(|a, b| {
+                        let va = self.compute_rotation_drift(a.track_id());
+                        let vb = self.compute_rotation_drift(b.track_id());
+                        va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+            } else {
+                let region_mid =
+                    mid_point(Rect::new(0, 0, region.width, region.height));
+                find_track_closest_to(region_mid, tracks)
+            };
+            if let Some(track) = picked {
                 self.current_track_id = Some(track.track_id());
                 self.last_cursor = Some(mid_point(track.rect()));
                 self.last_velocity = Some(track.kalman_velocity());
             }
         }
+    }
+
+    /// Returns the total absolute angle drift for `track_id` — the sum of
+    /// frame-to-frame orientation changes over the history window. High
+    /// drift = self-rotating shape; near-zero drift = translating shape.
+    fn compute_rotation_drift(&self, track_id: u64) -> f64 {
+        self.angle_history
+            .get(&track_id)
+            .map(|history| {
+                if history.len() < 2 {
+                    return 0.0;
+                }
+                history
+                    .iter()
+                    .zip(history.iter().skip(1))
+                    .map(|(prev, curr)| (curr - prev).abs())
+                    .sum::<f64>()
+            })
+            .unwrap_or(0.0)
     }
 
     fn update_background_direction(&mut self, tracks: &[STrack]) {
@@ -315,6 +370,17 @@ impl TransparentShapeSolver {
                     track_background_score(track, last_cursor, bg_direction, region)?;
                 if track.track_id() == current_track_id {
                     score *= tenure_bonus;
+                }
+                // Rotation bonus: shapes that self-rotate accumulate
+                // larger total angle drift. Boost their score so the
+                // solver naturally gravitates toward the rotating shape.
+                let rot_drift = self.compute_rotation_drift(track.track_id());
+                if rot_drift > 0.05 {
+                    // Scale from 1.0× (no rotation) to ~4.0× (strong
+                    // rotation). Typical drift for a rotating shape is
+                    // 0.1–0.5 rad over a 20-frame window.
+                    let rot_bonus = 1.0 + (rot_drift * 8.0).min(3.0);
+                    score *= rot_bonus;
                 }
                 Some((track, score))
             })
@@ -536,4 +602,27 @@ where
     }
 
     Some(point / norm)
+}
+
+/// Compute the principal-axis orientation angle of `roi` using image
+/// moments. Returns the angle in radians in the range [-π/2, π/2].
+///
+/// The angle is computed from the central moments μ₁₁, μ₂₀, μ₀₂:
+///
+///   θ = 0.5 · atan2(2·μ₁₁, μ₂₀ − μ₀₂)
+///
+/// A self-rotating shape will have a continuously drifting θ; a
+/// translating shape will have a nearly constant θ.
+fn compute_principal_axis_angle(
+    roi: &(impl MatTraitConst + ToInputArray),
+) -> Option<f64> {
+    let mut gray = Mat::default();
+    // Convert to grayscale — moments require a single-channel image.
+    imgproc::cvt_color_def(roi, &mut gray, imgproc::COLOR_BGR2GRAY).ok()?;
+    let moments = imgproc::moments(&gray, false).ok()?;
+    let denom = moments.mu20 - moments.mu02;
+    if denom.abs() < 1e-10 {
+        return None; // axis-aligned or degenerate
+    }
+    Some(0.5 * (2.0 * moments.mu11).atan2(denom))
 }
