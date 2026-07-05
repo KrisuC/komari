@@ -135,51 +135,47 @@ impl TransparentShapeSolver {
         // frame-to-frame angle deltas — the track with the largest
         // cumulative absolute drift is the rotating one.
         const ROTATION_CHECK_INTERVAL: u64 = 15;
-        static SOLVE_COUNT: AtomicU64 = AtomicU64::new(0);
-        let solve_n = SOLVE_COUNT.fetch_add(1, Ordering::Relaxed);
 
-        // Only compute image moments every 2nd frame (~50% of the cost).
-        // The angle history has enough samples even at 15 fps effective rate.
-        if solve_n % 2 == 0 {
-            if let Ok(region_mat) = detector.mat().roi(region) {
-                for t in &tracks {
-                    if let Ok(shape_roi) = region_mat.roi(t.rect()) {
-                        if let Some(angle) = compute_principal_axis_angle(&shape_roi)
-                        {
-                            let history =
-                                self.angle_history.entry(t.track_id()).or_default();
-                            // Unwrap to avoid π-periodic jumps before storing.
-                            if let Some(&prev) = history.back() {
-                                let mut adjusted = angle;
-                                while adjusted - prev > std::f64::consts::FRAC_PI_2
-                                {
-                                    adjusted -= std::f64::consts::PI;
-                                }
-                                while adjusted - prev < -std::f64::consts::FRAC_PI_2
-                                {
-                                    adjusted += std::f64::consts::PI;
-                                }
-                                history.push_back(adjusted);
-                            } else {
-                                history.push_back(angle);
+        if let Ok(region_mat) = detector.mat().roi(region) {
+            for t in &tracks {
+                if let Ok(shape_roi) = region_mat.roi(t.rect()) {
+                    if let Some(angle) = compute_principal_axis_angle(&shape_roi)
+                    {
+                        let history =
+                            self.angle_history.entry(t.track_id()).or_default();
+                        // Unwrap to avoid π-periodic jumps before storing.
+                        if let Some(&prev) = history.back() {
+                            let mut adjusted = angle;
+                            while adjusted - prev > std::f64::consts::FRAC_PI_2
+                            {
+                                adjusted -= std::f64::consts::PI;
                             }
-                            if history.len() > ANGLE_WINDOW {
-                                history.pop_front();
+                            while adjusted - prev < -std::f64::consts::FRAC_PI_2
+                            {
+                                adjusted += std::f64::consts::PI;
                             }
+                            history.push_back(adjusted);
+                        } else {
+                            history.push_back(angle);
+                        }
+                        if history.len() > ANGLE_WINDOW {
+                            history.pop_front();
                         }
                     }
                 }
             }
-            // Purge dead tracks.
-            let live_ids: Vec<u64> = tracks.iter().map(|t| t.track_id()).collect();
-            self.angle_history.retain(|id, _| live_ids.contains(id));
         }
+        // Purge dead tracks.
+        let live_ids: Vec<u64> = tracks.iter().map(|t| t.track_id()).collect();
+        self.angle_history.retain(|id, _| live_ids.contains(id));
 
         self.update_initial_track_if_needed(region, &tracks);
         self.update_background_direction(&tracks);
 
         // Periodically check whether to switch to a track with a much
         // stronger rotation signal.
+        static SOLVE_COUNT: AtomicU64 = AtomicU64::new(0);
+        let solve_n = SOLVE_COUNT.fetch_add(1, Ordering::Relaxed);
         if solve_n % ROTATION_CHECK_INTERVAL == 0
             && self.current_track_id.is_some()
         {
