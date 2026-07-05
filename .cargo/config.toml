@@ -1,5 +1,7 @@
 [env]
 OPENCV_MSVC_CRT = "static"
+# Required so libclang.dll can find its LLVM dependencies at build time.
+LIBCLANG_PATH = "C:\\Program Files\\LLVM\\bin"
 
 [build]
 target = "x86_64-pc-windows-msvc"
