@@ -3,9 +3,12 @@ REM Auto-elevate to admin if not already running as admin
 net session >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo Requesting administrator privileges...
-    powershell -Command "Start-Process '%~f0' -Verb RunAs -WorkingDirectory '%~dp0'"
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
     exit /b
 )
+
+REM Ensure we're in the script's directory (admin windows default to System32)
+cd /d "%~dp0"
 
 REM Ensure 64-bit LLVM is found before the 32-bit PlasticSCM libclang.dll
 set "PATH=C:\Program Files\LLVM\bin;%PATH%"
@@ -15,6 +18,7 @@ echo === Building debug ===
 dx build --package ui
 if %ERRORLEVEL% neq 0 (
     echo DEBUG BUILD FAILED
+    pause
     exit /b %ERRORLEVEL%
 )
 
@@ -23,6 +27,7 @@ set "CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true"
 dx build --package ui --release
 if %ERRORLEVEL% neq 0 (
     echo RELEASE BUILD FAILED
+    pause
     exit /b %ERRORLEVEL%
 )
 
@@ -36,3 +41,4 @@ copy /Y "%~dp0kmbox_example.bat" "%~dp0target\dx\ui\release\windows\app\"
 REM Launch the debug build (runs as admin since we elevated)
 echo === Launching debug build ===
 start "" "%~dp0target\dx\ui\debug\windows\app\ui.exe"
+pause
