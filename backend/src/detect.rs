@@ -2299,15 +2299,10 @@ fn detect_lie_detector_shape(bgr: &impl ToInputArray, localization: &Localizatio
         .as_ref()
         .and_then(|base64| to_mat_from_base64(base64, false).ok());
 
-    // Downscale to 50 % before template matching for a ~4× speedup.
-    let mut small = Mat::default();
-    let scale = 0.5;
-    resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
-
     let default_template = &*LIE_DETECTOR_TRANSPARENT_SHAPE_TEMPLATE;
     let used_template = template.as_ref().unwrap_or(default_template);
     let (rect, score) = match detect_template_single(
-        &small,
+        bgr,
         used_template,
         no_array(),
         Point::default(),
@@ -2325,16 +2320,11 @@ fn detect_lie_detector_shape(bgr: &impl ToInputArray, localization: &Localizatio
 
     debug!(
         target: "backend/detect",
-        "lie_detector_shape title: MATCHED score={score:.4} at ({}, {}) {}x{} (downscaled)",
+        "lie_detector_shape title: MATCHED score={score:.4} at ({}, {}) {}x{}",
         rect.x, rect.y, rect.width, rect.height,
     );
 
-    Ok(Rect::new(
-        (rect.x as f64 / scale).round() as i32,
-        (rect.y as f64 / scale).round() as i32,
-        (rect.width as f64 / scale).round() as i32,
-        (rect.height as f64 / scale).round() as i32,
-    ))
+    Ok(rect)
 }
 
 fn detect_lie_detector_shape_preparing(bgr: &impl ToInputArray) -> Result<Rect> {
@@ -2346,13 +2336,8 @@ fn detect_lie_detector_shape_preparing(bgr: &impl ToInputArray) -> Result<Rect> 
         .unwrap()
     });
 
-    // Downscale to 50 % before template matching (~4× speedup).
-    let mut small = Mat::default();
-    let scale = 0.5;
-    resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
-
     let (rect, score) = match detect_template_single(
-        &small,
+        bgr,
         &*TEMPLATE,
         no_array(),
         Point::default(),
@@ -2370,16 +2355,11 @@ fn detect_lie_detector_shape_preparing(bgr: &impl ToInputArray) -> Result<Rect> 
 
     debug!(
         target: "backend/detect",
-        "lie_detector_shape preparing: MATCHED score={score:.4} at ({}, {}) {}x{} (downscaled)",
+        "lie_detector_shape preparing: MATCHED score={score:.4} at ({}, {}) {}x{}",
         rect.x, rect.y, rect.width, rect.height,
     );
 
-    Ok(Rect::new(
-        (rect.x as f64 / scale).round() as i32,
-        (rect.y as f64 / scale).round() as i32,
-        (rect.width as f64 / scale).round() as i32,
-        (rect.height as f64 / scale).round() as i32,
-    ))
+    Ok(rect)
 }
 
 pub static LIE_DETECTOR_VIOLETTA_TEMPLATE: LazyLock<Mat> = LazyLock::new(|| {
@@ -2399,26 +2379,14 @@ fn detect_lie_detector_violetta(
         .as_ref()
         .and_then(|base64| to_mat_from_base64(base64, false).ok());
 
-    // Downscale to 50 % before template matching (~4× speedup).
-    let mut small = Mat::default();
-    let scale = 0.5;
-    resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
-
-    let rect = detect_template(
-        &small,
+    detect_template(
+        bgr,
         template
             .as_ref()
             .unwrap_or(&*LIE_DETECTOR_VIOLETTA_TEMPLATE),
         Point::default(),
         0.6,
-    )?;
-
-    Ok(Rect::new(
-        (rect.x as f64 / scale).round() as i32,
-        (rect.y as f64 / scale).round() as i32,
-        (rect.width as f64 / scale).round() as i32,
-        (rect.height as f64 / scale).round() as i32,
-    ))
+    )
 }
 
 #[allow(unused)]
@@ -2431,19 +2399,7 @@ fn detect_lie_detector_violetta_preparing(bgr: &impl ToInputArray) -> Result<Rec
         .unwrap()
     });
 
-    // Downscale to 50 % before template matching (~4× speedup).
-    let mut small = Mat::default();
-    let scale = 0.5;
-    resize(bgr, &mut small, Size::default(), scale, scale, INTER_LINEAR).unwrap();
-
-    let rect = detect_template(&small, &*TEMPLATE, Point::default(), 0.6)?;
-
-    Ok(Rect::new(
-        (rect.x as f64 / scale).round() as i32,
-        (rect.y as f64 / scale).round() as i32,
-        (rect.width as f64 / scale).round() as i32,
-        (rect.height as f64 / scale).round() as i32,
-    ))
+    detect_template(bgr, &*TEMPLATE, Point::default(), 0.6)
 }
 
 fn detect_quick_slots_hexa_booster<T: MatTraitConst + ToInputArray>(
