@@ -2695,7 +2695,6 @@ fn detect_violetta_mushrooms(bgr: &impl MatTraitConst) -> Vec<(Rect, f32)> {
     (0..mat_out.rows())
         // SAFETY: 0..result.rows() is within Mat bounds
         .map(|i| unsafe { mat_out.at_row_unchecked::<f32>(i).unwrap() })
-        .filter(|pred| pred[4] >= 0.5)
         .map(|pred| {
             (
                 remap_from_yolo(pred, size, w_ratio, h_ratio, left, top),
