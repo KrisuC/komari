@@ -196,13 +196,7 @@ impl DebugService {
             let mut frame_count = 0u64;
             let mut tracking_active = false;
             loop {
-                if frame_rx.is_closed() {
-                    log::info!(
-                        "[debug_service] test ended after {} frames (channel closed)",
-                        frame_count
-                    );
-                    return;
-                }
+                let tx_closed = frame_rx.is_closed();
 
                 if let Ok(mut frame) = frame_rx.try_recv() {
                     // If the frame is a cropped/trimmed video (much smaller than a full
@@ -239,8 +233,6 @@ impl DebugService {
                     if !tracking_active {
                         let _ = imshow("Shape Tracks", &detector.mat());
                     }
-                    // Always pump HighGUI events to keep window responsive.
-                    let _ = wait_key(1);
 
                     if frame_count % 30 == 0 {
                         log::info!(
@@ -253,7 +245,17 @@ impl DebugService {
                     if let Some(cursor) = cursor {
                         input.send_mouse(cursor.x, cursor.y, MouseKind::Move);
                     }
+                } else if tx_closed {
+                    log::info!(
+                        "[debug_service] test ended after {} frames (channel closed)",
+                        frame_count
+                    );
+                    return;
                 }
+
+                // Always pump HighGUI events to keep window responsive,
+                // even when no frame is available.
+                let _ = wait_key(1);
             }
         });
     }

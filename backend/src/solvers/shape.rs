@@ -130,11 +130,11 @@ impl TransparentShapeSolver {
 
         // ── rotation detection via image-moments orientation ──
         // Compute each shape's principal-axis angle from its pixel
-        // content. A self-rotating shape's angle drifts continuously;
-        // a translating shape's angle stays stable. We track the
-        // frame-to-frame angle deltas — the track with the largest
-        // cumulative absolute drift is the rotating one.
-        const ROTATION_CHECK_INTERVAL: u64 = 15;
+        // content. A self-rotating shape's angle drifts continuously
+        // (all deltas in the same direction). Distractors with "ocean
+        // wave" distortion oscillate back and forth, producing ~50%
+        // positive/negative deltas. The consistency-weighted drift
+        // score (compute_rotation_drift) distinguishes the two.
 
         if let Ok(region_mat) = detector.mat().roi(region) {
             for t in &tracks {
@@ -173,7 +173,8 @@ impl TransparentShapeSolver {
         self.update_background_direction(&tracks);
 
         // Periodically check whether to switch to a track with a much
-        // stronger rotation signal.
+        // stronger rotation signal. Run every 5 frames for faster response.
+        const ROTATION_CHECK_INTERVAL: u64 = 5;
         static SOLVE_COUNT: AtomicU64 = AtomicU64::new(0);
         let solve_n = SOLVE_COUNT.fetch_add(1, Ordering::Relaxed);
         if solve_n % ROTATION_CHECK_INTERVAL == 0
@@ -183,16 +184,11 @@ impl TransparentShapeSolver {
                 .angle_history
                 .iter()
                 .filter_map(|(id, history)| {
-                    if history.len() < ANGLE_WINDOW / 2 {
+                    // Reduced minimum history for faster initial detection.
+                    if history.len() < 3 {
                         return None;
                     }
-                    // Total absolute angle drift over the window.
-                    let drift: f64 = history
-                        .iter()
-                        .zip(history.iter().skip(1))
-                        .map(|(prev, curr)| (curr - prev).abs())
-                        .sum();
-                    Some((*id, drift))
+                    Some((*id, self.compute_rotation_drift(*id)))
                 })
                 .collect();
 
@@ -206,14 +202,17 @@ impl TransparentShapeSolver {
                     .unwrap_or(0.0);
 
                 if let Some((best_id, best_score)) = scores.first() {
+                    // More aggressive switching: switch if the best track has
+                    // 1.5× more rotation score (reduced from 2.0×), with a
+                    // lower minimum threshold.
                     if *best_id != current_id
-                        && *best_score > current_score * 2.0
-                        && *best_score > 0.05
-                        && self.current_track_tenure > ANGLE_WINDOW as u32
+                        && *best_score > current_score * 1.5
+                        && *best_score > 0.02
+                        && self.current_track_tenure > 10
                     {
                         debug!(
                             target: "backend/player",
-                            "shape id switches from {} to {} (angle drift: {:.4} vs {:.4})",
+                            "shape id switches from {} to {} (rotation score: {:.4} vs {:.4})",
                             current_id, best_id, best_score, current_score
                         );
                         self.current_track_id = Some(*best_id);
@@ -286,13 +285,14 @@ impl TransparentShapeSolver {
     /// 10 frames to avoid a visible lurch.
     fn update_initial_track_if_needed(&mut self, region: Rect, tracks: &[STrack]) {
         if self.current_track_id.is_none() {
-            // If we have enough aspect-ratio history, prefer the track
-            // with the strongest rotation signal. Otherwise fall back
-            // to closest-to-centre.
+            // If we have enough angle history, prefer the track with the
+            // strongest rotation signal. Otherwise fall back to
+            // closest-to-centre. The consistency-weighted drift score
+            // already filters out oscillating distractors.
             let has_history = self
                 .angle_history
                 .values()
-                .any(|h| h.len() >= ANGLE_WINDOW / 2);
+                .any(|h| h.len() >= 3);
             let picked = if has_history {
                 tracks
                     .iter()
@@ -314,21 +314,45 @@ impl TransparentShapeSolver {
         }
     }
 
-    /// Returns the total absolute angle drift for `track_id` — the sum of
-    /// frame-to-frame orientation changes over the history window. High
-    /// drift = self-rotating shape; near-zero drift = translating shape.
+    /// Returns a (drift_magnitude, consistency) pair for `track_id`.
+    ///
+    /// `drift_magnitude` is the absolute value of the net signed angle drift
+    /// over the history window. `consistency` is the fraction of consecutive
+    /// angle deltas whose sign matches the dominant direction (0.5 = random
+    /// oscillation, 1.0 = perfectly monotonic rotation).
+    ///
+    /// A truly rotating shape produces high magnitude AND high consistency.
+    /// An "ocean wave" distorted shape may have non-zero magnitude but will
+    /// have consistency near 0.5 (random back-and-forth oscillation).
     fn compute_rotation_drift(&self, track_id: u64) -> f64 {
         self.angle_history
             .get(&track_id)
             .map(|history| {
-                if history.len() < 2 {
+                if history.len() < 4 {
                     return 0.0;
                 }
-                history
+                let deltas: Vec<f64> = history
                     .iter()
                     .zip(history.iter().skip(1))
-                    .map(|(prev, curr)| (curr - prev).abs())
-                    .sum::<f64>()
+                    .map(|(prev, curr)| curr - prev)
+                    .collect();
+                let net_drift: f64 = deltas.iter().sum();
+                let magnitude = net_drift.abs();
+                if magnitude < 1e-6 {
+                    return 0.0;
+                }
+                let dominant_sign = net_drift.signum();
+                let consistent_count = deltas
+                    .iter()
+                    .filter(|d| d.signum() == dominant_sign)
+                    .count();
+                let consistency = consistent_count as f64 / deltas.len() as f64;
+                // Combine magnitude and consistency.
+                // Consistency² heavily penalizes oscillating shapes:
+                //   consistency=1.0 → multiplier=1.0 (pure rotation)
+                //   consistency=0.7 → multiplier=0.49
+                //   consistency=0.5 → multiplier=0.25 (wave oscillation)
+                magnitude * consistency * consistency
             })
             .unwrap_or(0.0)
     }
@@ -371,15 +395,18 @@ impl TransparentShapeSolver {
                 if track.track_id() == current_track_id {
                     score *= tenure_bonus;
                 }
-                // Rotation bonus: shapes that self-rotate accumulate
-                // larger total angle drift. Boost their score so the
-                // solver naturally gravitates toward the rotating shape.
+                // Rotation bonus: shapes that self-rotate produce high
+                // consistency-weighted drift scores. Oscillating "ocean
+                // wave" distractors get near-zero scores due to the
+                // consistency² penalty. This makes rotation a strong,
+                // reliable signal for identifying the target shape.
                 let rot_drift = self.compute_rotation_drift(track.track_id());
-                if rot_drift > 0.05 {
-                    // Scale from 1.0× (no rotation) to ~4.0× (strong
-                    // rotation). Typical drift for a rotating shape is
-                    // 0.1–0.5 rad over a 20-frame window.
-                    let rot_bonus = 1.0 + (rot_drift * 8.0).min(3.0);
+                if rot_drift > 0.01 {
+                    // Scale from 1.0× (no rotation) to ~20.0× (strong
+                    // consistent rotation). The consistency² factor in
+                    // compute_rotation_drift already filters out oscillating
+                    // distractors, so we can be aggressive.
+                    let rot_bonus = 1.0 + (rot_drift * 30.0).min(19.0);
                     score *= rot_bonus;
                 }
                 Some((track, score))
