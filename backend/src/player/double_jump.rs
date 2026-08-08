@@ -4,7 +4,7 @@ use opencv::core::Point;
 
 use super::{
     Key, PingPongDirection, Player, PlayerAction,
-    actions::{PingPong, update_from_auto_mob_action},
+    actions::{PingPong, update_from_auto_mob_action, update_from_ping_pong_pathing_attack},
     moving::Moving,
     timeout::{
         Lifecycle, MovingLifecycle, next_moving_lifecycle_with_axis, next_timeout_lifecycle,
@@ -274,6 +274,7 @@ fn update_from_action(
     forced: bool,
 ) {
     let cur_pos = moving.pos;
+    update_from_ping_pong_pathing_attack(resources, &player.context, &moving, cur_pos);
     let (x_distance, x_direction) = moving.x_distance_direction_from(false, cur_pos);
     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
     let double_jumped_or_flying = player.context.velocity.0 > X_VELOCITY_THRESHOLD;

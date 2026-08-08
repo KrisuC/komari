@@ -181,6 +181,8 @@ pub struct PlayerConfiguration {
     pub disable_adjusting: bool,
     /// Whether to disable teleportation in [`Player::Falling`].
     pub disable_teleport_on_fall: bool,
+    /// Whether to attack with the ping pong key while pathing to a destination (e.g. rune).
+    pub ping_pong_attack_when_pathing: bool,
     /// Whether to disable grappling in [`Player::DoubleJump`] when near the destination.
     pub disable_grapple_on_double_jumping: bool,
 
@@ -237,6 +239,7 @@ impl Default for PlayerConfiguration {
             disable_double_jumping: false,
             disable_adjusting: false,
             disable_teleport_on_fall: false,
+            ping_pong_attack_when_pathing: false,
             disable_grapple_on_double_jumping: false,
             up_jump_is_flight: false,
             up_jump_specific_key_should_jump: false,

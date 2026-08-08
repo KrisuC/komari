@@ -5,7 +5,7 @@ use opencv::core::Point;
 
 use super::{
     GRAPPLING_MAX_THRESHOLD, JUMP_THRESHOLD, Player, PlayerContext,
-    actions::{Key, Move, PlayerAction},
+    actions::{Key, Move, PlayerAction, update_from_ping_pong_pathing_attack},
     double_jump::{DOUBLE_JUMP_THRESHOLD, DoubleJumping},
     state::LastMovement,
     timeout::Timeout,
@@ -276,6 +276,7 @@ pub fn update_moving_state(
 
     let cur_pos = context.last_known_pos.unwrap();
     let moving = Moving::new(cur_pos, dest, exact, intermediates);
+    update_from_ping_pong_pathing_attack(resources, context, &moving, cur_pos);
     let is_intermediate = moving.is_destination_intermediate();
     let skip_destination = moving.auto_mob_can_skip_current_destination(context);
 
@@ -529,10 +530,15 @@ pub fn find_intermediate_points(
 mod tests {
     use std::assert_matches::assert_matches;
 
+    use mockall::predicate::eq;
     use opencv::core::Point;
 
     use super::*;
-    use crate::ecs::Resources;
+    use crate::{
+        bridge::{KeyKind, MockInput},
+        ecs::Resources,
+        player::actions::PingPong,
+    };
 
     fn setup_player(pos: Point, state: Player) -> PlayerEntity {
         let mut player = PlayerEntity {
@@ -641,5 +647,81 @@ mod tests {
         update_moving_state(&mut resources, &mut player, Minimap::Detecting);
 
         assert_matches!(player.state, Player::Moving(Point { x: 100, y: 0 }, _, _));
+    }
+
+    fn pathing_moving_with_intermediates(pos: Point, final_dest: Point) -> Moving {
+        Moving::new(
+            pos,
+            pos,
+            false,
+            Some(MovingIntermediates {
+                current: 0,
+                inner: Array::from_iter([
+                    (pos, MovementHint::Infer, false),
+                    (final_dest, MovementHint::Infer, true),
+                ]),
+            }),
+        )
+    }
+
+    fn context_with_ping_pong(attack_when_pathing: bool) -> PlayerContext {
+        let mut context = PlayerContext::default();
+        context.config.ping_pong_attack_when_pathing = attack_when_pathing;
+        context.set_normal_action(
+            None,
+            PlayerAction::PingPong(PingPong {
+                key: KeyKind::A,
+                ..Default::default()
+            }),
+        );
+        context
+    }
+
+    #[test]
+    fn pathing_attack_sends_key_when_far_from_target() {
+        let mut keys = MockInput::new();
+        keys.expect_send_key().with(eq(KeyKind::A)).once();
+        let mut resources = Resources::new(Some(keys), None);
+        let context = context_with_ping_pong(true);
+        let cur_pos = Point::new(0, 0);
+        let moving = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
+
+        update_from_ping_pong_pathing_attack(&mut resources, &context, &moving, cur_pos);
+    }
+
+    #[test]
+    fn pathing_attack_no_key_when_within_distance() {
+        let mut keys = MockInput::new();
+        keys.expect_send_key().never();
+        let mut resources = Resources::new(Some(keys), None);
+        let context = context_with_ping_pong(true);
+        let cur_pos = Point::new(0, 0);
+        let moving = pathing_moving_with_intermediates(cur_pos, Point::new(3, 4));
+
+        update_from_ping_pong_pathing_attack(&mut resources, &context, &moving, cur_pos);
+    }
+
+    #[test]
+    fn pathing_attack_no_key_when_disabled() {
+        let mut keys = MockInput::new();
+        keys.expect_send_key().never();
+        let mut resources = Resources::new(Some(keys), None);
+        let context = context_with_ping_pong(false);
+        let cur_pos = Point::new(0, 0);
+        let moving = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
+
+        update_from_ping_pong_pathing_attack(&mut resources, &context, &moving, cur_pos);
+    }
+
+    #[test]
+    fn pathing_attack_no_key_without_intermediates() {
+        let mut keys = MockInput::new();
+        keys.expect_send_key().never();
+        let mut resources = Resources::new(Some(keys), None);
+        let context = context_with_ping_pong(true);
+        let cur_pos = Point::new(0, 0);
+        let moving = Moving::new(cur_pos, Point::new(100, 0), false, None);
+
+        update_from_ping_pong_pathing_attack(&mut resources, &context, &moving, cur_pos);
     }
 }

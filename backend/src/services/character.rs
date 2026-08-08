@@ -38,6 +38,8 @@ impl CharacterService for DefaultCharacterService {
             player_context.config.disable_double_jumping = character.disable_double_jumping;
             player_context.config.disable_adjusting = character.disable_adjusting;
             player_context.config.disable_teleport_on_fall = character.disable_teleport_on_fall;
+            player_context.config.ping_pong_attack_when_pathing =
+                character.ping_pong_attack_when_pathing;
             player_context.config.disable_grapple_on_double_jumping =
                 character.disable_grapple_on_double_jumping;
             player_context.config.up_jump_is_flight = character.up_jump_is_flight;
@@ -80,6 +82,7 @@ mod tests {
             disable_double_jumping: true,
             disable_adjusting: true,
             disable_teleport_on_fall: true,
+            ping_pong_attack_when_pathing: true,
             up_jump_is_flight: true,
             up_jump_specific_key_should_jump: true,
             interact_key: KeyBindingConfiguration {
@@ -179,6 +182,10 @@ mod tests {
         assert_eq!(
             state.config.disable_teleport_on_fall,
             character.disable_teleport_on_fall
+        );
+        assert_eq!(
+            state.config.ping_pong_attack_when_pathing,
+            character.ping_pong_attack_when_pathing
         );
         assert_eq!(state.config.up_jump_is_flight, character.up_jump_is_flight);
         assert_eq!(

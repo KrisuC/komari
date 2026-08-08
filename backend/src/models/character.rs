@@ -77,6 +77,9 @@ pub struct Character {
     pub disable_adjusting: bool,
     #[serde(default)]
     pub disable_teleport_on_fall: bool,
+    /// Whether to attack with the ping pong key while pathing to a destination (e.g. rune).
+    #[serde(default)]
+    pub ping_pong_attack_when_pathing: bool,
     #[serde(default)]
     pub disable_grapple_on_double_jumping: bool,
     #[serde(default)]
@@ -150,6 +153,7 @@ impl Default for Character {
             disable_double_jumping: false,
             disable_adjusting: false,
             disable_teleport_on_fall: false,
+            ping_pong_attack_when_pathing: false,
             disable_grapple_on_double_jumping: false,
             up_jump_is_flight: false,
             up_jump_specific_key_should_jump: false,

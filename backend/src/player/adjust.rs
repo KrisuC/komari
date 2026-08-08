@@ -13,7 +13,7 @@ use crate::{
     minimap::Minimap,
     player::{
         Player, PlayerEntity,
-        actions::update_from_auto_mob_action,
+        actions::{update_from_auto_mob_action, update_from_ping_pong_pathing_attack},
         double_jump::DoubleJumping,
         moving::MOVE_TIMEOUT,
         next_action,
@@ -174,6 +174,7 @@ fn update_from_action(
     const USE_KEY_Y_THRESHOLD: i32 = 2;
 
     let cur_pos = moving.pos;
+    update_from_ping_pong_pathing_attack(resources, &player.context, &moving, cur_pos);
     let context = &player.context;
     let (x_distance, x_direction) = moving.x_distance_direction_from(false, cur_pos);
     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);

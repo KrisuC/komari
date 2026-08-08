@@ -531,6 +531,18 @@ fn SectionMovement() -> Element {
                     disabled,
                 }
                 CharactersCheckbox {
+                    label: "Attack when pathing (PingPong)",
+                    on_checked: move |ping_pong_attack_when_pathing| {
+                        save_character(Character {
+                            ping_pong_attack_when_pathing,
+                            ..character.peek().clone()
+                        });
+                    },
+                    checked: character().ping_pong_attack_when_pathing,
+                    tooltip: "Attacks with the PingPong key while pathing to a target (e.g. rune) until within 5 distance of the target.",
+                    disabled,
+                }
+                CharactersCheckbox {
                     label: "Disable double jumping",
                     on_checked: move |disable_double_jumping| {
                         save_character(Character {

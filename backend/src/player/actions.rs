@@ -3,7 +3,7 @@ use std::fmt;
 use opencv::core::{Point, Rect};
 use strum::Display;
 
-use super::{Player, PlayerContext, use_key::UseKey};
+use super::{Player, PlayerContext, moving::Moving, use_key::UseKey};
 use crate::{
     array::Array,
     bridge::{KeyKind, LinkKeyKind},
@@ -319,6 +319,38 @@ pub(super) fn update_from_ping_pong_action(
         PingPongDirection::Right => Player::Moving(Point::new(minimap_width, y), false, None),
     };
     player.state = moving;
+}
+
+/// The distance threshold from the final destination to stop attacking with the ping pong key
+/// while pathing.
+const PING_PONG_PATHING_ATTACK_DISTANCE: i32 = 5;
+
+/// Attacks with the ping pong key while pathing to a destination.
+///
+/// When the normal action is ping pong and the player is pathing through intermediate points
+/// (e.g. rune pathing), the player will keep attacking along the way until the final destination
+/// is within [`PING_PONG_PATHING_ATTACK_DISTANCE`] distance in either axis.
+#[inline]
+pub(super) fn update_from_ping_pong_pathing_attack(
+    resources: &mut Resources,
+    context: &PlayerContext,
+    moving: &Moving,
+    cur_pos: Point,
+) {
+    if !context.config.ping_pong_attack_when_pathing || !moving.is_destination_intermediate() {
+        return;
+    }
+    let Some(PlayerAction::PingPong(ping_pong)) = &context.normal_action else {
+        return;
+    };
+
+    let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
+    let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
+    if x_distance > PING_PONG_PATHING_ATTACK_DISTANCE
+        || y_distance > PING_PONG_PATHING_ATTACK_DISTANCE
+    {
+        resources.input.send_key(ping_pong.key);
+    }
 }
 
 /// Checks proximity in [`PlayerAction::AutoMob`] for transitioning to [`Player::UseKey`].
