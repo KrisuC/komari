@@ -15,7 +15,7 @@ use serde::Serialize;
 use tokio::{sync::broadcast::error::RecvError, time::sleep};
 
 use crate::{
-    AppState,
+    AppState, persist_settings,
     components::{
         button::{Button, ButtonStyle},
         file::{FileInput, FileOutput},
@@ -314,6 +314,7 @@ enum MinimapUpdate {
 pub fn MinimapScreen() -> Element {
     let mut map = use_context::<AppState>().map;
     let mut map_preset = use_context::<AppState>().map_preset;
+    let settings = use_context::<AppState>().settings;
     let mut maps = use_resource(async || query_maps().await.unwrap_or_default());
     let position = use_context::<AppState>().position;
     // Maps queried `maps` to names
@@ -376,23 +377,34 @@ pub fn MinimapScreen() -> Element {
         }
     });
 
-    // Sets a map and preset if there is not one
+    // Sets a map and preset if there is not one, preferring the last selected ones
     use_effect(move || {
-        if let Some(maps) = maps()
-            && !maps.is_empty()
-            && map.peek().is_none()
-        {
-            map.set(maps.into_iter().next());
-            map_preset.set(
-                map.peek()
-                    .as_ref()
-                    .expect("has value")
-                    .actions
-                    .keys()
-                    .next()
-                    .cloned(),
-            );
-            coroutine.send(MinimapUpdate::Set);
+        if map.peek().is_none() {
+            let Some(settings) = settings() else {
+                return; // Wait for settings to load before auto-selecting
+            };
+            if let Some(maps) = maps()
+                && !maps.is_empty()
+            {
+                let selected = maps
+                    .iter()
+                    .find(|map| map.id == settings.selected_map_id)
+                    .cloned()
+                    .or_else(|| maps.first().cloned());
+                if let Some(selected) = selected {
+                    let preset = selected
+                        .actions
+                        .keys()
+                        .find(|preset| {
+                            settings.selected_map_preset.as_deref() == Some(preset.as_str())
+                        })
+                        .cloned()
+                        .or_else(|| selected.actions.keys().next().cloned());
+                    map.set(Some(selected));
+                    map_preset.set(preset);
+                    coroutine.send(MinimapUpdate::Set);
+                }
+            }
         }
     });
     // External modification checking
@@ -452,9 +464,17 @@ pub fn MinimapScreen() -> Element {
                                         .get(index)
                                         .cloned()
                                         .unwrap();
-                                    map_preset.set(selected.actions.keys().next().cloned());
-                                    map.set(Some(selected));
+                                    let preset = selected.actions.keys().next().cloned();
+                                    map_preset.set(preset.clone());
+                                    map.set(Some(selected.clone()));
                                     coroutine.send(MinimapUpdate::Set);
+                                    if let Some(id) = selected.id {
+                                        persist_settings(settings, move |current| Settings {
+                                            selected_map_id: Some(id),
+                                            selected_map_preset: preset,
+                                            ..current
+                                        });
+                                    }
                                 },
 
                                 for (i , name) in map_names().into_iter().enumerate() {

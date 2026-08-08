@@ -2,14 +2,14 @@ use std::{fmt::Display, mem};
 
 use backend::{
     Character, EliteBossBehavior, ExchangeHexaBoosterCondition, FamiliarRarity, Familiars,
-    IntoEnumIterator, KeyBinding, KeyBindingConfiguration, PotionMode, SwappableFamiliars,
+    IntoEnumIterator, KeyBinding, KeyBindingConfiguration, PotionMode, Settings, SwappableFamiliars,
     delete_character, query_characters, update_character, upsert_character,
 };
 use dioxus::{html::FileData, prelude::*};
 use futures_util::StreamExt;
 
 use crate::{
-    AppState,
+    AppState, persist_settings,
     characters::{actions::SectionFixedActions, bindings::SectionKeyBindings, buffs::SectionBuffs},
     components::{
         ContentAlign, ContentSide,
@@ -49,6 +49,7 @@ struct CharactersContext {
 #[component]
 pub fn CharactersScreen() -> Element {
     let mut character = use_context::<AppState>().character;
+    let settings = use_context::<AppState>().settings;
     let mut characters = use_resource(async || query_characters().await.unwrap_or_default());
     // Maps queried `characters` to names
     let character_names = use_memo::<Vec<String>>(move || {
@@ -129,8 +130,14 @@ pub fn CharactersScreen() -> Element {
             .cloned()
             .unwrap();
 
-        character.set(Some(selected));
+        character.set(Some(selected.clone()));
         coroutine.send(CharactersUpdate::Set);
+        if let Some(id) = selected.id {
+            persist_settings(settings, move |current| Settings {
+                selected_character_id: Some(id),
+                ..current
+            });
+        }
     });
 
     use_context_provider(|| CharactersContext {
@@ -138,14 +145,25 @@ pub fn CharactersScreen() -> Element {
         save_character,
     });
 
-    // Sets a character if there is not one
+    // Sets a character if there is not one, preferring the last selected one
     use_effect(move || {
-        if let Some(characters) = characters()
-            && !characters.is_empty()
-            && character.peek().is_none()
-        {
-            character.set(characters.into_iter().next());
-            coroutine.send(CharactersUpdate::Set);
+        if character.peek().is_none() {
+            let Some(settings) = settings() else {
+                return; // Wait for settings to load before auto-selecting
+            };
+            if let Some(characters) = characters()
+                && !characters.is_empty()
+            {
+                let selected = characters
+                    .iter()
+                    .find(|character| character.id == settings.selected_character_id)
+                    .cloned()
+                    .or_else(|| characters.first().cloned());
+                if let Some(selected) = selected {
+                    character.set(Some(selected));
+                    coroutine.send(CharactersUpdate::Set);
+                }
+            }
         }
     });
 

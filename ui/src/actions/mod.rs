@@ -1,6 +1,8 @@
 use std::{collections::HashMap, fmt::Display, mem::discriminant};
 
-use backend::{Action, ActionCondition, IntoEnumIterator, KeyBinding, Map, update_map, upsert_map};
+use backend::{
+    Action, ActionCondition, IntoEnumIterator, KeyBinding, Map, Settings, update_map, upsert_map,
+};
 use dioxus::prelude::*;
 use futures_util::StreamExt;
 use inner::SectionActions;
@@ -8,7 +10,7 @@ use platforms::SectionPlatforms;
 use rotation::SectionRotation;
 
 use crate::{
-    AppState,
+    AppState, persist_settings,
     components::{
         ContentAlign, ContentSide,
         checkbox::Checkbox,
@@ -54,6 +56,7 @@ struct ActionsContext {
 pub fn ActionsScreen() -> Element {
     let mut map = use_context::<AppState>().map;
     let mut map_preset = use_context::<AppState>().map_preset;
+    let settings = use_context::<AppState>().settings;
     // Non-null view of map
     let map_view = use_memo(move || map().unwrap_or_default());
     // Maps currently selected `map` to presets
@@ -152,8 +155,12 @@ pub fn ActionsScreen() -> Element {
     let select_preset = use_callback(move |index: usize| {
         let selected = map_presets.peek().get(index).cloned().unwrap();
 
-        map_preset.set(Some(selected));
+        map_preset.set(Some(selected.clone()));
         coroutine.send(ActionsUpdate::Set);
+        persist_settings(settings, move |current| Settings {
+            selected_map_preset: Some(selected),
+            ..current
+        });
     });
 
     let lists = use_signal::<HashMap<String, ActionCondition>>(HashMap::default);

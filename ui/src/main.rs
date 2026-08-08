@@ -7,7 +7,7 @@
 use std::{env::current_exe, io::stdout, string::ToString, sync::LazyLock};
 
 use actions::ActionsScreen;
-use backend::{Character, Localization, Map, Settings};
+use backend::{Character, Localization, Map, Settings, query_settings, upsert_settings};
 use characters::CharactersScreen;
 #[cfg(debug_assertions)]
 use debug::DebugScreen;
@@ -109,14 +109,22 @@ pub struct AppState {
 #[component]
 fn App() -> Element {
     let mut selected_tab = use_signal(|| TAB_CHARACTERS.to_string());
+    let mut settings = use_signal::<Option<Settings>>(|| None);
 
     use_context_provider(|| AppState {
         map: Signal::new(None),
         map_preset: Signal::new(None),
         character: Signal::new(None),
-        settings: Signal::new(None),
+        settings,
         localization: Signal::new(None),
         position: Signal::new((0, 0)),
+    });
+
+    // Loads settings early so screens can restore the last selected character/map/preset.
+    use_future(move || async move {
+        if settings.peek().is_none() {
+            settings.set(Some(query_settings().await));
+        }
     });
 
     rsx! {
@@ -157,6 +165,19 @@ fn App() -> Element {
             }
         }
     }
+}
+
+/// Persists a change to the app settings, no-op until the settings have been loaded.
+pub(crate) fn persist_settings(
+    mut settings: Signal<Option<Settings>>,
+    update: impl FnOnce(Settings) -> Settings + 'static,
+) {
+    let Some(current) = settings.peek().clone() else {
+        return;
+    };
+    spawn(async move {
+        settings.set(Some(upsert_settings(update(current)).await));
+    });
 }
 
 #[derive(PartialEq, Props, Clone)]

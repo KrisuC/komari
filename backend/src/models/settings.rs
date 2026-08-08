@@ -34,6 +34,15 @@ pub struct Settings {
     pub platform_end_key: KeyBindingConfiguration,
     #[serde(default = "platform_add_key_default")]
     pub platform_add_key: KeyBindingConfiguration,
+    /// The last selected character id to auto-select on startup.
+    #[serde(default)]
+    pub selected_character_id: Option<i64>,
+    /// The last selected map id to auto-select on startup.
+    #[serde(default)]
+    pub selected_map_id: Option<i64>,
+    /// The last selected actions preset name to auto-select on startup.
+    #[serde(default)]
+    pub selected_map_preset: Option<String>,
 }
 
 impl Default for Settings {
@@ -56,6 +65,9 @@ impl Default for Settings {
             platform_start_key: platform_start_key_default(),
             platform_end_key: platform_end_key_default(),
             platform_add_key: platform_add_key_default(),
+            selected_character_id: None,
+            selected_map_id: None,
+            selected_map_preset: None,
         }
     }
 }
