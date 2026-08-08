@@ -2,6 +2,7 @@ use opencv::core::Point;
 
 use super::{
     Key, Player,
+    actions::update_from_ping_pong_pathing_attack,
     moving::Moving,
     timeout::{MovingLifecycle, Timeout, next_moving_lifecycle_with_axis},
     use_key::UseKey,
@@ -185,6 +186,7 @@ fn update_from_action(
     moving: Moving,
 ) {
     let cur_pos = moving.pos;
+    update_from_ping_pong_pathing_attack(resources, &mut player.context, &moving, cur_pos);
     let (y_distance, y_direction) = moving.y_distance_direction_from(true, cur_pos);
     let has_teleport_key = player.context.config.teleport_key.is_some();
     match next_action(&player.context) {

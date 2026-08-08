@@ -550,6 +550,58 @@ mod tests {
     }
 
     #[test]
+    fn update_double_jumping_state_pathing_ping_pong_attacks() {
+        // Simulates a mage (teleport key) pathing to a rune (priority SolveRune)
+        // with ping pong as the normal action and the attack-when-pathing toggle on.
+        use crate::player::{
+            double_jump::{DoubleJumping, update_double_jumping_state},
+            timeout::Timeout,
+        };
+
+        let pos = Point::new(0, 0);
+        let moving = Moving {
+            pos,
+            dest: Point::new(100, 0),
+            timeout: Timeout {
+                started: true,
+                ..Default::default()
+            },
+            intermediates: Some(MovingIntermediates {
+                current: 0,
+                inner: Array::from_iter([
+                    (Point::new(100, 0), MovementHint::Infer, false),
+                    (Point::new(200, 0), MovementHint::Infer, true),
+                ]),
+            }),
+            ..Default::default()
+        };
+        let mut player = setup_player(
+            pos,
+            Player::DoubleJumping(DoubleJumping::new(moving, false, false)),
+        );
+        player.context.config.teleport_key = Some(KeyKind::Shift);
+        player.context.config.ping_pong_attack_when_pathing = true;
+        player.context.set_priority_action(Some(1), PlayerAction::SolveRune);
+        player.context.set_normal_action(
+            None,
+            PlayerAction::PingPong(PingPong {
+                key: KeyKind::A,
+                ..Default::default()
+            }),
+        );
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down().with(eq(KeyKind::Right)).once();
+        keys.expect_send_key_up().with(eq(KeyKind::Left)).once();
+        keys.expect_send_key().with(eq(KeyKind::Shift)).once();
+        keys.expect_send_key().with(eq(KeyKind::A)).once();
+        let mut resources = Resources::new(Some(keys), None);
+
+        update_double_jumping_state(&mut resources, &mut player, Minimap::Detecting);
+
+        assert_matches!(player.state, Player::DoubleJumping(_));
+    }
+
+    #[test]
     fn update_moving_to_double_jump() {
         let mut resources = Resources::new(None, None);
         let dest = Point::new(100, 0); // Large x-distance triggers double jump
@@ -667,6 +719,7 @@ mod tests {
     fn context_with_ping_pong(attack_when_pathing: bool) -> PlayerContext {
         let mut context = PlayerContext::default();
         context.config.ping_pong_attack_when_pathing = attack_when_pathing;
+        context.set_priority_action(Some(1), PlayerAction::SolveRune);
         context.set_normal_action(
             None,
             PlayerAction::PingPong(PingPong {
@@ -773,13 +826,37 @@ mod tests {
     }
 
     #[test]
-    fn pathing_attack_no_key_without_intermediates() {
+    fn pathing_attack_sends_key_without_intermediates_when_priority() {
+        // The rune pathing can fall back to a direct move without intermediates
+        // (e.g. no platform path found); the attack must still happen.
         let mut keys = MockInput::new();
-        keys.expect_send_key().never();
+        keys.expect_send_key().with(eq(KeyKind::A)).once();
         let mut resources = Resources::new(Some(keys), None);
         let mut context = context_with_ping_pong(true);
         let cur_pos = Point::new(0, 0);
         let moving = Moving::new(cur_pos, Point::new(100, 0), false, None);
+
+        update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
+    }
+
+    #[test]
+    fn pathing_attack_no_key_without_priority_action() {
+        // Without a priority action (e.g. normal ping pong movement), the attack
+        // must not fire so the configured ping pong cadence is not doubled.
+        let mut keys = MockInput::new();
+        keys.expect_send_key().never();
+        let mut resources = Resources::new(Some(keys), None);
+        let mut context = PlayerContext::default();
+        context.config.ping_pong_attack_when_pathing = true;
+        context.set_normal_action(
+            None,
+            PlayerAction::PingPong(PingPong {
+                key: KeyKind::A,
+                ..Default::default()
+            }),
+        );
+        let cur_pos = Point::new(0, 0);
+        let moving = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
 
         update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
     }

@@ -327,10 +327,10 @@ pub(super) fn update_from_ping_pong_action(
 /// while pathing.
 const PING_PONG_PATHING_ATTACK_DISTANCE: i32 = 5;
 
-/// Attacks with the ping pong key while pathing to a destination.
+/// Attacks with the ping pong key while moving toward a priority action target.
 ///
-/// When the normal action is ping pong and the player is pathing through intermediate points
-/// (e.g. rune pathing), the player will keep attacking along the way until the final destination
+/// When the normal action is ping pong and the player is moving toward a priority action
+/// target (e.g. rune pathing), the player will keep attacking along the way until the target
 /// is within [`PING_PONG_PATHING_ATTACK_DISTANCE`] distance in either axis.
 ///
 /// The attack cadence respects the ping pong's `wait_before`/`wait_after` (with random ranges)
@@ -347,7 +347,7 @@ pub(super) fn update_from_ping_pong_pathing_attack(
         Some(PlayerAction::PingPong(ping_pong)) => *ping_pong,
         _ => return release_pathing_attack_key(resources, context),
     };
-    if !context.config.ping_pong_attack_when_pathing || !moving.is_destination_intermediate() {
+    if !context.config.ping_pong_attack_when_pathing || !context.has_priority_action() {
         return release_pathing_attack_key(resources, context);
     }
 

@@ -1,6 +1,6 @@
 use super::{
     Key, Player, PlayerContext,
-    actions::update_from_ping_pong_action,
+    actions::{update_from_ping_pong_action, update_from_ping_pong_pathing_attack},
     moving::Moving,
     timeout::{MovingLifecycle, next_moving_lifecycle_with_axis},
     use_key::UseKey,
@@ -231,6 +231,7 @@ fn update_from_action(
     y_direction: i32,
 ) {
     let cur_pos = moving.pos;
+    update_from_ping_pong_pathing_attack(resources, &mut player.context, &moving, cur_pos);
 
     match next_action(&player.context) {
         Some(PlayerAction::AutoMob(mob)) => {
