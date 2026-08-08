@@ -85,7 +85,7 @@ impl UpJumping {
         let kind = up_jumping_kind(
             player_context.config.up_jump_key,
             player_context.config.teleport_key.is_some(),
-            player_context.config.teleport_range_threshold,
+            player_context.config.teleport_up_jump_threshold,
         );
 
         Self {
@@ -419,12 +419,12 @@ fn update_flying(resources: &mut Resources, moving: &mut Moving, y_direction: i3
 fn up_jumping_kind(
     up_jump_key: Option<KeyKind>,
     has_teleport_key: bool,
-    teleport_range_threshold: u32,
+    teleport_up_jump_threshold: u32,
 ) -> UpJumpingKind {
     match (up_jump_key, has_teleport_key) {
         (Some(_), true) | (None, true) => UpJumpingKind::Mage(Mage {
             state: MageState::Teleporting, // Overwrite later
-            teleport_with_jump_threshold: teleport_range_threshold as i32,
+            teleport_with_jump_threshold: teleport_up_jump_threshold as i32,
         }),
         (Some(KeyKind::Up), false) => UpJumpingKind::UpArrow,
         (None, false) => UpJumpingKind::JumpKey,

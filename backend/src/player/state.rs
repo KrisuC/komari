@@ -166,10 +166,10 @@ pub struct PlayerConfiguration {
     pub link_key_timing_millis: u64,
     /// Whether up jump requires helding down the key for flight.
     pub up_jump_is_flight: bool,
-    /// Teleport range in distance units used for the fall and up jump distance checks.
-    ///
-    /// Replaces the previous "extended teleport range" boolean toggle (e.g. Starry Boost by Sia).
-    pub teleport_range_threshold: u32,
+    /// Teleport range in distance units used for the fall distance check.
+    pub teleport_fall_threshold: u32,
+    /// Teleport range in distance units used for the up jump teleport-with-jump check.
+    pub teleport_up_jump_threshold: u32,
     /// Whether up jump using a specific key (e.g. Hero, Night Lord, ... classes) should do a jump
     /// before sending the key.
     ///
@@ -232,7 +232,8 @@ impl Default for PlayerConfiguration {
     fn default() -> Self {
         Self {
             link_key_timing_millis: 0,
-            teleport_range_threshold: 16,
+            teleport_fall_threshold: 16,
+            teleport_up_jump_threshold: 19,
             disable_double_jumping: false,
             disable_adjusting: false,
             disable_teleport_on_fall: false,

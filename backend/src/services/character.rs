@@ -32,8 +32,9 @@ impl CharacterService for DefaultCharacterService {
         player_context.reset();
         if let Some(character) = self.character.as_ref() {
             player_context.config.link_key_timing_millis = character.link_key_timing_millis;
-            player_context.config.teleport_range_threshold =
-                character.teleport_range_threshold;
+            player_context.config.teleport_fall_threshold = character.teleport_fall_threshold;
+            player_context.config.teleport_up_jump_threshold =
+                character.teleport_up_jump_threshold;
             player_context.config.disable_double_jumping = character.disable_double_jumping;
             player_context.config.disable_adjusting = character.disable_adjusting;
             player_context.config.disable_teleport_on_fall = character.disable_teleport_on_fall;
@@ -74,7 +75,8 @@ mod tests {
     fn mock_character() -> Character {
         Character {
             link_key_timing_millis: 30,
-            teleport_range_threshold: 20,
+            teleport_fall_threshold: 20,
+            teleport_up_jump_threshold: 20,
             disable_double_jumping: true,
             disable_adjusting: true,
             disable_teleport_on_fall: true,
@@ -162,8 +164,12 @@ mod tests {
             character.link_key_timing_millis
         );
         assert_eq!(
-            state.config.teleport_range_threshold,
-            character.teleport_range_threshold
+            state.config.teleport_fall_threshold,
+            character.teleport_fall_threshold
+        );
+        assert_eq!(
+            state.config.teleport_up_jump_threshold,
+            character.teleport_up_jump_threshold
         );
         assert_eq!(
             state.config.disable_double_jumping,

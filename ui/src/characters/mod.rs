@@ -493,17 +493,30 @@ fn SectionMovement() -> Element {
                     disabled,
                 }
                 CharactersNumberU32Input {
-                    label: "Teleport range",
-                    on_value: move |teleport_range_threshold| {
+                    label: "Fall teleport range",
+                    on_value: move |teleport_fall_threshold| {
                         save_character(Character {
-                            teleport_range_threshold,
+                            teleport_fall_threshold,
                             ..character.peek().clone()
                         });
                     },
-                    value: character().teleport_range_threshold,
+                    value: character().teleport_fall_threshold,
                     max_value: Some(100),
                     disabled: disabled(),
-                    tooltip: "Maximum y distance to teleport when falling, and minimum y distance to use teleport with jump when up jumping. Set to your teleport range (e.g. 20 with teleport range boost).",
+                    tooltip: "Maximum y distance to teleport when falling instead of jumping down.",
+                }
+                CharactersNumberU32Input {
+                    label: "Up jump teleport range",
+                    on_value: move |teleport_up_jump_threshold| {
+                        save_character(Character {
+                            teleport_up_jump_threshold,
+                            ..character.peek().clone()
+                        });
+                    },
+                    value: character().teleport_up_jump_threshold,
+                    max_value: Some(100),
+                    disabled: disabled(),
+                    tooltip: "Minimum y distance to use teleport with jump when up jumping.",
                 }
                 CharactersCheckbox {
                     label: "Disable teleport on fall",

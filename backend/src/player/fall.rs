@@ -131,7 +131,7 @@ pub fn update_falling_state(
             let y_distance = moving.y_distance_direction_from(true, moving.pos).0;
             let can_teleport = !player.context.config.disable_teleport_on_fall
                 && player.context.config.teleport_key.is_some()
-                && y_distance < player.context.config.teleport_range_threshold as i32;
+                && y_distance < player.context.config.teleport_fall_threshold as i32;
             if can_teleport {
                 resources
                     .input
