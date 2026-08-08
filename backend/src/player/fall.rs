@@ -3,7 +3,7 @@ use opencv::core::Point;
 use super::{
     Key, Player,
     moving::Moving,
-    timeout::{MovingLifecycle, next_moving_lifecycle_with_axis},
+    timeout::{MovingLifecycle, Timeout, next_moving_lifecycle_with_axis},
     use_key::UseKey,
 };
 use crate::{
@@ -23,6 +23,10 @@ pub const FALLING_THRESHOLD: i32 = 4;
 /// Maximum y distance from the destination allowed to transition to [`Player::UseKey`] during
 /// a [`PlayerAction::Key`] with [`ActionKeyWith::Any`].
 const FALLING_TO_USE_KEY_THRESHOLD: i32 = 5;
+
+/// Number of ticks to stall after the fall completes before resuming the next operation,
+/// giving the player time to land.
+const POST_FALL_STALL_TICKS: u32 = 5;
 
 /// Maximum number of ticks before timing out.
 const TIMEOUT: u32 = MOVE_TIMEOUT + 3;
@@ -150,7 +154,11 @@ pub fn update_falling_state(
             resources.input.send_key_up(KeyKind::Down);
         }
         MovingLifecycle::Ended(moving) => {
-            player.state = Player::Moving(moving.dest, moving.exact, moving.intermediates);
+            // Stall briefly after the fall completes so the player has time to land
+            // before resuming the next operation.
+            player.context.stalling_timeout_state =
+                Some(Player::Moving(moving.dest, moving.exact, moving.intermediates));
+            player.state = Player::Stalling(Timeout::default(), POST_FALL_STALL_TICKS);
         }
         MovingLifecycle::Updated(mut moving) => {
             if !moving.completed {
@@ -372,6 +380,36 @@ mod tests {
                 },
                 ..
             })
+        );
+    }
+
+    #[test]
+    fn update_falling_ended_stalls_before_resuming_movement() {
+        let mut moving = mock_moving(POS, Point::new(POS.x, POS.y - 5))
+            .completed(true)
+            .timeout_started(true);
+        moving.timeout.total = 5;
+        let mut player = mock_player_entity_with_jump(POS);
+        player.state = Player::Falling(Falling {
+            moving,
+            anchor: Point::default(),
+            timeout_on_complete: true,
+        });
+        let mut resources = Resources::new(None, None);
+
+        // First update marks the timeout for completion.
+        update_falling_state(&mut resources, &mut player, Minimap::Detecting);
+        assert_matches!(player.state, Player::Falling(_));
+
+        // Second update ends the fall and stalls before resuming the movement.
+        update_falling_state(&mut resources, &mut player, Minimap::Detecting);
+        assert_matches!(
+            player.state,
+            Player::Stalling(_, POST_FALL_STALL_TICKS)
+        );
+        assert_matches!(
+            player.context.stalling_timeout_state,
+            Some(Player::Moving(_, _, _))
         );
     }
 
