@@ -27,13 +27,6 @@ const FALLING_TO_USE_KEY_THRESHOLD: i32 = 5;
 /// Maximum number of ticks before timing out.
 const TIMEOUT: u32 = MOVE_TIMEOUT + 3;
 
-/// Maximum y distance from the destination allowed to skip normal falling and use teleportation
-/// for mage.
-const TELEPORT_FALL_THRESHOLD: i32 = 16;
-
-/// Maximum y distance from the destination allowed to skip normal falling and use teleportation
-/// for mage when teleport boost is enabled.
-const EXTENDED_TELEPORT_FALL_THRESHOLD: i32 = 20;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Falling {
@@ -136,14 +129,9 @@ pub fn update_falling_state(
             // Give the game time to register the Down key before pressing Jump.
             sleep(Duration::from_millis(30));
             let y_distance = moving.y_distance_direction_from(true, moving.pos).0;
-            let teleport_fall_threshold = if player.context.config.has_extended_teleport_range {
-                EXTENDED_TELEPORT_FALL_THRESHOLD
-            } else {
-                TELEPORT_FALL_THRESHOLD
-            };
             let can_teleport = !player.context.config.disable_teleport_on_fall
                 && player.context.config.teleport_key.is_some()
-                && y_distance < teleport_fall_threshold;
+                && y_distance < player.context.config.teleport_range_threshold as i32;
             if can_teleport {
                 resources
                     .input
@@ -250,7 +238,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        bridge::{KeyKind, MockInput},
+        bridge::{InputKeyDownOptions, InputKeyOptions, KeyKind, MockInput},
         ecs::Resources,
         minimap::Minimap,
         player::{
@@ -293,13 +281,17 @@ mod tests {
 
         let mut seq = Sequence::new();
         let mut keys = MockInput::new();
-        keys.expect_send_key()
+        keys.expect_send_key_down_with_options()
+            .once()
+            .with(eq(KeyKind::Down), eq(InputKeyDownOptions::default()))
+            .in_sequence(&mut seq);
+        keys.expect_send_key_with_options()
+            .once()
+            .with(eq(KeyKind::Space), eq(InputKeyOptions::default().down_ms(80)))
+            .in_sequence(&mut seq);
+        keys.expect_send_key_up()
             .once()
             .with(eq(KeyKind::Down))
-            .in_sequence(&mut seq);
-        keys.expect_send_key()
-            .once()
-            .with(eq(KeyKind::Space))
             .in_sequence(&mut seq);
         let mut resources = Resources::new(Some(keys), None);
 

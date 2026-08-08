@@ -83,8 +83,11 @@ pub struct Character {
     pub up_jump_is_flight: bool,
     #[serde(default)]
     pub up_jump_specific_key_should_jump: bool,
-    #[serde(default)]
-    pub has_extended_teleport_range: bool,
+    /// Teleport range in distance units used for the fall and up jump distance checks.
+    ///
+    /// Replaces the previous "extended teleport range" boolean toggle (e.g. Starry Boost by Sia).
+    #[serde(default = "teleport_range_threshold_default")]
+    pub teleport_range_threshold: u32,
     pub actions: Vec<ActionConfiguration>,
     #[serde(default, deserialize_with = "deserialize_with_ok_or_default")]
     pub elite_boss_behavior: EliteBossBehavior,
@@ -147,7 +150,7 @@ impl Default for Character {
             disable_grapple_on_double_jumping: false,
             up_jump_is_flight: false,
             up_jump_specific_key_should_jump: false,
-            has_extended_teleport_range: false,
+            teleport_range_threshold: teleport_range_threshold_default(),
             actions: vec![],
             elite_boss_behavior_key: KeyBinding::default(),
             elite_boss_behavior: EliteBossBehavior::default(),
@@ -157,6 +160,11 @@ impl Default for Character {
 
 fn feed_pet_count_default() -> u32 {
     3
+}
+
+fn teleport_range_threshold_default() -> u32 {
+    // Matches the previous `TELEPORT_FALL_THRESHOLD` when "extended teleport range" was off.
+    16
 }
 
 fn hexa_booster_exchange_amount_default() -> u32 {

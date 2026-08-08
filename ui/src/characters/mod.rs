@@ -492,17 +492,18 @@ fn SectionMovement() -> Element {
                     tooltip: "Applicable only for non-mage class and when non-up-arrow up jump key is set.",
                     disabled,
                 }
-                CharactersCheckbox {
-                    label: "Has extended teleport range",
-                    on_checked: move |has_extended_teleport_range| {
+                CharactersNumberU32Input {
+                    label: "Teleport range",
+                    on_value: move |teleport_range_threshold| {
                         save_character(Character {
-                            has_extended_teleport_range,
+                            teleport_range_threshold,
                             ..character.peek().clone()
                         });
                     },
-                    checked: character().has_extended_teleport_range,
-                    tooltip: "Applicable only for mage class when teleport range increase buff is turned on.",
-                    disabled,
+                    value: character().teleport_range_threshold,
+                    max_value: Some(100),
+                    disabled: disabled(),
+                    tooltip: "Maximum y distance to teleport when falling, and minimum y distance to use teleport with jump when up jumping. Set to your teleport range (e.g. 20 with teleport range boost).",
                 }
                 CharactersCheckbox {
                     label: "Disable teleport on fall",
@@ -921,9 +922,10 @@ fn CharactersNumberU32Input(
     on_value: Callback<u32>,
     #[props(default)] max_value: Option<u32>,
     #[props(default)] disabled: bool,
+    #[props(default)] tooltip: Option<String>,
 ) -> Element {
     rsx! {
-        Labeled { label,
+        Labeled { label, tooltip,
             PrimitiveIntegerInput {
                 value,
                 on_value,
