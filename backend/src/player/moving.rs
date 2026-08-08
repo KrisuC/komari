@@ -702,14 +702,73 @@ mod tests {
     }
 
     #[test]
-    fn pathing_attack_no_key_when_disabled() {
+    fn pathing_attack_disabled_sends_no_input() {
         let mut keys = MockInput::new();
         keys.expect_send_key().never();
+        keys.expect_send_key_down().never();
+        keys.expect_send_key_down_with_options().never();
+        keys.expect_send_key_up().never();
         let mut resources = Resources::new(Some(keys), None);
         let mut context = context_with_ping_pong(false);
+        context.normal_action = Some(PlayerAction::PingPong(PingPong {
+            key: KeyKind::A,
+            key_hold_ticks: 2,
+            wait_after_ticks: 3,
+            ..Default::default()
+        }));
         let cur_pos = Point::new(0, 0);
         let moving = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
 
+        for _ in 0..10 {
+            update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
+        }
+    }
+
+    #[test]
+    fn pathing_attack_releases_key_when_disabled_mid_hold() {
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down_with_options()
+            .with(eq(KeyKind::A), eq(InputKeyDownOptions::default().repeatable()))
+            .once();
+        keys.expect_send_key_up().with(eq(KeyKind::A)).once();
+        let mut resources = Resources::new(Some(keys), None);
+        let mut context = context_with_ping_pong(true);
+        context.normal_action = Some(PlayerAction::PingPong(PingPong {
+            key: KeyKind::A,
+            key_hold_ticks: 10,
+            ..Default::default()
+        }));
+        let cur_pos = Point::new(0, 0);
+        let moving = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
+
+        // Press down while enabled, then the toggle is flipped off mid-hold:
+        // the held key must be released instead of stuck.
+        update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
+        context.config.ping_pong_attack_when_pathing = false;
+        update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
+    }
+
+    #[test]
+    fn pathing_attack_releases_key_after_context_reset() {
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down_with_options()
+            .with(eq(KeyKind::A), eq(InputKeyDownOptions::default().repeatable()))
+            .once();
+        keys.expect_send_key_up().with(eq(KeyKind::A)).once();
+        let mut resources = Resources::new(Some(keys), None);
+        let mut context = context_with_ping_pong(true);
+        context.normal_action = Some(PlayerAction::PingPong(PingPong {
+            key: KeyKind::A,
+            key_hold_ticks: 10,
+            ..Default::default()
+        }));
+        let cur_pos = Point::new(0, 0);
+        let moving = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
+
+        // Press down while enabled, then the context resets (e.g. configuration changed).
+        update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
+        context.reset();
+        // The held key survives the reset and is released on the next update.
         update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
     }
 

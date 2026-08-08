@@ -423,6 +423,9 @@ impl PlayerContext {
         *self = PlayerContext {
             config: self.config,
             reset_to_idle_next_update: true,
+            // Keeps the held ping pong pathing attack key so it can be released on the next
+            // update even when the configuration (e.g. the toggle) changed mid-hold.
+            ping_pong_pathing_attack_key: self.ping_pong_pathing_attack_key,
             ..PlayerContext::default()
         };
     }
