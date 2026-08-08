@@ -662,7 +662,7 @@ fn update_linking_key(
 }
 
 #[inline]
-fn random_wait_ticks(wait_base_ticks: u32, wait_random_range: u32) -> u32 {
+pub(super) fn random_wait_ticks(wait_base_ticks: u32, wait_random_range: u32) -> u32 {
     // TODO: Replace rand with Rng
     let wait_min = wait_base_ticks.saturating_sub(wait_random_range);
     let wait_max = wait_base_ticks.saturating_add(wait_random_range + 1);

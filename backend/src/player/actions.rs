@@ -3,10 +3,12 @@ use std::fmt;
 use opencv::core::{Point, Rect};
 use strum::Display;
 
-use super::{Player, PlayerContext, moving::Moving, use_key::UseKey};
+use super::{
+    Player, PlayerContext, moving::Moving, use_key::{UseKey, random_wait_ticks},
+};
 use crate::{
     array::Array,
-    bridge::{KeyKind, LinkKeyKind},
+    bridge::{InputKeyDownOptions, KeyKind, LinkKeyKind},
     ecs::Resources,
     minimap::Minimap,
     models::{
@@ -330,27 +332,74 @@ const PING_PONG_PATHING_ATTACK_DISTANCE: i32 = 5;
 /// When the normal action is ping pong and the player is pathing through intermediate points
 /// (e.g. rune pathing), the player will keep attacking along the way until the final destination
 /// is within [`PING_PONG_PATHING_ATTACK_DISTANCE`] distance in either axis.
+///
+/// The attack cadence respects the ping pong's `wait_before`/`wait_after` (with random ranges)
+/// and `key_hold` ticks, matching the configured spam rate. A held key is always released when
+/// the attack is no longer applicable to avoid a stuck key.
 #[inline]
 pub(super) fn update_from_ping_pong_pathing_attack(
     resources: &mut Resources,
-    context: &PlayerContext,
+    context: &mut PlayerContext,
     moving: &Moving,
     cur_pos: Point,
 ) {
-    if !context.config.ping_pong_attack_when_pathing || !moving.is_destination_intermediate() {
-        return;
-    }
-    let Some(PlayerAction::PingPong(ping_pong)) = &context.normal_action else {
-        return;
+    let ping_pong = match &context.normal_action {
+        Some(PlayerAction::PingPong(ping_pong)) => *ping_pong,
+        _ => return release_pathing_attack_key(resources, context),
     };
+    if !context.config.ping_pong_attack_when_pathing || !moving.is_destination_intermediate() {
+        return release_pathing_attack_key(resources, context);
+    }
 
     let (x_distance, _) = moving.x_distance_direction_from(false, cur_pos);
     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
-    if x_distance > PING_PONG_PATHING_ATTACK_DISTANCE
-        || y_distance > PING_PONG_PATHING_ATTACK_DISTANCE
+    if x_distance <= PING_PONG_PATHING_ATTACK_DISTANCE
+        && y_distance <= PING_PONG_PATHING_ATTACK_DISTANCE
     {
-        resources.input.send_key(ping_pong.key);
+        return release_pathing_attack_key(resources, context);
     }
+
+    let tick = context.ping_pong_pathing_attack_tick;
+    if tick == 0 {
+        // A fresh cycle: roll the random waits and compute the total cycle length.
+        let wait_before = random_wait_ticks(
+            ping_pong.wait_before_ticks,
+            ping_pong.wait_before_ticks_random_range,
+        );
+        let wait_after = random_wait_ticks(
+            ping_pong.wait_after_ticks,
+            ping_pong.wait_after_ticks_random_range,
+        );
+        context.ping_pong_pathing_attack_cycle =
+            1 + ping_pong.key_hold_ticks + wait_before + wait_after;
+        if ping_pong.key_hold_ticks > 0 {
+            resources.input.send_key_down_with_options(
+                ping_pong.key,
+                InputKeyDownOptions::default().repeatable(),
+            );
+            context.ping_pong_pathing_attack_key = Some(ping_pong.key);
+        } else {
+            resources.input.send_key(ping_pong.key);
+        }
+    }
+    if tick >= ping_pong.key_hold_ticks
+        && let Some(key) = context.ping_pong_pathing_attack_key.take()
+    {
+        resources.input.send_key_up(key);
+    }
+    // Read the cycle after the press branch so a fresh cycle uses the updated length.
+    let cycle = context.ping_pong_pathing_attack_cycle;
+    context.ping_pong_pathing_attack_tick = (tick + 1) % cycle.max(1);
+}
+
+/// Releases a held ping pong pathing attack key and resets the attack cycle.
+#[inline]
+fn release_pathing_attack_key(resources: &mut Resources, context: &mut PlayerContext) {
+    if let Some(key) = context.ping_pong_pathing_attack_key.take() {
+        resources.input.send_key_up(key);
+    }
+    context.ping_pong_pathing_attack_tick = 0;
+    context.ping_pong_pathing_attack_cycle = 0;
 }
 
 /// Checks proximity in [`PlayerAction::AutoMob`] for transitioning to [`Player::UseKey`].

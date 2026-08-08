@@ -535,7 +535,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        bridge::{KeyKind, MockInput},
+        bridge::{InputKeyDownOptions, KeyKind, MockInput},
         ecs::Resources,
         player::actions::PingPong,
     };
@@ -682,11 +682,11 @@ mod tests {
         let mut keys = MockInput::new();
         keys.expect_send_key().with(eq(KeyKind::A)).once();
         let mut resources = Resources::new(Some(keys), None);
-        let context = context_with_ping_pong(true);
+        let mut context = context_with_ping_pong(true);
         let cur_pos = Point::new(0, 0);
         let moving = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
 
-        update_from_ping_pong_pathing_attack(&mut resources, &context, &moving, cur_pos);
+        update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
     }
 
     #[test]
@@ -694,11 +694,11 @@ mod tests {
         let mut keys = MockInput::new();
         keys.expect_send_key().never();
         let mut resources = Resources::new(Some(keys), None);
-        let context = context_with_ping_pong(true);
+        let mut context = context_with_ping_pong(true);
         let cur_pos = Point::new(0, 0);
         let moving = pathing_moving_with_intermediates(cur_pos, Point::new(3, 4));
 
-        update_from_ping_pong_pathing_attack(&mut resources, &context, &moving, cur_pos);
+        update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
     }
 
     #[test]
@@ -706,11 +706,11 @@ mod tests {
         let mut keys = MockInput::new();
         keys.expect_send_key().never();
         let mut resources = Resources::new(Some(keys), None);
-        let context = context_with_ping_pong(false);
+        let mut context = context_with_ping_pong(false);
         let cur_pos = Point::new(0, 0);
         let moving = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
 
-        update_from_ping_pong_pathing_attack(&mut resources, &context, &moving, cur_pos);
+        update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
     }
 
     #[test]
@@ -718,10 +718,79 @@ mod tests {
         let mut keys = MockInput::new();
         keys.expect_send_key().never();
         let mut resources = Resources::new(Some(keys), None);
-        let context = context_with_ping_pong(true);
+        let mut context = context_with_ping_pong(true);
         let cur_pos = Point::new(0, 0);
         let moving = Moving::new(cur_pos, Point::new(100, 0), false, None);
 
-        update_from_ping_pong_pathing_attack(&mut resources, &context, &moving, cur_pos);
+        update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
+    }
+
+    #[test]
+    fn pathing_attack_respects_wait_after() {
+        // Cycle = 1 (press) + 0 (hold) + 0 (wait before) + 3 (wait after) = 4 ticks.
+        let mut keys = MockInput::new();
+        keys.expect_send_key().with(eq(KeyKind::A)).times(2);
+        let mut resources = Resources::new(Some(keys), None);
+        let mut context = context_with_ping_pong(true);
+        context.normal_action = Some(PlayerAction::PingPong(PingPong {
+            key: KeyKind::A,
+            wait_after_ticks: 3,
+            ..Default::default()
+        }));
+        let cur_pos = Point::new(0, 0);
+        let moving = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
+
+        // Presses on the 1st and 5th calls, waiting 4 ticks in between.
+        for _ in 0..5 {
+            update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
+        }
+    }
+
+    #[test]
+    fn pathing_attack_holds_and_releases_key() {
+        // Cycle = 1 + 2 (hold) = 3 ticks: press down, hold, release, then repeat.
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down_with_options()
+            .with(eq(KeyKind::A), eq(InputKeyDownOptions::default().repeatable()))
+            .once();
+        keys.expect_send_key_up().with(eq(KeyKind::A)).once();
+        let mut resources = Resources::new(Some(keys), None);
+        let mut context = context_with_ping_pong(true);
+        context.normal_action = Some(PlayerAction::PingPong(PingPong {
+            key: KeyKind::A,
+            key_hold_ticks: 2,
+            ..Default::default()
+        }));
+        let cur_pos = Point::new(0, 0);
+        let moving = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
+
+        // Tick 0: press down. Tick 1: still holding. Tick 2: release.
+        for _ in 0..3 {
+            update_from_ping_pong_pathing_attack(&mut resources, &mut context, &moving, cur_pos);
+        }
+    }
+
+    #[test]
+    fn pathing_attack_releases_key_when_within_distance() {
+        let mut keys = MockInput::new();
+        keys.expect_send_key_down_with_options()
+            .with(eq(KeyKind::A), eq(InputKeyDownOptions::default().repeatable()))
+            .once();
+        keys.expect_send_key_up().with(eq(KeyKind::A)).once();
+        let mut resources = Resources::new(Some(keys), None);
+        let mut context = context_with_ping_pong(true);
+        context.normal_action = Some(PlayerAction::PingPong(PingPong {
+            key: KeyKind::A,
+            key_hold_ticks: 5,
+            ..Default::default()
+        }));
+        let cur_pos = Point::new(0, 0);
+        let far = pathing_moving_with_intermediates(cur_pos, Point::new(100, 0));
+        let near = pathing_moving_with_intermediates(cur_pos, Point::new(3, 4));
+
+        // Press down while far, then the player gets within 5 of the target
+        // and the held key is released.
+        update_from_ping_pong_pathing_attack(&mut resources, &mut context, &far, cur_pos);
+        update_from_ping_pong_pathing_attack(&mut resources, &mut context, &near, cur_pos);
     }
 }

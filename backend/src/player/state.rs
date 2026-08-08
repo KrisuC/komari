@@ -402,6 +402,13 @@ pub struct PlayerContext {
     /// The number of times [`Player::FamiliarsSwapping`] failed.
     familiars_swap_failed_count: u32,
 
+    /// Ticks into the current ping pong pathing attack cycle.
+    pub(super) ping_pong_pathing_attack_tick: u32,
+    /// Total ticks of the current ping pong pathing attack cycle (key hold + waits).
+    pub(super) ping_pong_pathing_attack_cycle: u32,
+    /// The key currently held down by the ping pong pathing attack, if any.
+    pub(super) ping_pong_pathing_attack_key: Option<KeyKind>,
+
     name: Option<String>,
     name_task: Option<Task<Result<String>>>,
     name_retry_count: u32,

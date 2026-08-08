@@ -274,7 +274,7 @@ fn update_from_action(
     forced: bool,
 ) {
     let cur_pos = moving.pos;
-    update_from_ping_pong_pathing_attack(resources, &player.context, &moving, cur_pos);
+    update_from_ping_pong_pathing_attack(resources, &mut player.context, &moving, cur_pos);
     let (x_distance, x_direction) = moving.x_distance_direction_from(false, cur_pos);
     let (y_distance, _) = moving.y_distance_direction_from(false, cur_pos);
     let double_jumped_or_flying = player.context.velocity.0 > X_VELOCITY_THRESHOLD;
